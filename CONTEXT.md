@@ -95,3 +95,19 @@ _Avoid_: config, definition file, manifest, template
 **Catalogue**:
 Everything a developer defines in code and deploys with the Framework, available for Agent Specs to reference by name: Tools, Fragments, Skills, Retrievers. Shared by every Scope; the only place behaviour code lives.
 _Avoid_: registry, library, plugins, toolbox
+
+**Channel binding**:
+Developer code in the Framework user's Worker that adapts one Channel to a Thread: maps external identities to (Scope, User), chooses the `threadId`, uploads media, calls `thread.send()`, and registers a Deliverer for replies. Lives outside karmi; talks only to the Thread API.
+_Avoid_: integration, adapter, connector, plugin
+
+**Turn input**:
+What drives one turn of a Thread: a User message (text and media Parts) or an Event. Carries an opaque `channelRef` the Channel binding uses to reply in place.
+_Avoid_: request, prompt, payload
+
+**Thread event**:
+One entry in a Thread's ordered, persisted event log (`seq`-numbered): turn start/end, streamed deltas, completed parts, tool calls and results, approval requests, compaction. The single outbound shape — the transcript is derived from it, and clients replay from a `seq`.
+_Avoid_: message (for the log entry), stream chunk, notification
+
+**Deliverer**:
+A Catalogue item — code, by name — that pushes a Thread's output to a Channel when no live subscriber is attached. Chosen per Thread from the last inbound input; invoked from a Queue, at-least-once.
+_Avoid_: webhook, callback, notifier, sender
