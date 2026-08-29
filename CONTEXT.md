@@ -147,3 +147,11 @@ _Avoid_: webhook, callback, notifier, sender
 **Delegation**:
 One Agent handing a task to another Agent in the same Scope and receiving its result. The parent's Agent Spec lists, by name, the Agents it may delegate to; nothing not listed is reachable. The child runs under its own Agent Spec, in its own Thread, with fresh context and the parent's User; the parent receives only the child's final reply. Gated by a Capability. There is no separate "sub-agent" kind of thing — only Agents and the act of delegating.
 _Avoid_: sub-agent (for the child Agent), spawn, orchestration, handoff
+
+**Usage record**:
+A `usage.recorded` Thread event the Harness persists in the same transaction as the Step it accounts for — kind `model` (tokens incl. cache and reasoning, model, provider, `serverToolCalls`), `compaction` or `script` (tier, wall ms) — stamped with `{ scope, agent, user?, threadId, parent?, turn, seq }`. Carries `cost` only when the provider or gateway reported one; karmi never prices tokens. Child Threads record their own with `parent` set; nothing is counted twice.
+_Avoid_: metric, billing event, usage log, telemetry
+
+**UsageHandler**:
+A Catalogue item the Platform supplies to receive Usage records in batches, at-least-once via a Queue with `threadId:seq` as the idempotency key — the billing seam. Its failure retries and never fails a Turn. karmi keeps no per-Scope counters; Scope-wide spend limits are the Platform's, enforced through this handler.
+_Avoid_: billing hook, metering, usage callback, meter
