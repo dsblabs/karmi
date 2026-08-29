@@ -25,7 +25,7 @@ An external surface through which a human or event reaches a session — a chat 
 _Avoid_: integration, connector, frontend
 
 **Capability**:
-A gated ability an Agent may be granted in its Agent Spec, such as running small generated scripts, outbound HTTP, remote MCP, or long-running loops. The Catalogue implements it; the Spec switches it on; a Scope-level ceiling is merged as a maximum and a Spec asking for more is a validation error. Nothing not granted is reachable.
+A gated ability an Agent may be granted in its Agent Spec, such as running small generated scripts, outbound HTTP, remote MCP, long-running loops, or delegating to other Agents. The Catalogue implements it; the Spec switches it on; a Scope-level ceiling is merged as a maximum and a Spec asking for more is a validation error. Nothing not granted is reachable.
 _Avoid_: permission, feature flag
 
 **Script**:
@@ -57,7 +57,7 @@ The principal an Agent is acting for or with — the person chatting, or the per
 _Avoid_: end user, customer, principal, account
 
 **Thread**:
-One durable conversation between one Agent and one User, keyed (Scope, Agent, User, threadId); User may be absent for user-less Events. Driven by Turn inputs — User messages or Events. Holds the transcript and can be resumed or forked. Whether a User gets one Thread or many with an Agent is decided by the Channel binding, not by the Agent. A User's chat history with an Agent is simply their Threads with it.
+One durable conversation between one Agent and one User, keyed (Scope, Agent, User, threadId); User may be absent for user-less Events. Driven by Turn inputs — User messages or Events. Holds the transcript and can be resumed or forked. A Thread opened by Delegation is a child of the delegating Thread, acting for the same User. Whether a User gets one Thread or many with an Agent is decided by the Channel binding, not by the Agent. A User's chat history with an Agent is simply their Threads with it.
 _Avoid_: session, conversation, chat, channel
 
 **Event**:
@@ -119,3 +119,7 @@ _Avoid_: message (for the log entry), stream chunk, notification
 **Deliverer**:
 A Catalogue item — code, by name — that pushes a Thread's output to a Channel when no live subscriber is attached. Chosen per Thread from the last inbound input; invoked from a Queue, at-least-once.
 _Avoid_: webhook, callback, notifier, sender
+
+**Delegation**:
+One Agent handing a task to another Agent in the same Scope and receiving its result. The parent's Agent Spec lists, by name, the Agents it may delegate to; nothing not listed is reachable. The child runs under its own Agent Spec, in its own Thread, with fresh context and the parent's User; the parent receives only the child's final reply. Gated by a Capability. There is no separate "sub-agent" kind of thing — only Agents and the act of delegating.
+_Avoid_: sub-agent (for the child Agent), spawn, orchestration, handoff
