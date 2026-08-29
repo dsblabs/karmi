@@ -25,8 +25,12 @@ An external surface through which a human or event reaches a session — a chat 
 _Avoid_: integration, connector, frontend
 
 **Capability**:
-A gated ability an Agent may be granted in its Agent Spec, such as running small generated scripts, outbound HTTP, remote MCP, or long-running loops. The Catalogue implements it; the Spec switches it on. Nothing not granted is reachable.
+A gated ability an Agent may be granted in its Agent Spec, such as running small generated scripts, outbound HTTP, remote MCP, or long-running loops. The Catalogue implements it; the Spec switches it on; a Scope-level ceiling is merged as a maximum and a Spec asking for more is a validation error. Nothing not granted is reachable.
 _Avoid_: permission, feature flag
+
+**Script**:
+Model-written code run under the `scripts` Capability through the built-in `run_script` Tool. Two tiers behind one `Sandbox` seam: `isolate` (v0 — JS in a Dynamic Worker with no filesystem, egress, secrets or storage; its only API is the Agent's allow-resolved Tools, every call re-entering the Harness gate) and `container` (Sandbox SDK; specified later). Nested Tool calls are child Thread events, not model context; files come back as `artifacts: MediaRef[]`.
+_Avoid_: code execution, bash tool, sandbox (for the script itself), function calling
 
 **Tool**:
 A named action an Agent can call: a JSON-Schema input, annotations (read-only, destructive, …), optional usage instructions as a Fragment, an optional required Connection, and code that executes it. Arrives from the Catalogue (code), from a remote MCP server (runtime, named `server__tool`), or as a Framework built-in; identical to an Agent Spec either way.
