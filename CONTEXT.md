@@ -25,7 +25,7 @@ An external surface through which a human or event reaches a session — a chat 
 _Avoid_: integration, connector, frontend
 
 **Capability**:
-A gated ability an Agent may be granted in its Agent Spec, such as running small generated scripts, outbound HTTP, remote MCP, long-running loops, or delegating to other Agents. The Catalogue implements it; the Spec switches it on; a Scope-level ceiling is merged as a maximum and a Spec asking for more is a validation error. Nothing not granted is reachable.
+A gated ability an Agent may be granted in its Agent Spec, such as running small generated scripts, outbound HTTP, remote MCP, long-running turns (`longRunning`: Step, wall-clock and token budgets), or delegating to other Agents. The Catalogue implements it; the Spec switches it on; a Scope-level ceiling is merged as a maximum and a Spec asking for more is a validation error. Nothing not granted is reachable.
 _Avoid_: permission, feature flag
 
 **Script**:
@@ -63,6 +63,18 @@ _Avoid_: end user, customer, principal, account
 **Thread**:
 One durable conversation between one Agent and one User, keyed (Scope, Agent, User, threadId); User may be absent for user-less Events. Driven by Turn inputs — User messages or Events. Holds the transcript and can be resumed or forked. A Thread opened by Delegation is a child of the delegating Thread, acting for the same User. Whether a User gets one Thread or many with an Agent is decided by the Channel binding, not by the Agent. A User's chat history with an Agent is simply their Threads with it.
 _Avoid_: session, conversation, chat, channel
+
+**Turn**:
+One run of the Harness loop on a Thread, from a Turn input to `turn.completed` or `turn.failed`. Driven entirely by the Thread's Durable Object as a sequence of Steps, whoever triggered it; a connected client only subscribes. One Turn at a time per Thread; a Turn may be **parked** (awaiting an approval, a scheduled wait, a budget `continue`, or a Job) and still holds the Thread while parked.
+_Avoid_: request, run, session, invocation
+
+**Step**:
+The unit of a Turn that is persisted and recovered at a boundary: a **model Step** (one streamed model call) or a **tool Step** (one tool batch — parallel read-only Tools, or one mutating Tool). The event log is the only state at a boundary; after an eviction the unfinished Step re-runs, and a half-finished tool Step re-runs only Tools with no persisted result. Steps are kicked in-process; the DO alarm is a watchdog, not the driver.
+_Avoid_: iteration, tick, workflow step, phase
+
+**Job**:
+Durable work that outlives one Durable Object invocation and runs outside the Thread — a container-tier Script, a slow remote Tool, bulk Knowledge ingestion. Started by a Tool that returns `{ pending: jobId }`, which parks its tool Step; progress and completion re-enter the Thread as Events carrying `MediaRef`s. The interface is v0; a Cloudflare Workflow implementation is deferred until a Tool needs it.
+_Avoid_: workflow, task, background task, async tool
 
 **Event**:
 A non-chat Turn input: a typed JSON payload from a webhook, queue or schedule, concerning a User (or none), delivered into a Thread by the Channel binding and shown to the Agent through a Fragment. Not a Primitive of its own.
@@ -117,7 +129,7 @@ What drives one turn of a Thread: a User message (text and media Parts) or an Ev
 _Avoid_: request, prompt, payload
 
 **Thread event**:
-One entry in a Thread's ordered, persisted event log (`seq`-numbered): turn start/end, streamed deltas, completed parts, tool calls and results, approval requests, compaction. The single outbound shape — the transcript is derived from it, and clients replay from a `seq`.
+One entry in a Thread's ordered, persisted event log (`seq`-numbered): turn start/end, Step start/end, turn paused/resumed, streamed deltas, completed parts, tool calls and results, approval requests, Job progress, compaction. The single outbound shape — the transcript is derived from it, and clients replay from a `seq`.
 _Avoid_: message (for the log entry), stream chunk, notification
 
 **Deliverer**:
