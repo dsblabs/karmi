@@ -36,6 +36,10 @@ _Avoid_: code execution, bash tool, sandbox (for the script itself), function ca
 A named action an Agent can call: a JSON-Schema input, annotations (read-only, destructive, …), optional usage instructions as a Fragment, an optional required Connection, and code that executes it. Arrives from the Catalogue (code), from a remote MCP server (runtime, named `server__tool`), or as a Framework built-in; identical to an Agent Spec either way.
 _Avoid_: function, action, integration, capability
 
+**Provider Tool**:
+A Tool the model's provider executes inside its own turn — web search, web fetch, provider-side code execution — never the Harness. Granted through the `providerTools` Capability by abstract name; the provider adapter maps it to the native definition. Policy can only include or exclude it from the request (never `ask`); its call and byte-exact result are logged as `server_tool` events, distinct from Harness Tool events.
+_Avoid_: server tool, hosted tool, built-in tool, native tool
+
 **Permission Policy**:
 Data in an Agent Spec: ordered rules matching Tools by name and annotation, each resolving to allow, ask (pause for a human) or deny. Scope-wide defaults are merged into the Spec by the Platform; the Framework sees one resolved policy per Agent.
 _Avoid_: permission rules, ACL, guardrails
