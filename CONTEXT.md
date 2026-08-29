@@ -132,6 +132,14 @@ _Avoid_: request, prompt, payload
 One entry in a Thread's ordered, persisted event log (`seq`-numbered): turn start/end, Step start/end, turn paused/resumed, streamed deltas, completed parts, tool calls and results, approval requests, Job progress, compaction. The single outbound shape — the transcript is derived from it, and clients replay from a `seq`.
 _Avoid_: message (for the log entry), stream chunk, notification
 
+**Compaction**:
+A Harness Step that shrinks a Thread's model context when `contextTokens > window - reserveTokens`: walk back to a Turn boundary keeping `keepRecentTokens`, summarise everything before it, and append a `thread.compacted { firstKeptSeq, summary }` event. The log is never rewritten; the next context is Prompt + summary + events after `firstKeptSeq`. Summarising is client-side by default or delegated to the provider (Anthropic's `compaction` block) by config; `before-compact` / `after-compact` Hooks wrap it either way.
+_Avoid_: summarisation (for the Step), truncation, pruning, context reset
+
+**Spill**:
+The Harness rule that every tool result over the Agent's `context.toolOutput` limit is stored whole in R2 under the Thread as a `MediaRef` and shown to the model as head + tail + a truncation marker; the built-in `read_output` Tool re-reads it by ref. Always on, not a Capability.
+_Avoid_: overflow, artifact (for spilled output), truncation (for the storage)
+
 **Deliverer**:
 A Catalogue item — code, by name — that pushes a Thread's output to a Channel when no live subscriber is attached. Chosen per Thread from the last inbound input; invoked from a Queue, at-least-once.
 _Avoid_: webhook, callback, notifier, sender
