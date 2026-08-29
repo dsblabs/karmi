@@ -45,8 +45,12 @@ A Catalogue item — code that runs at a lifecycle point (before a tool call, af
 _Avoid_: middleware, plugin, interceptor, callback
 
 **Scope**:
-The isolation key every Primitive and all secrets/config resolve under. Nothing in one Scope can see another. The Framework keys by it; the Platform decides what it represents (a tenant, a user, a workspace).
-_Avoid_: tenant, organisation, account
+The isolation key every Primitive and all secrets/config resolve under, identified by an opaque string the Platform mints and the Framework never interprets. Nothing in one Scope can see another; the Framework offers no cross-Scope operation. The Platform decides what a Scope represents (a tenant, a user, a workspace) and keeps the list of them.
+_Avoid_: tenant, organisation, account, workspace
+
+**Deployment**:
+One installation of the Framework — a Worker with its Catalogue and deployment-wide defaults (providers, ceilings, policy) that every Scope inherits and may only tighten.
+_Avoid_: environment, instance, app
 
 **User**:
 The principal an Agent is acting for or with — the person chatting, or the person whose events are being processed. Keyed under a Scope; a Scope has many Users. Per-User things (profile, memory, history, user-level Connections) live under (Scope, User). The caller maps channel identities to a User before the Framework sees them; the Framework never authenticates.
