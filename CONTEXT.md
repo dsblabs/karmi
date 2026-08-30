@@ -85,7 +85,7 @@ An Event a Thread will receive at a future time — once (`at`, `delay`) or repe
 _Avoid_: job, cron job, timer, alarm (for the public thing), reminder (as the concept)
 
 **Connection**:
-A named, typed credential grant a Tool acts through, held at one of two levels: agent-level (Scope, Agent, name) — shared by every User of that Agent — or user-level (Scope, User, name) — granted by the User so the Agent acts on their behalf, usable across every Agent in the Scope. A Tool requires a Connection by name; user-level resolves before agent-level.
+A named, typed credential grant a Tool acts through, held at one of two levels: agent-level (Scope, Agent, name) — shared by every User of that Agent — or user-level (Scope, User, name) — granted by the User so the Agent acts on their behalf, usable across every Agent in the Scope. A Tool requires a Connection by name; user-level resolves before agent-level. An MCP server declares its level in ScopeConfig (`auth: none | static | oauth { level }`); an OAuth grant is the Connection `mcp:<serverId>`, its refresh token never leaves ScopeConfig, and a missing grant surfaces as an `approval.requested { kind: "connect" }` pause.
 _Avoid_: credential, integration, token, secret (for the grant itself)
 
 **Prompt**:
