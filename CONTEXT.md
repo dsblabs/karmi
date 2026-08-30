@@ -121,11 +121,15 @@ A configured actor the Framework runs: created from an Agent Spec and keyed (Sco
 _Avoid_: bot, assistant, persona, agent definition (for the running thing)
 
 **Agent Spec**:
-The plain-data description an Agent is born from: name, instructions (with per-model variants), model choice, and references by name to Catalogue items — Tools, Fragments, Skills, Knowledge, Retrievers — plus Connections, Capability grants and Memory profile fields. Contains no code; the Framework validates it and reports errors.
+The plain-data description an Agent is born from, identified by a caller-chosen `agentId` under a Scope: name, ordered Prompt entries (with per-model variants), model choice, references by name to Catalogue items — Tools, Skills, Knowledge, Retrievers, Hooks — each optionally carrying settings, plus Connection declarations (never credentials), Capability grants, a Memory profile schema and a Permission Policy. Contains no code. The Framework validates it against the Scope it is stored in and reports errors and warnings; a stored Spec carries a version the Framework mints, and a Turn works from one snapshot of it start to finish.
 _Avoid_: config, definition file, manifest, template
 
+**Prompt entry**:
+One item in an Agent Spec's ordered instructions: either literal text or a Catalogue Fragment by name with arguments, optionally limited to matching models. Every entry becomes a Fragment when the Prompt is evaluated.
+_Avoid_: prompt section, variant (for the entry), template
+
 **Catalogue**:
-Everything a developer defines in code and deploys with the Framework, available for Agent Specs to reference by name: Tools, Fragments, Skills, Retrievers. Shared by every Scope; the only place behaviour code lives.
+Everything a developer defines in code and deploys with the Framework, available for Agent Specs to reference by name: Tools, Fragments, Skills, Retrievers, Hooks, Deliverers, code-defined Agents. Items are pure definitions assembled explicitly at boot; names are unique per kind. Shared by every Scope; the only place behaviour code lives. Describable as data so a Platform can build its editors from it.
 _Avoid_: registry, library, plugins, toolbox
 
 **Channel binding**:
