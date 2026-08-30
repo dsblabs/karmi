@@ -49,12 +49,20 @@ A Catalogue item — code that runs at a lifecycle point (before a tool call, af
 _Avoid_: middleware, plugin, interceptor, callback
 
 **Scope**:
-The isolation key every Primitive and all secrets/config resolve under, identified by an opaque string the Platform mints and the Framework never interprets. Nothing in one Scope can see another; the Framework offers no cross-Scope operation. The Platform decides what a Scope represents (a tenant, a user, a workspace) and keeps the list of them.
+The isolation key every Primitive and all secrets/config resolve under, identified by an opaque string the Platform mints and the Framework never interprets. Nothing in one Scope can see another; the Framework offers no cross-Scope operation. A Scope is active, suspended, destroying or destroyed; suspension is reversible, while destruction permanently reserves its identity. The Platform decides what a Scope represents (a tenant, a user, a workspace) and keeps the list of them.
 _Avoid_: tenant, organisation, account, workspace
 
 **Deployment**:
 One installation of the Framework — a Worker with its Catalogue and deployment-wide defaults (providers, ceilings, policy) that every Scope inherits and may only tighten.
 _Avoid_: environment, instance, app
+
+**Provider credential**:
+A secret that authorises model-provider calls for one Scope. The Platform is its authority; the Framework may hold it in its default secret store or resolve it from a Platform-supplied secret store, but it is never part of an Agent Spec or Thread.
+_Avoid_: API key, BYOK key, provider config, Connection
+
+**Provider profile**:
+A named provider account available to a Scope, combining an adapter, gateway settings, model compatibility and a reference to either a Scope-owned or Deployment-owned Provider credential. An Agent selects a profile; `default` is only a conventional name, never an implicit fallback.
+_Avoid_: provider, account, API-key config, credential
 
 **User**:
 The principal an Agent is acting for or with — the person chatting, or the person whose events are being processed. Keyed under a Scope; a Scope has many Users. Per-User things (profile, memory, history, user-level Connections) live under (Scope, User). The caller maps channel identities to a User before the Framework sees them; the Framework never authenticates.
