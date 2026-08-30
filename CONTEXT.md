@@ -25,7 +25,7 @@ An external surface through which a human or event reaches a session — a chat 
 _Avoid_: integration, connector, frontend
 
 **Capability**:
-A gated ability an Agent may be granted in its Agent Spec, such as running small generated scripts, outbound HTTP, remote MCP, long-running turns (`longRunning`: Step, wall-clock and token budgets), or delegating to other Agents. The Catalogue implements it; the Spec switches it on; a Scope-level ceiling is merged as a maximum and a Spec asking for more is a validation error. Nothing not granted is reachable.
+A gated ability an Agent may be granted in its Agent Spec, such as running small generated scripts, outbound HTTP, remote MCP, long-running turns (`longRunning`: Step, wall-clock and token budgets), delegating to other Agents, or scheduling its own future wake-ups. The Catalogue implements it; the Spec switches it on; a Scope-level ceiling is merged as a maximum and a Spec asking for more is a validation error. Nothing not granted is reachable.
 _Avoid_: permission, feature flag
 
 **Script**:
@@ -77,8 +77,12 @@ Durable work that outlives one Durable Object invocation and runs outside the Th
 _Avoid_: workflow, task, background task, async tool
 
 **Event**:
-A non-chat Turn input: a typed JSON payload from a webhook, queue or schedule, concerning a User (or none), delivered into a Thread by the Channel binding and shown to the Agent through a Fragment. Not a Primitive of its own.
+A non-chat Turn input: a typed JSON payload from a webhook, queue or Schedule, concerning a User (or none), delivered into a Thread by the Channel binding (or by the Thread's own Schedule) and shown to the Agent through a Fragment. Not a Primitive of its own.
 _Avoid_: trigger (for the input), message, notification, job
+
+**Schedule**:
+An Event a Thread will receive at a future time — once (`at`, `delay`) or repeatedly (`cron`). Belongs to the Thread it wakes; created by code through the Thread API, or by the Agent itself for its own Thread under the `scheduling` Capability. A firing is an ordinary Turn input and follows the one-Turn-at-a-time rule; a recurring Schedule holds at most one undelivered firing. The only public face of the Framework's timer — Step watchdogs and parked-Turn timeouts ride the same alarm but are not Schedules.
+_Avoid_: job, cron job, timer, alarm (for the public thing), reminder (as the concept)
 
 **Connection**:
 A named, typed credential grant a Tool acts through, held at one of two levels: agent-level (Scope, Agent, name) — shared by every User of that Agent — or user-level (Scope, User, name) — granted by the User so the Agent acts on their behalf, usable across every Agent in the Scope. A Tool requires a Connection by name; user-level resolves before agent-level.
