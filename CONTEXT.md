@@ -157,7 +157,7 @@ One Agent handing a task to another Agent in the same Scope and receiving its re
 _Avoid_: sub-agent (for the child Agent), spawn, orchestration, handoff
 
 **Usage record**:
-A `usage.recorded` Thread event the Harness persists in the same transaction as the Step it accounts for — kind `model` (tokens incl. cache and reasoning, model, provider, `serverToolCalls`), `compaction` or `script` (tier, wall ms) — stamped with `{ scope, agent, user?, threadId, parent?, turn, seq }`. Carries `cost` only when the provider or gateway reported one; karmi never prices tokens. Child Threads record their own with `parent` set; nothing is counted twice.
+A `usage.recorded` Thread event the Harness persists in the same transaction as the Step it accounts for — kind `model` (tokens incl. cache and reasoning, model, provider, `serverToolCalls`), `compaction` or `script` (tier, wall ms) — stamped with `{ scope, agent, user?, threadId, parent?, turn, seq }`. Carries `cost { amount, currency, source, basis }` only when the provider or gateway reported one in the response (OpenRouter `usage.cost`, Vercel AI Gateway `providerMetadata.gateway.cost` — both on the final stream part); Cloudflare AI Gateway reports no cost in the response, so the record keeps its `cf-aig-log-id` under `gateway` for the Platform to join against the gateway log instead. karmi never prices tokens. Child Threads record their own with `parent` set; nothing is counted twice.
 _Avoid_: metric, billing event, usage log, telemetry
 
 **UsageHandler**:
