@@ -175,3 +175,7 @@ _Avoid_: metric, billing event, usage log, telemetry
 **UsageHandler**:
 A Catalogue item the Platform supplies to receive Usage records in batches, at-least-once via a Queue with `threadId:seq` as the idempotency key — the billing seam. Its failure retries and never fails a Turn. karmi keeps no per-Scope counters; Scope-wide spend limits are the Platform's, enforced through this handler.
 _Avoid_: billing hook, metering, usage callback, meter
+
+**Approval**:
+A pause in a Turn that only a human answer can end, surfaced as an `approval.requested` Thread event and resolved by an `approval.resolved` one. Three kinds: `tool` (a Permission Policy `ask` on a Tool call), `continue` (a `longRunning` budget exhausted) and `connect` (a missing user-level Connection, answered by completing OAuth). The Framework records who answered (`by`) but never authorises the answerer — the Platform does. An answer is `allow` or `deny`, never an edit of the call; a timeout (`approvals.timeout`, Scope ceiling as max) and a Turn cancel are denies. Allowed calls in the same tool batch run before the pause; a denied call is an `isError` Tool result the model sees next. An `allow` may be remembered for the rest of the Thread, by Tool name only. A delegated child's Approvals are re-emitted on its parent Thread and answered there.
+_Avoid_: permission prompt, confirmation, consent (for the pause), HITL request
