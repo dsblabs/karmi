@@ -160,6 +160,10 @@ _Avoid_: summarisation (for the Step), truncation, pruning, context reset
 The Harness rule that every tool result over the Agent's `context.toolOutput` limit is stored whole in R2 under the Thread as a `MediaRef` and shown to the model as head + tail + a truncation marker; the built-in `read_output` Tool re-reads it by ref. Always on, not a Capability.
 _Avoid_: overflow, artifact (for spilled output), truncation (for the storage)
 
+**Deferred Tool**:
+A Tool the Agent may call but whose definition is kept out of the model's context until loaded: the model sees only its name in an index and loads it through the always-present `tool_search` built-in. Which Tools defer is a `context.tools` setting on the Agent Spec (`auto` — defer all deferrable Tools once their definitions exceed a share of the window — `always`, or `never`), with per-reference `alwaysLoad` pins; Framework built-ins and Skill Tools never defer. A load is a `tools.loaded` Thread event, so loaded Tools persist across Turns until Compaction drops them. Permission Policy applies to the whole Tool set before deferral: denied Tools are never indexed, `ask` Tools pause at call time as usual.
+_Avoid_: lazy tool, hidden tool, tool search (for the Tool itself), dynamic tools
+
 **Deliverer**:
 A Catalogue item — code, by name — that pushes a Thread's output to a Channel when no live subscriber is attached. Chosen per Thread from the last inbound input; invoked from a Queue, at-least-once.
 _Avoid_: webhook, callback, notifier, sender
