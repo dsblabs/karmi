@@ -81,7 +81,7 @@ One run of the Harness loop on a Thread, from a Turn input to `turn.completed` o
 _Avoid_: request, run, session, invocation
 
 **Step**:
-The unit of a Turn that is persisted and recovered at a boundary: a **model Step** (one streamed model call) or a **tool Step** (one tool batch — parallel read-only Tools, or one mutating Tool). The event log is the only state at a boundary; after an eviction the unfinished Step re-runs, and a half-finished tool Step re-runs only Tools with no persisted result. Steps are kicked in-process; the DO alarm is a watchdog, not the driver.
+The unit of a Turn that is persisted and recovered at a boundary: a **model Step** (one streamed model call) or a **tool Step** (one tool batch — parallel read-only Tools, or one mutating Tool). The event log is the only state at a boundary; after an eviction the unfinished Step re-runs, and a half-finished tool Step re-runs only Tools with no persisted result — and only those annotated read-only or idempotent; any other unfinished call gets a Harness-synthesised **interrupted** result (`isError`, `interrupted: { attempt }`) telling the model the action may or may not have happened, never a silent second run. Steps are kicked in-process; the DO alarm is a watchdog, not the driver.
 _Avoid_: iteration, tick, workflow step, phase
 
 **Job**:
