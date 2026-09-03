@@ -89,7 +89,7 @@ Durable work that outlives one Durable Object invocation and runs outside the Th
 _Avoid_: workflow, task, background task, async tool
 
 **Event**:
-A non-chat Turn input: a typed JSON payload from a webhook, queue or Schedule, concerning a User (or none), delivered into a Thread by the Channel binding (or by the Thread's own Schedule) and shown to the Agent through a Fragment. Not a Primitive of its own.
+A non-chat Turn input: a typed JSON payload from a webhook, queue, fleet cron or Schedule, concerning a User (or none), delivered into a Thread by the caller's own code (or by the Thread's own Schedule) and shown to the Agent through a Fragment. One shape from every source: the `type` is namespaced by the caller and never interpreted by the Framework, which keeps no taxonomy of where Events come from and does not dedupe repeated deliveries. Not a Primitive of its own.
 _Avoid_: trigger (for the input), message, notification, job
 
 **Schedule**:
