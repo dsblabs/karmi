@@ -160,6 +160,10 @@ _Avoid_: summarisation (for the Step), truncation, pruning, context reset
 The Harness rule that every tool result over the Agent's `context.toolOutput` limit is stored whole in R2 under the Thread as a `MediaRef` and shown to the model as head + tail + a truncation marker; the built-in `read_output` Tool re-reads it by ref. Always on, not a Capability.
 _Avoid_: overflow, artifact (for spilled output), truncation (for the storage)
 
+**MediaRef**:
+The reference by which binary content travels through karmi: `{ id, key, mimeType, bytes, name? }` pointing at an R2 object under `{scope}/media/{threadId}/`, minted only by the Framework (`uploads.put()`, a Tool's `ctx.media.put()`, or the Harness spilling model/Tool-produced bytes at ingress) with the MIME type sniffed and the size measured. Bytes never enter the event log — events carry the ref; provider adapters re-inline base64 at request-build per the model's capabilities, and Channels read via short-lived presigned URLs from `karmi.media.url(ref)`. Media lives and dies with its Thread; a ref whose object is gone degrades to a text placeholder, never a failed Turn.
+_Avoid_: attachment (for the ref), file handle, URL (for the ref), blob
+
 **Deferred Tool**:
 A Tool the Agent may call but whose definition is kept out of the model's context until loaded: the model sees only its name in an index and loads it through the always-present `tool_search` built-in. Which Tools defer is a `context.tools` setting on the Agent Spec (`auto` — defer all deferrable Tools once their definitions exceed a share of the window — `always`, or `never`), with per-reference `alwaysLoad` pins; Framework built-ins and Skill Tools never defer. A load is a `tools.loaded` Thread event, so loaded Tools persist across Turns until Compaction drops them. Permission Policy applies to the whole Tool set before deferral: denied Tools are never indexed, `ask` Tools pause at call time as usual.
 _Avoid_: lazy tool, hidden tool, tool search (for the Tool itself), dynamic tools
