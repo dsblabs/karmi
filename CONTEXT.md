@@ -29,8 +29,12 @@ A gated ability an Agent may be granted in its Agent Spec, such as running small
 _Avoid_: permission, feature flag
 
 **Script**:
-Model-written code run under the `scripts` Capability through the built-in `run_script` Tool. Two tiers behind one `Sandbox` seam: `isolate` (v0 — JS in a Dynamic Worker with no filesystem, egress, secrets or storage; its only API is the Agent's allow-resolved Tools, every call re-entering the Harness gate) and `container` (Sandbox SDK; specified later). Nested Tool calls are child Thread events, not model context; files come back as `artifacts: MediaRef[]`.
+Model-written code run under the `scripts` Capability through the built-in `run_script` Tool. Two tiers behind one `Sandbox` seam: `isolate` (v0 — JS in a Dynamic Worker with no filesystem, egress, secrets or storage; its only API is the Agent's allow-resolved Tools, every call re-entering the Harness gate) and `container` (shell or Python in a Sandbox SDK container with a Workspace, allow-listed egress and no Tool bridge). Nested Tool calls are child Thread events, not model context; files come back as `artifacts: MediaRef[]`. A container Script still running at `wallMs` is promoted to a Job.
 _Avoid_: code execution, bash tool, sandbox (for the script itself), function calling
+
+**Workspace**:
+The disk of a container-tier Script: one container per Thread, created on the first `run_script` of a Turn and destroyed at Turn end (or after `idleMs`, cancel, or Thread destroy). An ephemeral cache, never durable truth — `/in` is materialised from the `MediaRef`s a call names, `/out` is exported to R2 as artifacts when the Script finishes, everything else may vanish at any time.
+_Avoid_: session filesystem, virtual filesystem, persistent volume
 
 **Tool**:
 A named action an Agent can call: a JSON-Schema input, annotations (read-only, destructive, …), optional usage instructions as a Fragment, an optional required Connection, and code that executes it. Arrives from the Catalogue (code), from a remote MCP server (runtime, named `server__tool`), or as a Framework built-in; identical to an Agent Spec either way.
