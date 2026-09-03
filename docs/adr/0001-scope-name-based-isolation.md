@@ -12,7 +12,7 @@ Every Primitive, secret and config in karmi resolves under a Scope, and nothing 
 - All Durable Object names are `{scope}/{kind}/{id}` via `idFromName`; all R2 keys are prefixed `{scope}/`. One internal `keys` module mints them and is reachable only through the `karmi.scope(id)` handle — user code never constructs a storage name.
 - Per-Scope state (provider/gateway config, Capability ceilings, policy defaults, versioned Agent Specs, MCP registry, Thread and User indexes) lives in one SQLite `ScopeConfig` DO per Scope. No D1 in v0.
 - Deployment-wide defaults come from code; Scope config overrides field-by-field, ceilings merge as a minimum.
-- Workers for Platforms isolates, per-Scope limits and Outbound Workers are a Platform-layer addition for tenant-authored code; the Framework does not require them.
+- Workers for Platforms isolates, per-Scope limits and Outbound Workers are a Platform-layer addition for tenant-authored code; the Framework does not require them. Outbound Workers never intercept Durable Object `fetch`, so even under Workers for Platforms they cannot police karmi's own provider/MCP egress; that is enforced in-process by a per-Scope `fetch` wrapper (`scopedFetch`) whose host set is derived from Scope config, with `egress.mcpHosts` as the only egress field (a registration ceiling, merged as an intersection). Decided in [Outbound fetch routing](https://github.com/dsblabs/karmi/issues/37).
 
 ## Consequences
 
