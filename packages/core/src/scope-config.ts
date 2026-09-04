@@ -10,7 +10,7 @@ import { pointer } from "./validate.js";
 
 // A credential is always a reference into a secret store; a value here is the one thing this schema exists to refuse.
 const CREDENTIAL_REF = /^(scope|deployment):[A-Za-z0-9_-]{1,64}$/;
-const SECRET_LOOKING_KEY = /key|secret|token|password/i;
+const SECRET_LOOKING_KEY = /key|secret|token|password|authorization/i;
 
 const credentialRef = z.string().check(z.regex(CREDENTIAL_REF, "must be scope:<name> or deployment:<name>, never a value"));
 
@@ -116,18 +116,20 @@ export function parseScopeConfig(document: unknown, providers?: Record<string, u
   if (!result.success) {
     const issue = result.error.issues[0]!;
     const path = pointer(issue.path);
-    if (issue.code === "unrecognized_keys" && issue.keys.some((key) => SECRET_LOOKING_KEY.test(key))) {
-      throw new KarmiError("config.secret-value", `Secret values never enter the Scope config (at "${path}"); store them with scope.credentials.put and reference them as scope:<name>.`);
-    }
+    if (issue.code === "unrecognized_keys" && issue.keys.some((key) => SECRET_LOOKING_KEY.test(key))) throw secretValue(path);
     throw invalid(path, issue.message);
   }
   for (const [profile, { adapter, headers }] of Object.entries(result.data.providers ?? {})) {
     if (providers && !(adapter in providers)) throw invalid(`/providers/${profile}/adapter`, `no Provider "${adapter}" is registered in createKarmi({ providers }).`);
     // A header that authenticates is a credential like any other.
-    const secret = Object.keys(headers ?? {}).find((key) => SECRET_LOOKING_KEY.test(key) || /authorization/i.test(key));
-    if (secret) throw new KarmiError("config.secret-value", `Secret values never enter the Scope config (at "/providers/${profile}/headers/${secret}"); store them with scope.credentials.put and reference them as scope:<name>.`);
+    const secret = Object.keys(headers ?? {}).find((key) => SECRET_LOOKING_KEY.test(key));
+    if (secret) throw secretValue(`/providers/${profile}/headers/${secret}`);
   }
   return result.data as ScopeConfigDocument;
+}
+
+function secretValue(path: string): KarmiError {
+  return new KarmiError("config.secret-value", `Secret values never enter the Scope config (at "${path}"); store them with scope.credentials.put and reference them as scope:<name>.`);
 }
 
 function invalid(path: string, message: string): KarmiError {

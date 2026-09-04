@@ -65,6 +65,8 @@ export function prepareMessages(messages: Message[], target: ReplayTarget): Repl
       }
       case "toolResult": {
         const id = idMap.get(message.toolCallId) ?? message.toolCallId;
+        // A result whose call was dropped with a failed assistant turn has nothing to answer.
+        if (!pending.some((call) => call.id === id)) break;
         answered.add(id);
         out.push(id === message.toolCallId ? message : { ...message, toolCallId: id });
         break;

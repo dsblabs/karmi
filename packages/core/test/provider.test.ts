@@ -32,6 +32,13 @@ describe("fakeProvider", () => {
     expect(events.at(-1)).toEqual({ type: "message.end", stopReason: "tool_use", usage: { input: 12, output: 3, cacheRead: 5, cacheWrite: 0 } });
   });
 
+  it("gives unnamed tool calls ids by block index, stable across calls", async () => {
+    const provider = fakeProvider(() => [reply.text("x"), reply.toolCall("a"), reply.toolCall("b")]);
+    const ids = (events: ProviderEvent[]) => events.flatMap((e) => (e.type === "part" && e.block.type === "tool_call" ? [e.block.id] : []));
+    expect(ids(await collect(provider, request("1")))).toEqual(["call_1", "call_2"]);
+    expect(ids(await collect(provider, request("2")))).toEqual(["call_1", "call_2"]);
+  });
+
   it("ends with an error event instead of throwing, and lets a test pick the stop reason", async () => {
     const provider = fakeProvider([reply.error({ code: "rate_limit", retryable: true }), [reply.text("cut"), reply.stop("max_tokens")]]);
     expect((await collect(provider, request("a"))).at(-1)).toEqual({ type: "error", error: { code: "rate_limit", message: "rate_limit", retryable: true } });

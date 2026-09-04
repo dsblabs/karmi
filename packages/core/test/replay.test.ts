@@ -75,6 +75,11 @@ describe("prepareMessages", () => {
       const messages = prepareMessages([user("q"), assistant([{ type: "text", text: "partial" }], claude, "aborted"), assistant([call("c1")], claude, "error"), user("again")], claude).messages;
       expect(messages).toEqual([user("q"), user("again")]);
     });
+
+    it("drops results whose call went with a dropped assistant message", () => {
+      const messages = prepareMessages([user("q"), assistant([call("c1")], claude, "error"), result("c1"), user("again")], claude).messages;
+      expect(messages).toEqual([user("q"), user("again")]);
+    });
   });
 
   describe("system placement", () => {

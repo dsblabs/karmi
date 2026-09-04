@@ -7,7 +7,7 @@ import type { ContentBlock, ModelCapabilities, Provider, ProviderError, Provider
 export type ReplyPart =
   | { part: "text"; chunks: string[] }
   | { part: "reasoning"; chunks: string[] }
-  | { part: "toolCall"; id: string; name: string; input: unknown }
+  | { part: "toolCall"; id?: string; name: string; input: unknown }
   | { part: "usage"; usage: Partial<Usage> }
   | { part: "raw"; raw: unknown }
   | { part: "error"; error: ProviderError }
@@ -35,14 +35,13 @@ export interface FakeProvider extends Provider {
   readonly requests: ProviderRequest[];
 }
 
-let nextCallId = 0;
-
 /** Build a reply piece by piece: `[reply.reasoning("hmm"), reply.text("Sunny"), reply.toolCall("weather", { city })]`. */
 export const reply = {
   /** One `delta` per chunk, then the joined text as a `part`. */
   text: (...chunks: string[]): ReplyPart => ({ part: "text", chunks }),
   reasoning: (...chunks: string[]): ReplyPart => ({ part: "reasoning", chunks }),
-  toolCall: (name: string, input: unknown = {}, id = `call_${++nextCallId}`): ReplyPart => ({ part: "toolCall", id, name, input }),
+  /** Without an id the call gets `call_<block index>`, so transcripts stay stable across test order. */
+  toolCall: (name: string, input: unknown = {}, id?: string): ReplyPart => (id === undefined ? { part: "toolCall", name, input } : { part: "toolCall", id, name, input }),
   usage: (usage: Partial<Usage>): ReplyPart => ({ part: "usage", usage }),
   raw: (raw: unknown): ReplyPart => ({ part: "raw", raw }),
   /** Ends the stream with an `error` event instead of `message.end`. */
@@ -54,7 +53,10 @@ export const reply = {
 const DEFAULT_CAPABILITIES: ModelCapabilities = { image: true, audio: true, video: true, pdf: true };
 const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
-/** A scripted Provider: a function of `{ request, index }`, or a list consumed one reply per call. */
+/**
+ * A scripted Provider: a function of `{ request, index }`, or a list consumed one reply per call.
+ * In the list form each element is one call's reply, so a multi-part reply is nested: `[[reply.text("a"), reply.toolCall("w")]]`.
+ */
 export function fakeProvider(script: ReplyScript | Reply[], options: FakeProviderOptions = {}): FakeProvider {
   const requests: ProviderRequest[] = [];
   const next: ReplyScript = typeof script === "function" ? script : ({ index }) => {
@@ -110,7 +112,8 @@ export function toEvents(reply: Reply, model: string): ProviderEvent[] {
       }
       case "toolCall": {
         events.push({ type: "delta", index, kind: "tool_input", text: JSON.stringify(part.input) });
-        events.push({ type: "part", index: index++, block: { type: "tool_call", id: part.id, name: part.name, input: part.input } });
+        events.push({ type: "part", index, block: { type: "tool_call", id: part.id ?? `call_${index}`, name: part.name, input: part.input } });
+        index++;
         if (stopReason === "end_turn") stopReason = "tool_use";
         break;
       }
