@@ -45,7 +45,7 @@ A Tool the model's provider executes inside its own turn — web search, web fet
 _Avoid_: server tool, hosted tool, built-in tool, native tool
 
 **Permission Policy**:
-Data in an Agent Spec: ordered rules matching Tools by name and annotation, each resolving to allow, ask (pause for a human) or deny. Scope-wide defaults are merged into the Spec by the Platform; the Framework sees one resolved policy per Agent.
+Data in an Agent Spec: ordered rules matching Tools by name and annotation, each resolving to allow, ask (pause for a human) or deny. Scope config and Deployment defaults carry rules of their own; the Framework resolves one policy per Agent, consulting the Scope's rules first, then the Deployment's, then the Spec's own.
 _Avoid_: permission rules, ACL, guardrails
 
 **Hook**:

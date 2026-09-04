@@ -28,6 +28,8 @@ export interface Catalogue {
   readonly agents: ReadonlyMap<string, Agent>;
   /** The Catalogue as data, so a Platform can build its editors from it. */
   describe(): CatalogueDescription;
+  /** Digest of `describe()`, stored with each Agent Spec version so a changed Catalogue flags it for revalidation. */
+  fingerprint(): Promise<string>;
 }
 
 export interface CatalogueDescription {
@@ -101,7 +103,17 @@ export function assembleCatalogue(input: CatalogueInput): Catalogue {
     if (agents.has(agent.agentId)) throw new KarmiError("name.duplicate", `Duplicate agent "${agent.agentId}" in the Catalogue.`);
     agents.set(agent.agentId, agent);
   }
-  const catalogue: Catalogue = { tools, fragments, skills, retrievers, hooks, agents, describe: () => describe(catalogue) };
+  let fingerprint: Promise<string> | undefined;
+  const catalogue: Catalogue = {
+    tools,
+    fragments,
+    skills,
+    retrievers,
+    hooks,
+    agents,
+    describe: () => describe(catalogue),
+    fingerprint: () => (fingerprint ??= digest(JSON.stringify(catalogue.describe()))),
+  };
   assertAgentsResolve(catalogue);
   return catalogue;
 }
@@ -152,4 +164,9 @@ function describe(c: Omit<Catalogue, "describe">): CatalogueDescription {
     hooks: [...c.hooks.values()].map((h) => ({ name: h.name, point: h.point, ...optional("description", h.description) })),
     agents: [...c.agents.values()].map((a) => ({ agentId: a.agentId, name: a.spec.name, ...optional("description", a.spec.description) })),
   };
+}
+
+async function digest(text: string): Promise<string> {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }

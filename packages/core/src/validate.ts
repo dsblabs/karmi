@@ -1,12 +1,16 @@
 import * as z from "zod/mini";
 import { AgentSpecSchema, type NormalizedAgentSpec } from "./agent-spec.js";
+import type { AgentSpec, Capabilities, MemoryProfileProperty } from "./agent.js";
 import type { Catalogue } from "./catalogue.js";
 import { matchGlob } from "./glob.js";
 import { BUILT_IN_TOOL_NAMES, IDENTIFIER } from "./names.js";
+import type { Ceilings, ScopeConfigDocument } from "./scope-config.js";
 import type { Schema } from "./schema.js";
 import type { Tool } from "./tool.js";
 
-// Shape and reference layers of Agent Spec validation; the Scope-resolved layer arrives with the ScopeConfig DO.
+// The three layers of Agent Spec validation: shape (zod), references (Catalogue), Scope-resolved (ceilings,
+// Provider profiles, the other Agents in the Scope). MCP registry and Connection-value checks join the
+// Scope layer with the MCP tickets.
 
 export const ISSUE_CODES = [
   "shape.invalid-type",
@@ -36,6 +40,14 @@ export const ISSUE_CODES = [
   "delegation.no-delegates",
   "instructions.empty",
   "models.unmatched",
+  "provider.profile.required",
+  "provider.profile.unknown",
+  "provider.model.unsupported",
+  "capability.unavailable",
+  "capability.over-ceiling",
+  "approvals.over-ceiling",
+  "ref.agent.unknown",
+  "memory.profile.conflict",
 ] as const;
 export type IssueCode = (typeof ISSUE_CODES)[number];
 
@@ -53,6 +65,12 @@ export interface ValidationResult {
   issues: Issue[];
   /** Present when there are no errors; warnings never block. */
   normalized?: NormalizedAgentSpec;
+}
+
+/** What the Scope layer sees: the resolved (Deployment ≤ Scope) config and the Scope's other Agents. */
+export interface ScopeContext {
+  config: ScopeConfigDocument;
+  agents: readonly { agentId: string; spec: AgentSpec }[];
 }
 
 interface McpReference {
@@ -98,14 +116,15 @@ class Issues {
   }
 }
 
-/** Validates a Spec against the Catalogue alone; needs no Scope, so a Platform can run it anywhere. */
-export function validateAgentSpec(spec: unknown, catalogue: Catalogue): ValidationResult {
+/** Without a Scope only the shape and reference layers run, so a Platform can check a Spec anywhere. */
+export function validateAgentSpec(spec: unknown, catalogue: Catalogue, scope?: ScopeContext): ValidationResult {
   const parsed = z.safeParse(AgentSpecSchema, spec);
   if (!parsed.success) {
     return { ok: false, issues: parsed.error.issues.map(shapeIssue) };
   }
   const issues = new Issues();
   new ReferenceChecker(parsed.data, catalogue, issues).run();
+  if (scope) new ScopeChecker(parsed.data, catalogue, scope, issues).run();
   const ok = issues.list.every((issue) => issue.severity !== "error");
   return { ok, issues: issues.list, ...(ok && { normalized: parsed.data }) };
 }
@@ -338,4 +357,119 @@ class ReferenceChecker {
       }
     }
   }
+}
+
+class ScopeChecker {
+  constructor(
+    private readonly spec: NormalizedAgentSpec,
+    private readonly catalogue: Catalogue,
+    private readonly scope: ScopeContext,
+    private readonly issues: Issues,
+  ) {}
+
+  run(): void {
+    this.provider();
+    this.ceilings();
+    this.delegates();
+    this.memoryProfile();
+  }
+
+  private provider(): void {
+    const { model } = this.spec;
+    const providers = this.scope.config.providers ?? {};
+    // A Spec may leave the choice open only when the Scope has just one profile; there is no magic name.
+    const profileName = model.providerProfile ?? (Object.keys(providers).length === 1 ? Object.keys(providers)[0] : undefined);
+    if (profileName === undefined) {
+      const profiles = Object.keys(providers);
+      const hint = profiles.length === 0 ? "the Scope has no Provider profiles" : `one of ${profiles.map((p) => `"${p}"`).join(", ")}`;
+      this.issues.error("provider.profile.required", "/model", `Set model.providerProfile: ${hint}.`, { profiles });
+      return;
+    }
+    const profile = providers[profileName];
+    if (!profile) {
+      this.issues.error("provider.profile.unknown", "/model/providerProfile", `Provider profile "${profileName}" is not configured for this Scope.`, { profile: profileName });
+      return;
+    }
+    const globs = profile.models ?? [`${profile.adapter}/*`];
+    const check = (id: string, path: string) => {
+      if (!globs.some((glob) => matchGlob(glob, id))) {
+        this.issues.error("provider.model.unsupported", path, `Provider profile "${profileName}" does not serve "${id}".`, { profile: profileName, model: id, models: globs });
+      }
+    };
+    check(model.id, "/model/id");
+    (model.fallbacks ?? []).forEach((id, i) => check(id, `/model/fallbacks/${i}`));
+  }
+
+  private ceilings(): void {
+    const ceilings = this.scope.config.ceilings ?? {};
+    const capabilities = this.spec.capabilities ?? {};
+    for (const key of Object.keys(capabilities) as (keyof Capabilities)[]) {
+      const ceiling = ceilings[key];
+      const path = `/capabilities/${key}`;
+      if (ceiling === false) {
+        this.issues.error("capability.unavailable", path, `The \`${key}\` Capability is not available in this Scope.`);
+      } else if (ceiling !== undefined) {
+        this.overCeiling(capabilities[key] as Record<string, unknown>, ceiling as Record<string, unknown>, path);
+      }
+    }
+    const timeout = this.spec.approvals?.timeout;
+    const maxTimeout = ceilings.approvals?.timeout;
+    if (timeout !== undefined && maxTimeout !== undefined && timeout > maxTimeout) {
+      this.issues.error("approvals.over-ceiling", "/approvals/timeout", `Approval timeout ${timeout} exceeds the Scope ceiling ${maxTimeout}.`, { requested: timeout, ceiling: maxTimeout });
+    }
+  }
+
+  // Mirrors `tighten` in scope-config.ts: numbers are maxima, booleans and tiers are the most a Spec may ask, lists are allow-lists.
+  private overCeiling(asked: Record<string, unknown>, ceiling: Record<string, unknown>, path: string): void {
+    for (const [key, max] of Object.entries(ceiling)) {
+      const value = asked[key];
+      if (value === undefined || max === undefined) continue;
+      const at = `${path}/${key}`;
+      const over = (requested: unknown, limit: unknown) =>
+        this.issues.error("capability.over-ceiling", at, `Requested ${JSON.stringify(requested)} exceeds the Scope ceiling ${JSON.stringify(limit)}.`, { requested, ceiling: limit });
+      if (typeof max === "number") {
+        if (typeof value === "number" && value > max) over(value, max);
+      } else if (typeof max === "boolean") {
+        if (value === true && !max) over(value, max);
+      } else if (Array.isArray(max)) {
+        (value as unknown[]).forEach((item, i) => {
+          if (!max.includes(item)) this.issues.error("capability.over-ceiling", `${at}/${i}`, `${JSON.stringify(item)} is outside the Scope ceiling ${JSON.stringify(max)}.`, { requested: item, ceiling: max });
+        });
+      } else if (key === "tier") {
+        if (value === "container" && max === "isolate") over(value, max);
+      } else {
+        this.overCeiling(value as Record<string, unknown>, max as Record<string, unknown>, at);
+      }
+    }
+  }
+
+  private delegates(): void {
+    (this.spec.delegates ?? []).forEach((agentId, i) => {
+      if (this.catalogue.agents.has(agentId) || this.scope.agents.some((agent) => agent.agentId === agentId)) return;
+      this.issues.error("ref.agent.unknown", `/delegates/${i}`, `No Agent "${agentId}" exists in this Scope.`, { agentId });
+    });
+  }
+
+  // Memory is shared by every Agent in the Scope, so the Profile is a union: one field, one type.
+  private memoryProfile(): void {
+    const properties = this.spec.memory?.profile?.properties;
+    if (!properties) return;
+    for (const other of this.scope.agents) {
+      if (other.agentId === this.spec.agentId) continue;
+      for (const [field, property] of Object.entries(other.spec.memory?.profile?.properties ?? {})) {
+        const mine = (properties[field] as MemoryProfileProperty | undefined)?.type;
+        const theirs = property.type;
+        if (mine === undefined || theirs === undefined || sameType(mine, theirs)) continue;
+        this.issues.error("memory.profile.conflict", `/memory/profile/properties/${field}`, `Memory profile field "${field}" is ${JSON.stringify(theirs)} in Agent "${other.agentId}".`, {
+          agentId: other.agentId,
+          type: theirs,
+        });
+      }
+    }
+  }
+}
+
+function sameType(a: unknown, b: unknown): boolean {
+  const normalise = (type: unknown) => JSON.stringify(toList(type as string | string[]).sort());
+  return normalise(a) === normalise(b);
 }
