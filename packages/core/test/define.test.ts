@@ -38,11 +38,11 @@ describe("define*", () => {
 
   it("validates agentId separately from Catalogue names", () => {
     expect(defineAgent({ agentId: "Concierge_1", name: "Concierge", instructions: [{ text: "hi" }], model: { id: "anthropic/claude-sonnet-5" } }).agentId).toBe("Concierge_1");
-    expect(() => defineAgent({ agentId: "bad id", name: "x", instructions: [], model: { id: "m" } })).toThrow(KarmiError);
+    expect(() => defineAgent({ agentId: "bad id", name: "x", instructions: [], model: { id: "anthropic/m" } })).toThrow(KarmiError);
   });
 
   it("deep-freezes an Agent Spec", () => {
-    const agent = defineAgent({ agentId: "a", name: "A", instructions: [{ text: "hi" }], model: { id: "m" }, tools: ["echo"] });
+    const agent = defineAgent({ agentId: "a", name: "A", instructions: [{ text: "hi" }], model: { id: "anthropic/m" }, tools: ["echo"] });
     expect(Object.isFrozen(agent.spec.instructions)).toBe(true);
     expect(Object.isFrozen(agent.spec.model)).toBe(true);
   });

@@ -1,4 +1,21 @@
-export { defineAgent, type Agent, type AgentSpec, type PromptEntry, type ToolReference, type SkillReference, type KnowledgeReference, type PolicyRule } from "./agent.js";
+export {
+  defineAgent,
+  type Agent,
+  type AgentSpec,
+  type PromptEntry,
+  type ToolReference,
+  type SkillReference,
+  type KnowledgeReference,
+  type PolicyRule,
+  type ConnectionDeclaration,
+  type Capabilities,
+  type ProviderToolName,
+  type MemoryProfileSchema,
+  type MemoryProfileProperty,
+  type ContextConfig,
+} from "./agent.js";
+export { AgentSpecSchema, agentSpecJsonSchema, AGENT_SPEC_DEFAULTS, PROVIDER_TOOL_NAMES, type NormalizedAgentSpec } from "./agent-spec.js";
+export { validateAgentSpec, ISSUE_CODES, type Issue, type IssueCode, type ValidationResult } from "./validate.js";
 export { defineFragment, type Fragment, type FragmentContext, type FragmentRender } from "./fragment.js";
 export { defineHook, HOOK_POINTS, type Hook, type HookContext, type HookPoint } from "./hook.js";
 export { defineRetriever, type Retriever, type RetrieverContext, type KnowledgeRef, type KnowledgeDocument, type Passage } from "./retriever.js";
