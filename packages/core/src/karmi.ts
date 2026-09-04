@@ -31,7 +31,7 @@ export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
   assertCompatibilityBaseline();
   const catalogue = assembleCatalogue(options.catalogue);
   const durableObjects = makeDurableObjects(catalogue);
-  const bindings = () => resolveBindings(env as Env, options.bindings);
+  resolveBindings(env as Env, options.bindings);
   return {
     durableObjects,
     catalogue,
@@ -40,7 +40,6 @@ export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
     },
     scope(id) {
       assertScopeId(id);
-      bindings();
       return { id };
     },
   };

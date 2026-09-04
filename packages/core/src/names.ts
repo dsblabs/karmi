@@ -29,11 +29,12 @@ export function assertName(kind: CatalogueKind, name: string): void {
   }
 }
 
-const AGENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const IDENTIFIER = /^[A-Za-z0-9_-]{1,64}$/;
 
-export function assertAgentId(agentId: string): void {
-  if (!AGENT_ID.test(agentId)) {
-    throw new KarmiError("agent.id.invalid", `agentId "${agentId}" must match [A-Za-z0-9_-]{1,64}.`);
+/** Caller-chosen identifiers (agentId, ScopeId) are wider than Catalogue names. */
+export function assertIdentifier(code: string, label: string, value: string): void {
+  if (!IDENTIFIER.test(value)) {
+    throw new KarmiError(code, `${label} "${value}" must match [A-Za-z0-9_-]{1,64}.`);
   }
 }
 

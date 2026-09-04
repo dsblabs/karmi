@@ -1,5 +1,5 @@
 import type { HookPoint } from "./hook.js";
-import { assertAgentId, deepFreeze } from "./names.js";
+import { assertIdentifier, deepFreeze } from "./names.js";
 
 /** One item in an Agent Spec's ordered instructions. */
 export type PromptEntry = { text: string; models?: string | string[] } | { fragment: string; args?: Record<string, unknown>; models?: string | string[] };
@@ -50,6 +50,6 @@ export interface Agent {
 
 /** A code-defined Agent: the same Spec a Platform would `put`, seeded into a Scope lazily. */
 export function defineAgent(spec: AgentSpec): Agent {
-  assertAgentId(spec.agentId);
+  assertIdentifier("agent.id.invalid", "agentId", spec.agentId);
   return Object.freeze({ kind: "agent", agentId: spec.agentId, spec: deepFreeze(structuredClone(spec)) });
 }

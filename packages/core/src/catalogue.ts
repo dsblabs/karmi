@@ -83,11 +83,15 @@ function byName<T extends { name: string }>(kind: CatalogueKind, items: readonly
   return map;
 }
 
+// A Skill's Tools live only while the Skill is active, but the model sees one flat Tool namespace.
+function assertOneToolNamespace(tools: ReadonlyMap<string, Tool>, skills: ReadonlyMap<string, Skill>): void {
+  byName("tool", [...tools.values(), ...[...skills.values()].flatMap((s) => s.tools)]);
+}
+
 export function assembleCatalogue(input: CatalogueInput): Catalogue {
   const skills = byName("skill", input.skills ?? []);
   const tools = byName("tool", input.tools ?? []);
-  // A Skill's Tools live only while the Skill is active, but the model sees one flat Tool namespace.
-  byName("tool", [...tools.values(), ...[...skills.values()].flatMap((s) => s.tools)]);
+  assertOneToolNamespace(tools, skills);
   const fragments = byName("fragment", input.fragments ?? []);
   const retrievers = byName("retriever", input.retrievers ?? []);
   const hooks = byName("hook", input.hooks ?? []);
