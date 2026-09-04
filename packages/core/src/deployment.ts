@@ -1,8 +1,6 @@
 import type { Catalogue } from "./catalogue.js";
+import type { Provider } from "./provider.js";
 import type { ScopeConfigDocument } from "./scope-config.js";
-
-/** A model-provider adapter (wayfinder #44). */
-export interface Provider {}
 
 /** Everything `createKarmi` assembled at boot, shared by the Worker and its Durable Objects. */
 export interface Deployment {

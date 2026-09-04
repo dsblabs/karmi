@@ -2,9 +2,10 @@ import { env } from "cloudflare:workers";
 import { resolveBindings, type BindingsResolver } from "./bindings.js";
 import { assembleCatalogue, type Catalogue, type CatalogueInput } from "./catalogue.js";
 import { assertCompatibilityBaseline } from "./compat.js";
-import type { Deployment, Provider } from "./deployment.js";
+import type { Deployment } from "./deployment.js";
 import { makeDurableObjects, type DurableObjects } from "./durable-objects.js";
 import { KarmiError } from "./errors.js";
+import type { Provider } from "./provider.js";
 import { parseScopeConfig, type ScopeConfigDocument } from "./scope-config.js";
 import { openScope, type Scope } from "./scope.js";
 
