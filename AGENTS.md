@@ -6,6 +6,7 @@
 - I like ambitious ideas, simple systems, software that feels obvious. Do not preserve complexity just because it already exists. Do not introduce machinery because it looks architecturally impressive. Understand the real constraint, then fight for the smallest model that makes the correct behavior unsurprising.
 - For the public API surface of the product, prefer simplicity over anything. The developer using this framework should have the world's best and most intuitive developer experience.
 - "Measure twice, cut once" and YAGNI. Fight scope creep. Honor the dev's intent in a minimal and realistic fashion.
+- Comments explain intent, not code. The code is its own source of truth. A comment on a function or class saying why it exists is welcome; a comment restating what the next line does is not.
 
 ## Agent skills
 
