@@ -1,2 +1,8 @@
 # karmi
-A serverless-first agents platform
+
+A code-first TypeScript framework for building agent harnesses that run natively on Cloudflare. See [`packages/core`](./packages/core) and the glossary in [`CONTEXT.md`](./CONTEXT.md).
+
+```sh
+pnpm install
+pnpm typecheck && pnpm lint && pnpm test
+```
