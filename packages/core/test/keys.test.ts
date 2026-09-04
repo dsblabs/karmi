@@ -2,16 +2,16 @@ import { describe, expect, it } from "vitest";
 import { KarmiError } from "../src/index.js";
 import { keys } from "../src/keys.js";
 
-// A bug here is a cross-tenant bug (ADR-0001), so the keys module gets tests of its own.
+// A bug here is a cross-Scope bug (ADR-0001), so the keys module gets tests of its own.
 describe("keys", () => {
   it("mints every Durable Object name under {scope}/", () => {
-    expect(keys.config("tenant_1")).toBe("tenant_1/config");
-    expect(keys.thread("tenant_1", "t-42")).toBe("tenant_1/thread/t-42");
+    expect(keys.config("acme")).toBe("acme/config");
+    expect(keys.thread("acme", "t-42")).toBe("acme/thread/t-42");
   });
 
   it("mints every R2 key under {scope}/", () => {
-    expect(keys.r2Prefix("tenant_1")).toBe("tenant_1/");
-    expect(keys.media("tenant_1", "t-42", "01ARZ")).toBe("tenant_1/media/t-42/01ARZ");
+    expect(keys.r2Prefix("acme")).toBe("acme/");
+    expect(keys.media("acme", "t-42", "01ARZ")).toBe("acme/media/t-42/01ARZ");
   });
 
   it("keeps one Scope's prefix from matching another's", () => {

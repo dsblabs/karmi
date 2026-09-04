@@ -52,7 +52,7 @@ const validate = (s: unknown, ctx: ScopeContext = scope) => validateAgentSpec(s,
 const codesOf = (issues: Issue[]) => issues.map((i) => i.code);
 
 // Every code paired with a Spec that produces it, so a new code without a test fails the coverage check below.
-const cases: Record<IssueCode, { spec: unknown; path: string; severity: Issue["severity"] }> = {
+const cases: Record<IssueCode, { spec: unknown; path: string; severity: Issue["severity"]; ctx?: ScopeContext }> = {
   "shape.invalid-type": { spec: spec({ name: 42 as never }), path: "/name", severity: "error" },
   "shape.unknown-key": { spec: { ...base, version: 1 }, path: "", severity: "error" },
   "shape.invalid": { spec: spec({ agentId: "bad id" }), path: "/agentId", severity: "error" },
@@ -80,6 +80,7 @@ const cases: Record<IssueCode, { spec: unknown; path: string; severity: Issue["s
   "delegation.no-delegates": { spec: spec({ capabilities: { delegation: { maxDepth: 2 } } }), path: "/capabilities/delegation", severity: "warning" },
   "instructions.empty": { spec: spec({ instructions: [] }), path: "/instructions", severity: "warning" },
   "models.unmatched": { spec: spec({ instructions: [{ text: "x", models: "openai/*" }] }), path: "/instructions/0/models", severity: "warning" },
+  "provider.profile.required": { spec: spec({ model: { id: "anthropic/claude-sonnet-5" } }), path: "/model", severity: "error", ctx: { config: {}, agents: [] } },
   "provider.profile.unknown": { spec: spec({ model: { id: "anthropic/claude-sonnet-5", providerProfile: "nope" } }), path: "/model/providerProfile", severity: "error" },
   "provider.model.unsupported": { spec: spec({ model: { id: "anthropic/claude-sonnet-5", fallbacks: ["openai/gpt-5"] } }), path: "/model/fallbacks/0", severity: "error" },
   "capability.unavailable": { spec: spec({ capabilities: { scheduling: { maxPending: 1 } } }), path: "/capabilities/scheduling", severity: "error" },
@@ -90,8 +91,8 @@ const cases: Record<IssueCode, { spec: unknown; path: string; severity: Issue["s
 };
 
 describe("validateAgentSpec", () => {
-  it.each(Object.entries(cases))("reports %s", (code, { spec, path, severity }) => {
-    const result = validate(spec);
+  it.each(Object.entries(cases))("reports %s", (code, { spec, path, severity, ctx }) => {
+    const result = validate(spec, ctx);
     expect(result.issues).toContainEqual(expect.objectContaining({ code, path, severity }));
     expect(result.ok).toBe(severity === "warning");
     expect(result.normalized === undefined).toBe(severity === "error");
@@ -180,8 +181,11 @@ describe("validateAgentSpec against a Scope", () => {
     expect(validateAgentSpec(spec({ approvals: { timeout: 120_000 } }), catalogue).issues).toEqual([]);
   });
 
-  it("requires the implicit default profile to exist", () => {
-    expect(validate(base, { config: {}, agents: [] }).issues).toEqual([expect.objectContaining({ code: "provider.profile.unknown", path: "/model", context: { profile: "default" } })]);
+  it("uses the Scope's sole Provider profile when the Spec names none, and requires a name otherwise", () => {
+    expect(validate(base, { config: { providers: { main: { adapter: "anthropic" } } }, agents: [] }).issues).toEqual([]);
+    expect(validate(base, { config: {}, agents: [] }).issues).toEqual([expect.objectContaining({ code: "provider.profile.required", path: "/model", context: { profiles: [] } })]);
+    const two = { config: { providers: { a: { adapter: "anthropic" }, b: { adapter: "anthropic" } } }, agents: [] };
+    expect(validate(base, two).issues).toEqual([expect.objectContaining({ code: "provider.profile.required", path: "/model", context: { profiles: ["a", "b"] } })]);
   });
 
   it("bounds tier, cron and Provider Tools by the ceiling", () => {

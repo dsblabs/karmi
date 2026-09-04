@@ -40,6 +40,7 @@ export const ISSUE_CODES = [
   "delegation.no-delegates",
   "instructions.empty",
   "models.unmatched",
+  "provider.profile.required",
   "provider.profile.unknown",
   "provider.model.unsupported",
   "capability.unavailable",
@@ -375,11 +376,18 @@ class ScopeChecker {
 
   private provider(): void {
     const { model } = this.spec;
-    const profileName = model.providerProfile ?? "default";
-    const profile = this.scope.config.providers?.[profileName];
+    const providers = this.scope.config.providers ?? {};
+    // A Spec may leave the choice open only when the Scope has just one profile; there is no magic name.
+    const profileName = model.providerProfile ?? (Object.keys(providers).length === 1 ? Object.keys(providers)[0] : undefined);
+    if (profileName === undefined) {
+      const profiles = Object.keys(providers);
+      const hint = profiles.length === 0 ? "the Scope has no Provider profiles" : `one of ${profiles.map((p) => `"${p}"`).join(", ")}`;
+      this.issues.error("provider.profile.required", "/model", `Set model.providerProfile: ${hint}.`, { profiles });
+      return;
+    }
+    const profile = providers[profileName];
     if (!profile) {
-      const path = model.providerProfile === undefined ? "/model" : "/model/providerProfile";
-      this.issues.error("provider.profile.unknown", path, `Provider profile "${profileName}" is not configured for this Scope.`, { profile: profileName });
+      this.issues.error("provider.profile.unknown", "/model/providerProfile", `Provider profile "${profileName}" is not configured for this Scope.`, { profile: profileName });
       return;
     }
     const globs = profile.models ?? [`${profile.adapter}/*`];

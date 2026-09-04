@@ -69,6 +69,7 @@ export type Outcome<T> = { ok: true; value: T } | { ok: false; code: string; mes
 
 const ok = <T>(value: T): Outcome<T> => ({ ok: true, value });
 const fail = (error: KarmiError): Outcome<never> => ({ ok: false, code: error.code, message: error.message });
+const notFound = (agentId: string) => fail(new KarmiError("agent.notFound", `Agent "${agentId}" does not exist in this Scope.`));
 
 type HeadRow = {
   scope_id: string;
@@ -95,8 +96,9 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
     return this.ctx.storage.sql;
   }
 
-  // Every entry point: the row appears on first use, and once destruction started nothing else may enter.
-  private enter(scope: ScopeId, entry = true): Outcome<HeadRow> {
+  // Every entry point: the row appears on first use, and once destruction started nothing else may enter
+  // except the lifecycle reads that report on it.
+  private enter(scope: ScopeId, refuseDestroyed = true): Outcome<HeadRow> {
     let head = this.sql.exec<HeadRow>("SELECT * FROM scope_head").toArray()[0];
     if (!head) {
       const now = Date.now();
@@ -106,7 +108,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
       // Only a keys.ts bug can get here; refusing is what keeps it from becoming a cross-Scope bug.
       throw new Error(`ScopeConfig for "${head.scope_id}" was addressed as "${scope}".`);
     }
-    if (entry && (head.state === "destroying" || head.state === "destroyed")) return fail(new KarmiError("scope.destroyed", `Scope "${scope}" has been destroyed.`));
+    if (refuseDestroyed && (head.state === "destroying" || head.state === "destroyed")) return fail(new KarmiError("scope.destroyed", `Scope "${scope}" has been destroyed.`));
     return ok(head);
   }
 
@@ -189,7 +191,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
     const head = this.enter(scope);
     if (!head.ok) return head;
     const agent = this.agentHead(agentId);
-    if (!agent) return fail(new KarmiError("agent.notFound", `Agent "${agentId}" does not exist in this Scope.`));
+    if (!agent) return notFound(agentId);
     if (version === undefined && agent.deleted_at !== null) return fail(new KarmiError("agent.deleted", `Agent "${agentId}" has been deleted.`));
     const wanted = version ?? agent.current_version;
     const row = this.sql
@@ -219,7 +221,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
   agentsHistory(scope: ScopeId, agentId: string): Outcome<AgentVersion[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    if (!this.agentHead(agentId)) return fail(new KarmiError("agent.notFound", `Agent "${agentId}" does not exist in this Scope.`));
+    if (!this.agentHead(agentId)) return notFound(agentId);
     const rows = this.sql.exec<{ version: number; created_at: number }>("SELECT version, created_at FROM agent_specs WHERE agent_id = ? ORDER BY version", agentId).toArray();
     return ok(rows.map((row) => ({ version: row.version, createdAt: row.created_at })));
   }
@@ -228,13 +230,13 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
     const head = this.enter(scope);
     if (!head.ok) return head;
     const agent = this.agentHead(agentId);
-    if (!agent) return fail(new KarmiError("agent.notFound", `Agent "${agentId}" does not exist in this Scope.`));
+    if (!agent) return notFound(agentId);
     if (agent.deleted_at === null) this.sql.exec("UPDATE agent_heads SET deleted_at = ? WHERE agent_id = ?", Date.now(), agentId);
     return ok(undefined);
   }
 
   status(scope: ScopeId): Outcome<ScopeStatus> {
-    const head = this.enter(scope, false);
+    const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;
     return ok({ state: head.value.state, configRevision: head.value.current_revision });
   }
@@ -255,7 +257,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
 
   // The tombstone and the operation row land in one transaction, so a destroy can never half-happen.
   destroy(scope: ScopeId): Outcome<{ operationId: string }> {
-    const head = this.enter(scope, false);
+    const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;
     if (head.value.destroy_operation_id !== null) return ok({ operationId: head.value.destroy_operation_id });
     const operationId = crypto.randomUUID();
@@ -269,7 +271,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
 
   // The walk that empties the Scope lands with wayfinder #67; until then an operation stays "destroying".
   destroyStatus(scope: ScopeId, operationId: string): Outcome<DestroyStatus> {
-    const head = this.enter(scope, false);
+    const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;
     const row = this.sql.exec<{ state: DestroyStatus["state"] }>("SELECT state FROM destroy_operations WHERE operation_id = ?", operationId).toArray()[0];
     if (!row) return fail(new KarmiError("destroy.notFound", `No destroy operation "${operationId}" in Scope "${scope}".`));

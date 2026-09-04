@@ -3,16 +3,11 @@ import type { KarmiBindings } from "./bindings.js";
 import type { ScopeId } from "./context.js";
 import { KarmiError, SpecInvalidError } from "./errors.js";
 import { keys } from "./keys.js";
-import { assertIdentifier } from "./names.js";
 import type { AgentRecord, AgentSummary, AgentVersion, ConfigRecord, DestroyStatus, Outcome, ScopeConfigDurableObject, ScopeStatus } from "./scope-config-do.js";
 import type { ScopeConfigDocument } from "./scope-config.js";
 import type { ValidationResult } from "./validate.js";
 
 export type { AgentRecord, AgentSummary, AgentVersion, ConfigRecord, DestroyStatus, ScopeState, ScopeStatus } from "./scope-config-do.js";
-
-export function assertScopeId(id: string): void {
-  assertIdentifier("scope.id.invalid", "ScopeId", id);
-}
 
 /** The explicit handle every entry point takes; there is no ambient Scope (ADR-0001). */
 export interface Scope {
@@ -42,12 +37,12 @@ export interface Scope {
 }
 
 export function openScope(bindings: KarmiBindings, id: ScopeId): Scope {
-  assertScopeId(id);
+  // keys.config validates the id; an invalid ScopeId never reaches a Durable Object name.
   const stub = bindings.KARMI_SCOPES.get(bindings.KARMI_SCOPES.idFromName(keys.config(id))) as DurableObjectStub<ScopeConfigDurableObject>;
-  const call = async <T>(outcome: Promise<Outcome<T>>, agentId?: string): Promise<T> => {
+  const call = async <T>(outcome: Promise<Outcome<T>>): Promise<T> => {
     const result = await outcome;
     if (result.ok) return result.value;
-    if (result.result) throw new SpecInvalidError(agentId ?? "?", result.result);
+    if (result.result) throw new SpecInvalidError(result.result);
     throw new KarmiError(result.code, result.message);
   };
   return {
@@ -57,7 +52,7 @@ export function openScope(bindings: KarmiBindings, id: ScopeId): Scope {
       set: (document, options) => call(stub.configSet(id, document, options?.ifRevision)),
     },
     agents: {
-      put: (spec, options) => call(stub.agentsPut(id, spec, options?.ifVersion), spec.agentId),
+      put: (spec, options) => call(stub.agentsPut(id, spec, options?.ifVersion)),
       get: (agentId, options) => call(stub.agentsGet(id, agentId, options?.version)),
       list: () => call(stub.agentsList(id)),
       history: (agentId) => call(stub.agentsHistory(id, agentId)),

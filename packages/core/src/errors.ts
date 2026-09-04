@@ -16,11 +16,8 @@ export class KarmiError extends Error {
 export class SpecInvalidError extends KarmiError {
   override readonly name = "SpecInvalidError";
 
-  constructor(
-    agentId: string,
-    readonly result: ValidationResult,
-  ) {
+  constructor(readonly result: ValidationResult) {
     const errors = result.issues.filter((issue) => issue.severity === "error");
-    super("agent.spec.invalid", `Agent "${agentId}" Spec is invalid: ${errors.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`);
+    super("agent.spec.invalid", `Agent Spec is invalid: ${errors.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`);
   }
 }
