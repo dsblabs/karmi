@@ -2,7 +2,7 @@ import * as z from "zod/mini";
 import { AgentSpecSchema, type NormalizedAgentSpec } from "./agent-spec.js";
 import type { Catalogue } from "./catalogue.js";
 import { matchGlob } from "./glob.js";
-import { BUILT_IN_TOOL_NAMES } from "./names.js";
+import { BUILT_IN_TOOL_NAMES, IDENTIFIER } from "./names.js";
 import type { Schema } from "./schema.js";
 import type { Tool } from "./tool.js";
 
@@ -55,7 +55,20 @@ export interface ValidationResult {
   normalized?: NormalizedAgentSpec;
 }
 
-const MCP_REFERENCE = /^mcp:[A-Za-z0-9_-]{1,64}(\/[A-Za-z0-9_-]{1,64})?$/;
+interface McpReference {
+  server: string;
+  tool?: string;
+}
+
+function parseMcpReference(name: string): McpReference | undefined {
+  const [server, tool, ...rest] = name.slice("mcp:".length).split("/");
+  if (rest.length > 0 || !IDENTIFIER.test(server!) || (tool !== undefined && !IDENTIFIER.test(tool))) return undefined;
+  return tool === undefined ? { server: server! } : { server: server!, tool };
+}
+
+function toList<T>(value: T | T[]): T[] {
+  return Array.isArray(value) ? value : [value];
+}
 
 function pointer(path: readonly PropertyKey[]): string {
   return path.map((segment) => `/${String(segment)}`).join("");
@@ -100,7 +113,7 @@ export function validateAgentSpec(spec: unknown, catalogue: Catalogue): Validati
 class ReferenceChecker {
   /** Catalogue Tools this Agent can reach, directly or through a Skill. */
   private readonly reachableTools = new Map<string, Tool>();
-  private readonly mcpRefs: string[] = [];
+  private readonly mcpRefs: McpReference[] = [];
 
   constructor(
     private readonly spec: NormalizedAgentSpec,
@@ -127,8 +140,7 @@ class ReferenceChecker {
     instructions.forEach((entry, i) => {
       const path = `/instructions/${i}`;
       if (entry.models !== undefined) {
-        const globs = Array.isArray(entry.models) ? entry.models : [entry.models];
-        if (!globs.some((glob) => models.some((id) => matchGlob(glob, id)))) {
+        if (!toList(entry.models).some((glob) => models.some((id) => matchGlob(glob, id)))) {
           this.issues.warn("models.unmatched", `${path}/models`, `No model in this Spec matches ${JSON.stringify(entry.models)}; the entry never applies.`, { models });
         }
       }
@@ -138,7 +150,7 @@ class ReferenceChecker {
         this.issues.error("ref.fragment.unknown", `${path}/fragment`, `Unknown Fragment "${entry.fragment}".`, { name: entry.fragment });
         return;
       }
-      this.checkAgainst("args", fragment.args, entry.args, `${path}/args`, `Fragment "${fragment.name}"`);
+      this.validateAgainstItemSchema("args", fragment.args, entry.args, `${path}/args`, `Fragment "${fragment.name}"`);
     });
   }
 
@@ -146,13 +158,14 @@ class ReferenceChecker {
     const seen = new Set<string>();
     (this.spec.tools ?? []).forEach((ref, i) => {
       const path = `/tools/${i}`;
-      if (!this.unique(seen, ref.name, path)) return;
+      if (this.rejectDuplicate(seen, ref.name, path)) return;
       if (ref.name.startsWith("mcp:")) {
-        if (!MCP_REFERENCE.test(ref.name)) {
+        const mcp = parseMcpReference(ref.name);
+        if (!mcp) {
           this.issues.error("ref.mcp.invalid", `${path}/name`, `"${ref.name}" must be mcp:<server> or mcp:<server>/<tool>.`, { name: ref.name });
           return;
         }
-        this.mcpRefs.push(ref.name);
+        this.mcpRefs.push(mcp);
         if (ref.settings !== undefined) this.issues.error("settings.unexpected", `${path}/settings`, `MCP Tools take no settings.`);
         return;
       }
@@ -166,7 +179,7 @@ class ReferenceChecker {
         return;
       }
       this.reachableTools.set(tool.name, tool);
-      this.checkAgainst("settings", tool.settings, ref.settings, `${path}/settings`, `Tool "${tool.name}"`);
+      this.validateAgainstItemSchema("settings", tool.settings, ref.settings, `${path}/settings`, `Tool "${tool.name}"`);
     });
   }
 
@@ -174,14 +187,14 @@ class ReferenceChecker {
     const seen = new Set<string>();
     (this.spec.skills ?? []).forEach((ref, i) => {
       const path = `/skills/${i}`;
-      if (!this.unique(seen, ref.name, path)) return;
+      if (this.rejectDuplicate(seen, ref.name, path)) return;
       const skill = this.catalogue.skills.get(ref.name);
       if (!skill) {
         this.issues.error("ref.skill.unknown", `${path}/name`, `Unknown Skill "${ref.name}".`, { name: ref.name });
         return;
       }
       for (const tool of skill.tools) this.reachableTools.set(tool.name, tool);
-      this.checkAgainst("settings", skill.settings, ref.settings, `${path}/settings`, `Skill "${skill.name}"`);
+      this.validateAgainstItemSchema("settings", skill.settings, ref.settings, `${path}/settings`, `Skill "${skill.name}"`);
     });
   }
 
@@ -189,7 +202,7 @@ class ReferenceChecker {
     const seen = new Set<string>();
     (this.spec.knowledge ?? []).forEach((ref, i) => {
       const path = `/knowledge/${i}`;
-      if (!this.unique(seen, ref.name, path)) return;
+      if (this.rejectDuplicate(seen, ref.name, path)) return;
       if (ref.retriever !== undefined && !this.catalogue.retrievers.has(ref.retriever)) {
         this.issues.error("ref.retriever.unknown", `${path}/retriever`, `Unknown Retriever "${ref.retriever}".`, { name: ref.retriever });
       }
@@ -199,7 +212,7 @@ class ReferenceChecker {
   private delegates(): void {
     const delegates = this.spec.delegates ?? [];
     const seen = new Set<string>();
-    delegates.forEach((agentId, i) => this.unique(seen, agentId, `/delegates/${i}`));
+    delegates.forEach((agentId, i) => this.rejectDuplicate(seen, agentId, `/delegates/${i}`));
     const granted = this.spec.capabilities?.delegation !== undefined;
     if (delegates.length > 0 && !granted) {
       this.issues.error("delegation.no-capability", "/delegates", "Delegates are listed but the `delegation` Capability is not granted.");
@@ -237,7 +250,7 @@ class ReferenceChecker {
       }
     }
     // An OAuth grant for an MCP server is the Connection `mcp:<server>`; the ref implies it.
-    for (const ref of this.mcpRefs) required.add(ref.split("/")[0]!);
+    for (const { server } of this.mcpRefs) required.add(`mcp:${server}`);
     for (const connection of Object.keys(declared)) {
       if (!required.has(connection)) this.issues.warn("connection.unused", `/connections/${connection}`, `No referenced Tool requires the Connection "${connection}".`, { connection });
     }
@@ -262,12 +275,9 @@ class ReferenceChecker {
     if (capabilities.scripts) granted.add("run_script");
     if (capabilities.delegation) granted.add("delegate");
     if (capabilities.scheduling) for (const name of ["schedule", "cancel_schedule", "list_schedules"]) granted.add(name);
-    for (const ref of this.mcpRefs) {
-      const [server, tool] = ref.slice("mcp:".length).split("/");
-      if (tool !== undefined) granted.add(`${server}__${tool}`);
-    }
+    for (const { server, tool } of this.mcpRefs) if (tool !== undefined) granted.add(`${server}__${tool}`);
     // A whole-server ref brings Tools only the Scope's registry knows, so literal names cannot be checked.
-    const wholeServers = this.mcpRefs.some((ref) => !ref.includes("/"));
+    const wholeServers = this.mcpRefs.some((ref) => ref.tool === undefined);
 
     rules.forEach((rule, i) => {
       const path = `/policy/${i}`;
@@ -276,8 +286,7 @@ class ReferenceChecker {
         return;
       }
       if (rule.match.tool === undefined) return;
-      const globs = Array.isArray(rule.match.tool) ? rule.match.tool : [rule.match.tool];
-      globs.forEach((glob, j) => {
+      toList(rule.match.tool).forEach((glob, j) => {
         const globPath = Array.isArray(rule.match.tool) ? `${path}/match/tool/${j}` : `${path}/match/tool`;
         if (!glob.includes("*") && !wholeServers && !granted.has(glob)) {
           this.issues.warn("policy.unreferenced-tool", globPath, `No Tool of this Agent is named "${glob}"; the rule never matches.`, { tool: glob });
@@ -288,8 +297,7 @@ class ReferenceChecker {
     // Provider Tools run inside the provider's turn, so there is no call to pause on: `ask` cannot be honoured.
     for (const providerTool of providerTools) {
       const index = rules.findIndex((rule) => {
-        const globs = rule.match.tool === undefined ? [] : Array.isArray(rule.match.tool) ? rule.match.tool : [rule.match.tool];
-        return rule.match.annotations === undefined && globs.some((glob) => matchGlob(glob, providerTool));
+        return rule.match.annotations === undefined && toList(rule.match.tool ?? []).some((glob) => matchGlob(glob, providerTool));
       });
       if (index !== -1 && rules[index]!.effect === "ask") {
         this.issues.error("policy.ask-on-provider-tool", `/policy/${index}/effect`, `Provider Tool "${providerTool}" can only be allowed or denied, never asked.`, { tool: providerTool });
@@ -297,16 +305,18 @@ class ReferenceChecker {
     }
   }
 
-  private unique(seen: Set<string>, name: string, path: string): boolean {
+  /** Reports a repeated reference; returns true when the caller should skip it. */
+  private rejectDuplicate(seen: Set<string>, name: string, path: string): boolean {
     if (seen.has(name)) {
       this.issues.error("ref.duplicate", path, `"${name}" is referenced more than once.`, { name });
-      return false;
+      return true;
     }
     seen.add(name);
-    return true;
+    return false;
   }
 
-  private checkAgainst(kind: "settings" | "args", schema: Schema | undefined, value: unknown, path: string, owner: string): void {
+  // A bare reference is validated as `{}` so a schema with required keys reports what is missing.
+  private validateAgainstItemSchema(kind: "settings" | "args", schema: Schema | undefined, value: unknown, path: string, owner: string): void {
     if (schema === undefined) {
       if (value !== undefined) this.issues.error(`${kind}.unexpected`, path, `${owner} takes no ${kind}.`);
       return;
@@ -314,7 +324,8 @@ class ReferenceChecker {
     const result = z.safeParse(schema, value ?? {});
     if (!result.success) {
       for (const issue of result.error.issues) {
-        this.issues.error(`${kind}.invalid`, `${path}${pointer(issue.path)}`, `${owner}: ${issue.message}`, { zod: issue.code });
+        const message = value === undefined ? `${owner} requires ${kind}: ${issue.message}` : `${owner}: ${issue.message}`;
+        this.issues.error(`${kind}.invalid`, `${path}${pointer(issue.path)}`, message, { zod: issue.code });
       }
     }
   }

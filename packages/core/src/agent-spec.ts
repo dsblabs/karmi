@@ -1,10 +1,11 @@
 import * as z from "zod/mini";
 import { HOOK_POINTS } from "./hook.js";
+import { IDENTIFIER } from "./names.js";
 import { toJsonSchema, type JsonSchema } from "./schema.js";
 
 // Shape layer of Agent Spec validation: what a Spec looks like before any Catalogue or Scope is consulted.
 
-const identifier = z.string().check(z.regex(/^[A-Za-z0-9_-]{1,64}$/, "must match [A-Za-z0-9_-]{1,64}"));
+const identifier = z.string().check(z.regex(IDENTIFIER, "must match [A-Za-z0-9_-]{1,64}"));
 const name = z.string().check(z.minLength(1));
 const modelId = z.string().check(z.regex(/^[a-z0-9_-]+\/.+$/, "must be provider/model"));
 const modelGlob = z.union([z.string().check(z.minLength(1)), z.array(z.string().check(z.minLength(1)))]);
@@ -79,6 +80,7 @@ const CapabilitiesSchema = z.strictObject({
 
 // A Memory profile is JSON Schema a form can be rendered from: named properties, no composition, no references.
 const jsonType = z.enum(["string", "number", "integer", "boolean", "array", "object", "null"]);
+// Recursive, so the annotation is the loose base type; `MemoryProfileProperty` in agent.ts is the readable one.
 const ProfilePropertySchema: z.ZodMiniType = z.lazy(() =>
   z.strictObject({
     type: z.optional(z.union([jsonType, z.array(jsonType)])),

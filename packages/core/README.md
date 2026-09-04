@@ -37,7 +37,7 @@ const { ok, issues, normalized } = validateAgentSpec(json, karmi.catalogue);
 // issues: [{ severity: "error", code: "ref.tool.unknown", path: "/tools/0/name", message: 'Unknown Tool "wether".' }]
 ```
 
-Errors block; warnings never do. `agentSpecJsonSchema` is the same shape as JSON Schema for editors. The Scope-resolved layer (ceilings, provider profiles, delegate Agents) runs on the Scope handle.
+Errors block; warnings never do. `agentSpecJsonSchema` is the Spec's JSON Schema, for editors. The Scope-resolved layer (ceilings, provider profiles, delegate Agents) lands with the ScopeConfig DO.
 
 Start from [`wrangler.baseline.jsonc`](./wrangler.baseline.jsonc): `compatibility_date >= 2026-08-04` is the one hard requirement; karmi refuses to start below it.
 

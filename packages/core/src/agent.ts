@@ -74,7 +74,11 @@ export interface ContextConfig {
   tools?: { defer?: "auto" | "always" | "never"; threshold?: number };
 }
 
-/** The plain-data description an Agent is born from. Contains no code and no credentials. */
+/**
+ * The plain-data description an Agent is born from. Contains no code and no credentials.
+ * Written by hand rather than inferred from `AgentSpecSchema` so editor hovers show these names;
+ * a test pins the two together.
+ */
 export interface AgentSpec {
   agentId: string;
   name: string;
