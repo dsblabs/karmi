@@ -15,7 +15,7 @@ export {
   type ContextConfig,
 } from "./agent.js";
 export { AgentSpecSchema, agentSpecJsonSchema, AGENT_SPEC_DEFAULTS, PROVIDER_TOOL_NAMES, type NormalizedAgentSpec } from "./agent-spec.js";
-export { ScopeConfigSchema, scopeConfigJsonSchema, parseScopeConfig, resolveScopeConfig, type ScopeConfigDocument, type ProviderProfile, type Ceilings } from "./scope-config.js";
+export { ScopeConfigSchema, scopeConfigJsonSchema, parseScopeConfig, resolveScopeConfig, type ScopeConfigDocument, type ProviderConfig, type GatewayConfig, type Ceilings } from "./scope-config.js";
 export { validateAgentSpec, ISSUE_CODES, type Issue, type IssueCode, type ValidationResult, type ScopeContext } from "./validate.js";
 export { defineFragment, type Fragment, type FragmentContext, type FragmentRender } from "./fragment.js";
 export { defineHook, HOOK_POINTS, type Hook, type HookContext, type HookPoint } from "./hook.js";
@@ -28,7 +28,9 @@ export type { Logger, MediaRef, ScopeId, ThreadRef, UserId } from "./context.js"
 export type { Schema, JsonSchema } from "./schema.js";
 export { assembleCatalogue, type Catalogue, type CatalogueInput, type CatalogueDescription } from "./catalogue.js";
 export { createKarmi, type Karmi, type KarmiOptions } from "./karmi.js";
-export type { Deployment, Provider } from "./deployment.js";
+export type { Deployment } from "./deployment.js";
+export type { Provider, ProviderRequest, ProviderEvent, ProviderError, ProviderErrorCode, ProviderCallOptions, ModelCapabilities, Message, ContentBlock, StopReason, Usage, UsageCost, ToolDefinition } from "./provider.js";
+export { prepareMessages, normalizeToolCallId, type ReplayTarget, type ReplayResult } from "./replay.js";
 export { resolveBindings, type KarmiBindings, type BindingsResolver } from "./bindings.js";
 export { assertCompatibilityBaseline, COMPATIBILITY_DATE_FLOOR } from "./compat.js";
 export type { Scope, ScopeState, ScopeStatus, ConfigRecord, AgentRecord, AgentSummary, AgentVersion, DestroyStatus } from "./scope.js";

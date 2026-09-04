@@ -12,12 +12,39 @@ import { pointer } from "./validate.js";
 const CREDENTIAL_REF = /^(scope|deployment):[A-Za-z0-9_-]{1,64}$/;
 const SECRET_LOOKING_KEY = /key|secret|token|password/i;
 
-const ProviderProfileSchema = z.strictObject({
+const credentialRef = z.string().check(z.regex(CREDENTIAL_REF, "must be scope:<name> or deployment:<name>, never a value"));
+
+// Cloudflare AI Gateway is configuration under any adapter: a URL plus `cf-aig-*` headers. Bounds are the gateway's own.
+const GatewaySchema = z.strictObject({
+  kind: z.literal("cloudflare"),
+  accountId: name,
+  gatewayId: name,
+  /** The `cf-aig-authorization` token; absent for an unauthenticated gateway. */
+  credential: z.optional(credentialRef),
+  /** The provider key is stored in the gateway, so the profile carries none. */
+  byok: z.optional(z.boolean()),
+  metadata: z.optional(z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).check(z.refine((metadata) => Object.keys(metadata).length <= 5, "at most 5 entries"))),
+  cache: z.optional(z.strictObject({ ttl: z.optional(positiveInt), skip: z.optional(z.boolean()), key: z.optional(z.string()) })),
+  retry: z.optional(z.strictObject({ maxAttempts: z.optional(z.int().check(z.minimum(1), z.maximum(5))), delayMs: z.optional(z.int().check(z.minimum(0), z.maximum(5000))), backoff: z.optional(z.enum(["constant", "linear", "exponential"])) })),
+  timeoutMs: z.optional(positiveInt),
+});
+
+const ProviderConfigSchema = z.strictObject({
   /** Name of a Provider registered in `createKarmi({ providers })`. */
   adapter: name,
   /** Model-id globs this profile can serve; defaults to `<adapter>/*`. */
   models: z.optional(z.array(z.string().check(z.minLength(1)))),
-  credential: z.optional(z.string().check(z.regex(CREDENTIAL_REF, "must be scope:<name> or deployment:<name>, never a value"))),
+  credential: z.optional(credentialRef),
+  /** Self-hosted or OpenAI-compatible endpoints; ignored when a gateway is set. */
+  baseUrl: z.optional(z.url()),
+  gateway: z.optional(GatewaySchema),
+  /** Who summarises at Compaction: the Harness (default) or the provider's own mechanism. */
+  compaction: z.optional(z.enum(["harness", "provider"])),
+  /** Only `inline` (base64 at request-build) exists in v0; the key is reserved for URL/file strategies. */
+  media: z.optional(z.strictObject({ strategy: z.literal("inline") })),
+  /** Adapter-namespaced options forwarded verbatim, e.g. `{ anthropic: { effort: "high" } }`. */
+  providerOptions: z.optional(z.record(z.string(), z.unknown())),
+  headers: z.optional(z.record(z.string(), z.string())),
 });
 
 // `false` switches a Capability off for the Scope; an absent block leaves it unbounded.
@@ -32,15 +59,34 @@ const CeilingsSchema = z.strictObject({
 });
 
 export const ScopeConfigSchema = z.strictObject({
-  providers: z.optional(z.record(name, ProviderProfileSchema)),
+  providers: z.optional(z.record(name, ProviderConfigSchema)),
   ceilings: z.optional(CeilingsSchema),
   policy: z.optional(z.array(PolicyRuleSchema)),
 });
 
-export interface ProviderProfile {
+export interface GatewayConfig {
+  kind: "cloudflare";
+  accountId: string;
+  gatewayId: string;
+  credential?: string;
+  byok?: boolean;
+  metadata?: Record<string, string | number | boolean>;
+  cache?: { ttl?: number; skip?: boolean; key?: string };
+  retry?: { maxAttempts?: number; delayMs?: number; backoff?: "constant" | "linear" | "exponential" };
+  timeoutMs?: number;
+}
+
+/** One Provider profile: an adapter, what it may serve, and how the adapter reaches the provider. Secret-free. */
+export interface ProviderConfig {
   adapter: string;
   models?: string[];
   credential?: string;
+  baseUrl?: string;
+  gateway?: GatewayConfig;
+  compaction?: "harness" | "provider";
+  media?: { strategy: "inline" };
+  providerOptions?: Record<string, unknown>;
+  headers?: Record<string, string>;
 }
 
 /** Upper bounds on what an Agent Spec in this Scope may ask for; `false` makes the Capability unavailable. */
@@ -55,7 +101,7 @@ export interface Ceilings {
 
 /** One Scope's configuration, or the Deployment defaults: the same shape at both layers. */
 export interface ScopeConfigDocument {
-  providers?: Record<string, ProviderProfile>;
+  providers?: Record<string, ProviderConfig>;
   ceilings?: Ceilings;
   /** Scope-wide Permission Policy rules, consulted before an Agent Spec's own. */
   policy?: PolicyRule[];
@@ -75,10 +121,11 @@ export function parseScopeConfig(document: unknown, providers?: Record<string, u
     }
     throw invalid(path, issue.message);
   }
-  if (providers) {
-    for (const [profile, { adapter }] of Object.entries(result.data.providers ?? {})) {
-      if (!(adapter in providers)) throw invalid(`/providers/${profile}/adapter`, `no Provider "${adapter}" is registered in createKarmi({ providers }).`);
-    }
+  for (const [profile, { adapter, headers }] of Object.entries(result.data.providers ?? {})) {
+    if (providers && !(adapter in providers)) throw invalid(`/providers/${profile}/adapter`, `no Provider "${adapter}" is registered in createKarmi({ providers }).`);
+    // A header that authenticates is a credential like any other.
+    const secret = Object.keys(headers ?? {}).find((key) => SECRET_LOOKING_KEY.test(key) || /authorization/i.test(key));
+    if (secret) throw new KarmiError("config.secret-value", `Secret values never enter the Scope config (at "/providers/${profile}/headers/${secret}"); store them with scope.credentials.put and reference them as scope:<name>.`);
   }
   return result.data as ScopeConfigDocument;
 }

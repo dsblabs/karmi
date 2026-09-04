@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createKarmi, defineAgent, defineTool } from "../src/index.js";
+import { fakeProvider, reply } from "../src/testing/index.js";
 
 const weather = defineTool({
   name: "weather",
@@ -11,7 +12,7 @@ const weather = defineTool({
 
 const concierge = defineAgent({ agentId: "concierge", name: "Concierge", instructions: [{ text: "Help the guest." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["weather"] });
 
-export const karmi = createKarmi({ catalogue: { tools: [weather], agents: [concierge] }, defaults: { providers: { default: { adapter: "anthropic" } } }, providers: { anthropic: {} } });
+export const karmi = createKarmi({ catalogue: { tools: [weather], agents: [concierge] }, defaults: { providers: { default: { adapter: "anthropic" } } }, providers: { anthropic: fakeProvider(() => reply.text("Hello.")) } });
 
 export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
 
