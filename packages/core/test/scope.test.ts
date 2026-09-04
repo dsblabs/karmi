@@ -72,10 +72,10 @@ describe("scope.agents", () => {
 
   it("validates against the Scope's config merged under the Deployment defaults", async () => {
     const scope = fresh();
-    await scope.config.set({ ceilings: { longRunning: { maxSteps: 10 } } });
+    await scope.config.set({ ceilings: { longRunning: { maxSteps: 10 } }, providers: { default: { adapter: "fake", models: ["anthropic/*"] } } });
     await expect(scope.agents.put(spec({ capabilities: { longRunning: { maxSteps: 100 } } }))).rejects.toMatchObject({ code: "agent.spec.invalid" });
     await expect(scope.agents.put(spec({ model: { id: "openai/gpt-5" } }))).rejects.toMatchObject({ result: { issues: [expect.objectContaining({ code: "provider.model.unsupported" })] } });
-    await scope.config.set({ providers: { default: { adapter: "anthropic", models: ["*"] } } });
+    await scope.config.set({ providers: { default: { adapter: "fake", models: ["*"] } } });
     await expect(scope.agents.put(spec({ model: { id: "openai/gpt-5" } }))).resolves.toEqual({ agentId: "concierge", version: 1 });
   });
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { createKarmi, defineAgent, defineTool } from "../src/index.js";
-import { fakeProvider, reply } from "../src/testing/index.js";
+import { defineAgent, defineFragment, defineTool } from "../src/index.js";
+import { createTestKarmi } from "../src/testing/index.js";
 
 const weather = defineTool({
   name: "weather",
@@ -10,9 +10,17 @@ const weather = defineTool({
   execute: ({ city }) => `Sunny in ${city}`,
 });
 
-const concierge = defineAgent({ agentId: "concierge", name: "Concierge", instructions: [{ text: "Help the guest." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["weather"] });
+const guest = defineFragment({ name: "guest", args: z.object({ hotel: z.string() }), render: (ctx, { hotel }) => `You serve ${ctx.user ?? "the front desk"} at ${hotel}.` });
 
-export const karmi = createKarmi({ catalogue: { tools: [weather], agents: [concierge] }, defaults: { providers: { default: { adapter: "anthropic" } } }, providers: { anthropic: fakeProvider(() => reply.text("Hello.")) } });
+const concierge = defineAgent({
+  agentId: "concierge",
+  name: "Concierge",
+  instructions: [{ text: "Help the guest." }, { fragment: "guest", args: { hotel: "The Grand" } }, { text: "You are Claude.", models: "anthropic/*" }],
+  model: { id: "anthropic/claude-sonnet-5", fallbacks: ["anthropic/claude-haiku-4-5"] },
+  tools: ["weather"],
+});
+
+export const { karmi, provider, scope } = createTestKarmi({ tools: [weather], fragments: [guest], agents: [concierge] });
 
 export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
 

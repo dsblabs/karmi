@@ -1,10 +1,11 @@
 import type { AgentSpec } from "./agent.js";
 import type { KarmiBindings } from "./bindings.js";
 import type { ScopeId } from "./context.js";
-import { KarmiError, SpecInvalidError } from "./errors.js";
 import { keys } from "./keys.js";
-import type { AgentRecord, AgentSummary, AgentVersion, ConfigRecord, DestroyStatus, Outcome, ScopeConfigDurableObject, ScopeStatus } from "./scope-config-do.js";
+import { remote, unwrap as call } from "./outcome.js";
+import type { AgentRecord, AgentSummary, AgentVersion, ConfigRecord, DestroyStatus, ScopeConfigDurableObject, ScopeStatus } from "./scope-config-do.js";
 import type { ScopeConfigDocument } from "./scope-config.js";
+import { openThread, type Thread, type ThreadIdentity, type ThreadSummary } from "./thread.js";
 import type { ValidationResult } from "./validate.js";
 
 export type { AgentRecord, AgentSummary, AgentVersion, ConfigRecord, DestroyStatus, ScopeState, ScopeStatus } from "./scope-config-do.js";
@@ -28,6 +29,12 @@ export interface Scope {
     /** The same validation `put` runs, without storing anything. */
     validate(spec: AgentSpec): Promise<ValidationResult>;
   };
+  /** An identity creates the Thread on first use; a key from `thread.key` reopens one and never creates. */
+  thread(target: ThreadIdentity | string): Thread;
+  readonly threads: {
+    /** An Agent's Threads, most recently active first; `user: null` narrows to user-less Threads. */
+    list(filter: { agent: string; user?: string | null }): Promise<ThreadSummary[]>;
+  };
   status(): Promise<ScopeStatus>;
   suspend(): Promise<void>;
   resume(): Promise<void>;
@@ -38,13 +45,7 @@ export interface Scope {
 
 export function openScope(bindings: KarmiBindings, id: ScopeId): Scope {
   // keys.config validates the id; an invalid ScopeId never reaches a Durable Object name.
-  const stub = bindings.KARMI_SCOPES.get(bindings.KARMI_SCOPES.idFromName(keys.config(id))) as DurableObjectStub<ScopeConfigDurableObject>;
-  const call = async <T>(outcome: Promise<Outcome<T>>): Promise<T> => {
-    const result = await outcome;
-    if (result.ok) return result.value;
-    if (result.result) throw new SpecInvalidError(result.result);
-    throw new KarmiError(result.code, result.message);
-  };
+  const stub = remote<ScopeConfigDurableObject>(bindings.KARMI_SCOPES, keys.config(id));
   return {
     id,
     config: {
@@ -59,6 +60,8 @@ export function openScope(bindings: KarmiBindings, id: ScopeId): Scope {
       delete: (agentId) => call(stub.agentsDelete(id, agentId)),
       validate: (spec) => call(stub.agentsValidate(id, spec)),
     },
+    thread: (target) => openThread(bindings, id, target),
+    threads: { list: (filter) => call(stub.threadsList(id, filter.agent, filter.user)) },
     status: () => call(stub.status(id)),
     suspend: () => call(stub.suspend(id)),
     resume: () => call(stub.resume(id)),
