@@ -26,6 +26,19 @@ export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
 export default { queue: karmi.queueHandler };
 ```
 
+## Agent Specs as data
+
+An Agent Spec is plain JSON. A Platform can validate one against the Catalogue without a Scope:
+
+```ts
+import { agentSpecJsonSchema, validateAgentSpec } from "@karmi/core";
+
+const { ok, issues, normalized } = validateAgentSpec(json, karmi.catalogue);
+// issues: [{ severity: "error", code: "ref.tool.unknown", path: "/tools/0/name", message: 'Unknown Tool "wether".' }]
+```
+
+Errors block; warnings never do. `agentSpecJsonSchema` is the same shape as JSON Schema for editors. The Scope-resolved layer (ceilings, provider profiles, delegate Agents) runs on the Scope handle.
+
 Start from [`wrangler.baseline.jsonc`](./wrangler.baseline.jsonc): `compatibility_date >= 2026-08-04` is the one hard requirement; karmi refuses to start below it.
 
 ## Testing

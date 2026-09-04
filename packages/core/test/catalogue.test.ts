@@ -16,7 +16,7 @@ const greeting = defineFragment({ name: "greeting", description: "Opens the prom
 const research = defineSkill({ name: "research", description: "Deep research", body: () => "Steps…", tools: [defineTool({ name: "search", description: "Search", input: z.object({ q: z.string() }), execute: () => "" })] });
 const fts = defineRetriever({ name: "fts", description: "Full text", search: async () => [] });
 const audit = defineHook({ name: "audit", point: "after-tool", description: "Logs tool calls", run: () => {} });
-const concierge = defineAgent({ agentId: "concierge", name: "Concierge", description: "Front desk", instructions: [{ text: "Help." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["weather"] });
+const concierge = defineAgent({ agentId: "concierge", name: "Concierge", description: "Front desk", instructions: [{ text: "Help." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["weather"], connections: { weather_api: { type: "api_key", level: "agent" } } });
 
 describe("assembleCatalogue", () => {
   it("rejects duplicate names within a kind", () => {

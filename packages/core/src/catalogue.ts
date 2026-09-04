@@ -7,6 +7,7 @@ import type { Retriever } from "./retriever.js";
 import { toJsonSchema, type JsonSchema } from "./schema.js";
 import type { Skill } from "./skill.js";
 import type { Tool, ToolAnnotations } from "./tool.js";
+import { validateAgentSpec } from "./validate.js";
 
 /** Everything a developer defines in code; registration is only by listing here. */
 export interface CatalogueInput {
@@ -100,7 +101,20 @@ export function assembleCatalogue(input: CatalogueInput): Catalogue {
     if (agents.has(agent.agentId)) throw new KarmiError("name.duplicate", `Duplicate agent "${agent.agentId}" in the Catalogue.`);
     agents.set(agent.agentId, agent);
   }
-  return { tools, fragments, skills, retrievers, hooks, agents, describe: () => describe({ tools, fragments, skills, retrievers, hooks, agents }) };
+  const catalogue: Catalogue = { tools, fragments, skills, retrievers, hooks, agents, describe: () => describe(catalogue) };
+  assertAgentsResolve(catalogue);
+  return catalogue;
+}
+
+// A code-defined Agent that references a missing Catalogue item is a boot error, like any other dangling name.
+function assertAgentsResolve(catalogue: Catalogue): void {
+  for (const agent of catalogue.agents.values()) {
+    const errors = validateAgentSpec(agent.spec, catalogue).issues.filter((issue) => issue.severity === "error");
+    if (errors.length > 0) {
+      const detail = errors.map((issue) => `${issue.path}: ${issue.message}`).join("; ");
+      throw new KarmiError("agent.spec.invalid", `Agent "${agent.agentId}" does not resolve against the Catalogue: ${detail}`);
+    }
+  }
 }
 
 // Optional keys are omitted rather than set to undefined so the output is stable JSON.
