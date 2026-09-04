@@ -191,3 +191,11 @@ _Avoid_: billing hook, metering, usage callback, meter
 **Approval**:
 A pause in a Turn that only a human answer can end, surfaced as an `approval.requested` Thread event and resolved by an `approval.resolved` one. Three kinds: `tool` (a Permission Policy `ask` on a Tool call), `continue` (a `longRunning` budget exhausted) and `connect` (a missing user-level Connection, answered by completing OAuth). The Framework records who answered (`by`) but never authorises the answerer — the Platform does. An answer is `allow` or `deny`, never an edit of the call; a timeout (`approvals.timeout`, Scope ceiling as max) and a Turn cancel are denies. Allowed calls in the same tool batch run before the pause; a denied call is an `isError` Tool result the model sees next. An `allow` may be remembered for the rest of the Thread, by Tool name only. A delegated child's Approvals are re-emitted on its parent Thread and answered there.
 _Avoid_: permission prompt, confirmation, consent (for the pause), HITL request
+
+**Test kit**:
+The `@karmi/core/testing` export: `createTestKarmi()` plus the doubles it composes — `fakeProvider` (a scripted Provider profile whose requests are recorded), `Clock`, `LocalProcessSandbox`, the brute-force `VectorStore`, an in-memory `SecretsProvider`, `fakeMcpServer` — and the event-log matchers and Provider record/replay. Every double is a real implementation of a real seam; core has no test-only behaviour. Tests run the real Thread DO in workerd under `@cloudflare/vitest-plugin`; there is no Node-only harness.
+_Avoid_: mocks (for the doubles), test harness, test utils
+
+**Clock**:
+The single injectable time source `@karmi/core` reads for everything time-driven — watchdog, park timeouts, Approval timeouts, Schedules and cron. In production it is wall time; in the Test kit `clock.advance()` moves it and fires any due Durable Object alarm, so parking and scheduling are testable without waiting.
+_Avoid_: timer, fake timers, `Date.now()`
