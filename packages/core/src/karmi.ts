@@ -2,19 +2,16 @@ import { env } from "cloudflare:workers";
 import { resolveBindings, type BindingsResolver } from "./bindings.js";
 import { assembleCatalogue, type Catalogue, type CatalogueInput } from "./catalogue.js";
 import { assertCompatibilityBaseline } from "./compat.js";
+import type { Deployment, Provider } from "./deployment.js";
 import { makeDurableObjects, type DurableObjects } from "./durable-objects.js";
 import { KarmiError } from "./errors.js";
-import { assertScopeId, type Scope } from "./scope.js";
-
-/** Deployment-wide defaults every Scope inherits and may only tighten (wayfinder #43). */
-export interface DeploymentDefaults {}
-
-/** A model-provider adapter (wayfinder #44). */
-export interface Provider {}
+import { parseScopeConfig, type ScopeConfigDocument } from "./scope-config.js";
+import { openScope, type Scope } from "./scope.js";
 
 export interface KarmiOptions<Env = unknown> {
   catalogue: CatalogueInput;
-  defaults?: DeploymentDefaults;
+  /** Deployment-wide layer every Scope inherits and may only tighten: the same shape as a Scope config. */
+  defaults?: ScopeConfigDocument;
   providers?: Record<string, Provider>;
   bindings?: BindingsResolver<Env>;
 }
@@ -29,18 +26,16 @@ export interface Karmi {
 /** Assembles a Deployment: runs at module evaluation, so every boot error is a startup error. */
 export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
   assertCompatibilityBaseline();
-  const catalogue = assembleCatalogue(options.catalogue);
-  const durableObjects = makeDurableObjects(catalogue);
-  resolveBindings(env as Env, options.bindings);
+  const providers = options.providers ?? {};
+  const deployment: Deployment = { catalogue: assembleCatalogue(options.catalogue), defaults: parseScopeConfig(options.defaults ?? {}, providers), providers };
+  const durableObjects = makeDurableObjects(deployment);
+  const bindings = resolveBindings(env as Env, options.bindings);
   return {
     durableObjects,
-    catalogue,
+    catalogue: deployment.catalogue,
     queueHandler: () => {
       throw new KarmiError("queue.unhandled", "karmi's Queue consumer lands with the Deliverer and Usage tickets.");
     },
-    scope(id) {
-      assertScopeId(id);
-      return { id };
-    },
+    scope: (id) => openScope(bindings, id),
   };
 }

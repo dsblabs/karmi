@@ -15,19 +15,21 @@ export {
   type ContextConfig,
 } from "./agent.js";
 export { AgentSpecSchema, agentSpecJsonSchema, AGENT_SPEC_DEFAULTS, PROVIDER_TOOL_NAMES, type NormalizedAgentSpec } from "./agent-spec.js";
-export { validateAgentSpec, ISSUE_CODES, type Issue, type IssueCode, type ValidationResult } from "./validate.js";
+export { ScopeConfigSchema, scopeConfigJsonSchema, parseScopeConfig, resolveScopeConfig, type ScopeConfigDocument, type ProviderProfile, type Ceilings } from "./scope-config.js";
+export { validateAgentSpec, ISSUE_CODES, type Issue, type IssueCode, type ValidationResult, type ScopeContext } from "./validate.js";
 export { defineFragment, type Fragment, type FragmentContext, type FragmentRender } from "./fragment.js";
 export { defineHook, HOOK_POINTS, type Hook, type HookContext, type HookPoint } from "./hook.js";
 export { defineRetriever, type Retriever, type RetrieverContext, type KnowledgeRef, type KnowledgeDocument, type Passage } from "./retriever.js";
 export { defineSkill, type Skill } from "./skill.js";
 export { defineTool, type Tool, type ToolAnnotations, type ToolContext, type ToolContent, type ToolResult } from "./tool.js";
-export { KarmiError } from "./errors.js";
+export { KarmiError, SpecInvalidError } from "./errors.js";
 export { BUILT_IN_TOOL_NAMES, type CatalogueKind } from "./names.js";
 export type { Logger, MediaRef, ScopeId, ThreadRef, UserId } from "./context.js";
 export type { Schema, JsonSchema } from "./schema.js";
 export { assembleCatalogue, type Catalogue, type CatalogueInput, type CatalogueDescription } from "./catalogue.js";
-export { createKarmi, type Karmi, type KarmiOptions, type DeploymentDefaults, type Provider } from "./karmi.js";
+export { createKarmi, type Karmi, type KarmiOptions } from "./karmi.js";
+export type { Deployment, Provider } from "./deployment.js";
 export { resolveBindings, type KarmiBindings, type BindingsResolver } from "./bindings.js";
 export { assertCompatibilityBaseline, COMPATIBILITY_DATE_FLOOR } from "./compat.js";
-export type { Scope } from "./scope.js";
+export type { Scope, ScopeState, ScopeStatus, ConfigRecord, AgentRecord, AgentSummary, AgentVersion, DestroyStatus } from "./scope.js";
 export type { DurableObjects, DurableObjectClass, KarmiDurableObject } from "./durable-objects.js";

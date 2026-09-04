@@ -11,7 +11,7 @@ const weather = defineTool({
 
 const concierge = defineAgent({ agentId: "concierge", name: "Concierge", instructions: [{ text: "Help the guest." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["weather"] });
 
-const karmi = createKarmi({ catalogue: { tools: [weather], agents: [concierge] } });
+export const karmi = createKarmi({ catalogue: { tools: [weather], agents: [concierge] }, defaults: { providers: { default: { adapter: "anthropic" } } }, providers: { anthropic: {} } });
 
 export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
 

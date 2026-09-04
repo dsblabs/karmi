@@ -6,10 +6,10 @@ import { toJsonSchema, type JsonSchema } from "./schema.js";
 // Shape layer of Agent Spec validation: what a Spec looks like before any Catalogue or Scope is consulted.
 
 const identifier = z.string().check(z.regex(IDENTIFIER, "must match [A-Za-z0-9_-]{1,64}"));
-const name = z.string().check(z.minLength(1));
+export const name = z.string().check(z.minLength(1));
 const modelId = z.string().check(z.regex(/^[a-z0-9_-]+\/.+$/, "must be provider/model"));
 const modelGlob = z.union([z.string().check(z.minLength(1)), z.array(z.string().check(z.minLength(1)))]);
-const positiveInt = z.int().check(z.positive());
+export const positiveInt = z.int().check(z.positive());
 const settings = z.optional(z.record(z.string(), z.unknown()));
 
 const PromptEntrySchema = z.union([
@@ -49,33 +49,37 @@ const ConnectionDeclarationSchema = z.strictObject({ type: name, level: z.enum([
 
 export const PROVIDER_TOOL_NAMES = ["web_search", "web_fetch"] as const;
 
+// The numeric knobs of each Capability, shared with the Scope ceilings that bound them.
+export const CapabilityLimitSchemas = {
+  scripts: z.strictObject({
+    cpuMs: z.optional(positiveInt),
+    wallMs: z.optional(positiveInt),
+    maxToolCalls: z.optional(positiveInt),
+    idleMs: z.optional(positiveInt),
+    jobMaxWallMs: z.optional(positiveInt),
+    maxArtifacts: z.optional(positiveInt),
+  }),
+  longRunning: z.strictObject({ maxSteps: z.optional(positiveInt), maxWallMs: z.optional(positiveInt), maxTokens: z.optional(positiveInt) }),
+  delegation: z.strictObject({ maxDepth: z.optional(positiveInt), maxConcurrent: z.optional(positiveInt), maxChildren: z.optional(positiveInt) }),
+  scheduling: z.strictObject({ maxPending: z.optional(positiveInt), maxHorizonMs: z.optional(positiveInt) }),
+  providerTools: z.strictObject({ maxCallsPerTurn: z.optional(positiveInt), maxCallsPerThread: z.optional(positiveInt) }),
+};
+export const ScriptTierSchema = z.enum(["isolate", "container"]);
+export const ProviderToolNameSchema = z.enum(PROVIDER_TOOL_NAMES);
+
 // Each Capability owns its block; the key set is closed so a typo can never grant something by accident.
 const CapabilitiesSchema = z.strictObject({
   scripts: z.optional(
     z.strictObject({
-      tier: z.enum(["isolate", "container"]),
-      limits: z.optional(
-        z.strictObject({
-          cpuMs: z.optional(positiveInt),
-          wallMs: z.optional(positiveInt),
-          maxToolCalls: z.optional(positiveInt),
-          idleMs: z.optional(positiveInt),
-          jobMaxWallMs: z.optional(positiveInt),
-          maxArtifacts: z.optional(positiveInt),
-        }),
-      ),
+      tier: ScriptTierSchema,
+      limits: z.optional(CapabilityLimitSchemas.scripts),
       tools: z.optional(z.union([z.literal("allowed"), z.array(name)])),
     }),
   ),
-  longRunning: z.optional(z.strictObject({ maxSteps: z.optional(positiveInt), maxWallMs: z.optional(positiveInt), maxTokens: z.optional(positiveInt) })),
-  delegation: z.optional(z.strictObject({ maxDepth: z.optional(positiveInt), maxConcurrent: z.optional(positiveInt), maxChildren: z.optional(positiveInt) })),
-  scheduling: z.optional(z.strictObject({ maxPending: z.optional(positiveInt), maxHorizonMs: z.optional(positiveInt), cron: z.optional(z.boolean()) })),
-  providerTools: z.optional(
-    z.strictObject({
-      tools: z.array(z.enum(PROVIDER_TOOL_NAMES)),
-      limits: z.optional(z.strictObject({ maxCallsPerTurn: z.optional(positiveInt), maxCallsPerThread: z.optional(positiveInt) })),
-    }),
-  ),
+  longRunning: z.optional(CapabilityLimitSchemas.longRunning),
+  delegation: z.optional(CapabilityLimitSchemas.delegation),
+  scheduling: z.optional(z.extend(CapabilityLimitSchemas.scheduling, { cron: z.optional(z.boolean()) })),
+  providerTools: z.optional(z.strictObject({ tools: z.array(ProviderToolNameSchema), limits: z.optional(CapabilityLimitSchemas.providerTools) })),
 });
 
 // A Memory profile is JSON Schema a form can be rendered from: named properties, no composition, no references.
@@ -105,7 +109,7 @@ const MemoryProfileSchema = z.strictObject({
   required: z.optional(z.array(z.string())),
 });
 
-const PolicyRuleSchema = z.strictObject({
+export const PolicyRuleSchema = z.strictObject({
   match: z.strictObject({
     tool: z.optional(z.union([z.string().check(z.minLength(1)), z.array(z.string().check(z.minLength(1)))])),
     annotations: z.optional(

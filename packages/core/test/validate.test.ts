@@ -17,6 +17,7 @@ import {
   type AgentSpec,
   type Issue,
   type IssueCode,
+  type ScopeContext,
 } from "../src/index.js";
 
 const weather = defineTool({
@@ -38,7 +39,16 @@ const catalogue = assembleCatalogue({ tools: [weather, echo], fragments: [greeti
 
 const base: AgentSpec = { agentId: "concierge", name: "Concierge", instructions: [{ text: "Help." }], model: { id: "anthropic/claude-sonnet-5" } };
 const spec = (patch: Partial<AgentSpec>): AgentSpec => ({ ...base, ...patch });
-const validate = (s: unknown) => validateAgentSpec(s, catalogue);
+// The Scope layer: a configured `default` profile, a few ceilings, and one other Agent whose Memory profile can conflict.
+const helper = (memory?: AgentSpec["memory"]): ScopeContext["agents"][number] => ({
+  agentId: "helper",
+  spec: { agentId: "helper", name: "Helper", instructions: [], model: { id: "anthropic/claude-haiku-4-5" }, ...(memory && { memory }) },
+});
+const scope: ScopeContext = {
+  config: { providers: { default: { adapter: "anthropic" } }, ceilings: { scheduling: false, longRunning: { maxSteps: 100 }, approvals: { timeout: 60_000 } } },
+  agents: [helper({ profile: { properties: { tier: { type: "number" } } } })],
+};
+const validate = (s: unknown, ctx: ScopeContext = scope) => validateAgentSpec(s, catalogue, ctx);
 const codesOf = (issues: Issue[]) => issues.map((i) => i.code);
 
 // Every code paired with a Spec that produces it, so a new code without a test fails the coverage check below.
@@ -70,6 +80,13 @@ const cases: Record<IssueCode, { spec: unknown; path: string; severity: Issue["s
   "delegation.no-delegates": { spec: spec({ capabilities: { delegation: { maxDepth: 2 } } }), path: "/capabilities/delegation", severity: "warning" },
   "instructions.empty": { spec: spec({ instructions: [] }), path: "/instructions", severity: "warning" },
   "models.unmatched": { spec: spec({ instructions: [{ text: "x", models: "openai/*" }] }), path: "/instructions/0/models", severity: "warning" },
+  "provider.profile.unknown": { spec: spec({ model: { id: "anthropic/claude-sonnet-5", providerProfile: "nope" } }), path: "/model/providerProfile", severity: "error" },
+  "provider.model.unsupported": { spec: spec({ model: { id: "anthropic/claude-sonnet-5", fallbacks: ["openai/gpt-5"] } }), path: "/model/fallbacks/0", severity: "error" },
+  "capability.unavailable": { spec: spec({ capabilities: { scheduling: { maxPending: 1 } } }), path: "/capabilities/scheduling", severity: "error" },
+  "capability.over-ceiling": { spec: spec({ capabilities: { longRunning: { maxSteps: 500 } } }), path: "/capabilities/longRunning/maxSteps", severity: "error" },
+  "approvals.over-ceiling": { spec: spec({ approvals: { timeout: 120_000 } }), path: "/approvals/timeout", severity: "error" },
+  "ref.agent.unknown": { spec: spec({ delegates: ["nope"], capabilities: { delegation: {} } }), path: "/delegates/0", severity: "error" },
+  "memory.profile.conflict": { spec: spec({ memory: { profile: { properties: { tier: { type: "string" } } } } }), path: "/memory/profile/properties/tier", severity: "error" },
 };
 
 describe("validateAgentSpec", () => {
@@ -85,6 +102,7 @@ describe("validateAgentSpec", () => {
   });
 
   it("accepts a full Spec and normalises references to objects", () => {
+    const loose: ScopeContext = { config: { providers: { default: { adapter: "anthropic", models: ["anthropic/*", "openai/*"] } } }, agents: [helper()] };
     const result = validate(
       spec({
         description: "Front desk",
@@ -112,6 +130,7 @@ describe("validateAgentSpec", () => {
         context: { window: 200_000, toolOutput: { maxChars: 10_000 }, tools: { defer: "always" } },
         approvals: { timeout: 60_000 },
       }),
+      loose,
     );
     expect(result.issues).toEqual([]);
     expect(result.ok).toBe(true);
@@ -153,6 +172,36 @@ describe("validateAgentSpec", () => {
   it("restricts the Memory profile to renderable JSON Schema", () => {
     const result = validate(spec({ memory: { profile: { properties: { a: { $ref: "#/x" } } } as never } }));
     expect(result.issues).toEqual([expect.objectContaining({ code: "shape.unknown-key", path: "/memory/profile/properties/a" })]);
+  });
+});
+
+describe("validateAgentSpec against a Scope", () => {
+  it("skips the Scope layer when no Scope is given", () => {
+    expect(validateAgentSpec(spec({ approvals: { timeout: 120_000 } }), catalogue).issues).toEqual([]);
+  });
+
+  it("requires the implicit default profile to exist", () => {
+    expect(validate(base, { config: {}, agents: [] }).issues).toEqual([expect.objectContaining({ code: "provider.profile.unknown", path: "/model", context: { profile: "default" } })]);
+  });
+
+  it("bounds tier, cron and Provider Tools by the ceiling", () => {
+    const ctx: ScopeContext = { config: { providers: { default: { adapter: "anthropic" } }, ceilings: { scripts: { tier: "isolate" }, scheduling: { cron: false }, providerTools: { tools: ["web_search"] } } }, agents: [] };
+    const result = validate(spec({ capabilities: { scripts: { tier: "container" }, scheduling: { cron: true }, providerTools: { tools: ["web_search", "web_fetch"] } } }), ctx);
+    expect(result.issues.map((i) => i.path).sort()).toEqual(["/capabilities/providerTools/tools/1", "/capabilities/scheduling/cron", "/capabilities/scripts/tier"]);
+    expect(new Set(codesOf(result.issues))).toEqual(new Set(["capability.over-ceiling"]));
+  });
+
+  it("lets a Spec ask for exactly the ceiling", () => {
+    expect(validate(spec({ capabilities: { longRunning: { maxSteps: 100 } }, approvals: { timeout: 60_000 } })).issues).toEqual([]);
+  });
+
+  it("leaves its own previous version out of the Memory profile union", () => {
+    const ctx: ScopeContext = { config: scope.config, agents: [{ agentId: "concierge", spec: { ...base, memory: { profile: { properties: { tier: { type: "number" } } } } } }] };
+    expect(validate(spec({ memory: { profile: { properties: { tier: { type: "string" } } } } }), ctx).issues).toEqual([]);
+  });
+
+  it("accepts a delegate stored in the Scope", () => {
+    expect(validate(spec({ delegates: ["helper"], capabilities: { delegation: {} } })).issues).toEqual([]);
   });
 });
 
