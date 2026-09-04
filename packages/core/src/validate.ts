@@ -70,7 +70,7 @@ function toList<T>(value: T | T[]): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
-function pointer(path: readonly PropertyKey[]): string {
+export function pointer(path: readonly PropertyKey[]): string {
   return path.map((segment) => `/${String(segment)}`).join("");
 }
 
@@ -256,11 +256,25 @@ class ReferenceChecker {
     }
   }
 
+  /** Every Tool name the model may see, as far as the Catalogue can tell; whole-server MCP refs add more at Turn start. */
+  private grantedToolNames(): Set<string> {
+    const capabilities = this.spec.capabilities ?? {};
+    const granted = new Set<string>([...this.reachableTools.keys(), ...(capabilities.providerTools?.tools ?? []), "read_output", "tool_search"]);
+    if (this.spec.memory !== undefined) for (const name of ["remember", "recall"]) granted.add(name);
+    if (capabilities.scripts) granted.add("run_script");
+    if (capabilities.delegation) granted.add("delegate");
+    if (capabilities.scheduling) for (const name of ["schedule", "cancel_schedule", "list_schedules"]) granted.add(name);
+    for (const { server, tool } of this.mcpRefs) if (tool !== undefined) granted.add(`${server}__${tool}`);
+    return granted;
+  }
+
   private scripts(): void {
     const tools = this.spec.capabilities?.scripts?.tools;
     if (!Array.isArray(tools)) return;
+    const granted = this.grantedToolNames();
+    const wholeServers = this.mcpRefs.some((ref) => ref.tool === undefined);
     tools.forEach((toolName, i) => {
-      if (!this.reachableTools.has(toolName)) {
+      if (!granted.has(toolName) && !(wholeServers && toolName.includes("__"))) {
         this.issues.error("capability.scripts.tool-unreferenced", `/capabilities/scripts/tools/${i}`, `Scripts may only call Tools the Agent references; "${toolName}" is not one of them.`, { name: toolName });
       }
     });
@@ -269,13 +283,7 @@ class ReferenceChecker {
   private policy(): void {
     const rules = this.spec.policy ?? [];
     const providerTools = this.spec.capabilities?.providerTools?.tools ?? [];
-    const capabilities = this.spec.capabilities ?? {};
-    const granted = new Set<string>([...this.reachableTools.keys(), ...providerTools, "read_output", "tool_search"]);
-    if (this.spec.memory !== undefined) for (const name of ["remember", "recall"]) granted.add(name);
-    if (capabilities.scripts) granted.add("run_script");
-    if (capabilities.delegation) granted.add("delegate");
-    if (capabilities.scheduling) for (const name of ["schedule", "cancel_schedule", "list_schedules"]) granted.add(name);
-    for (const { server, tool } of this.mcpRefs) if (tool !== undefined) granted.add(`${server}__${tool}`);
+    const granted = this.grantedToolNames();
     // A whole-server ref brings Tools only the Scope's registry knows, so literal names cannot be checked.
     const wholeServers = this.mcpRefs.some((ref) => ref.tool === undefined);
 
@@ -295,6 +303,7 @@ class ReferenceChecker {
     });
 
     // Provider Tools run inside the provider's turn, so there is no call to pause on: `ask` cannot be honoured.
+    // Only an explicit `ask` is an error; a Provider Tool no rule names is included, since the grant itself is the consent.
     for (const providerTool of providerTools) {
       const index = rules.findIndex((rule) => {
         return rule.match.annotations === undefined && toList(rule.match.tool ?? []).some((glob) => matchGlob(glob, providerTool));

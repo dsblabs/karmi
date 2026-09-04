@@ -4,6 +4,7 @@ import { KarmiError } from "./errors.js";
 import type { HookPoint } from "./hook.js";
 import { deepFreeze } from "./names.js";
 import type { ToolAnnotations } from "./tool.js";
+import { pointer } from "./validate.js";
 
 /** One item in an Agent Spec's ordered instructions. */
 export type PromptEntry = { text: string; models?: string | string[] } | { fragment: string; args?: Record<string, unknown>; models?: string | string[] };
@@ -119,7 +120,7 @@ export function defineAgent(spec: AgentSpec): Agent {
   const result = z.safeParse(AgentSpecSchema, spec);
   if (!result.success) {
     const first = result.error.issues[0]!;
-    throw new KarmiError("agent.spec.invalid", `Agent Spec "${String(spec.agentId)}" is invalid at /${first.path.join("/")}: ${first.message}`);
+    throw new KarmiError("agent.spec.invalid", `Agent Spec "${String(spec.agentId)}" is invalid at "${pointer(first.path)}": ${first.message}`);
   }
   return Object.freeze({ kind: "agent", agentId: spec.agentId, spec: deepFreeze(structuredClone(spec)) });
 }

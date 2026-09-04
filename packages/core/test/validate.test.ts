@@ -139,6 +139,13 @@ describe("validateAgentSpec", () => {
     expect(result.issues).toEqual([]);
   });
 
+  it("lets Scripts call MCP Tools the Agent references", () => {
+    const ok = spec({ tools: ["mcp:linear/create_issue"], capabilities: { scripts: { tier: "isolate", tools: ["linear__create_issue"] } } });
+    expect(validate(ok).issues).toEqual([]);
+    const server = spec({ tools: ["mcp:linear"], capabilities: { scripts: { tier: "isolate", tools: ["linear__create_issue", "echo"] } } });
+    expect(validate(server).issues).toEqual([expect.objectContaining({ code: "capability.scripts.tool-unreferenced", path: "/capabilities/scripts/tools/1" })]);
+  });
+
   it("skips the unreferenced-tool warning when a whole MCP server is referenced", () => {
     expect(validate(spec({ tools: ["mcp:github"], policy: [{ match: { tool: "github__create_issue" }, effect: "ask" }] })).issues).toEqual([]);
   });
@@ -171,7 +178,7 @@ describe("AgentSpecSchema", () => {
 
 describe("boot verification", () => {
   it("defineAgent rejects a malformed Spec", () => {
-    expect(() => defineAgent(spec({ model: { id: "no-slash" } }))).toThrowError(new KarmiError("agent.spec.invalid", 'Agent Spec "concierge" is invalid at /model/id: must be provider/model'));
+    expect(() => defineAgent(spec({ model: { id: "no-slash" } }))).toThrowError(new KarmiError("agent.spec.invalid", 'Agent Spec "concierge" is invalid at "/model/id": must be provider/model'));
   });
 
   it("assembleCatalogue rejects an Agent whose references do not resolve", () => {
