@@ -33,6 +33,8 @@ export interface FakeProviderOptions {
 export interface FakeProvider extends Provider {
   /** Every request received, in order, deep-copied at receipt. */
   readonly requests: ProviderRequest[];
+  /** Replaces the script and forgets past requests, so one provider can serve many tests. */
+  script(next: ReplyScript | Reply[]): void;
 }
 
 /** Build a reply piece by piece: `[reply.reasoning("hmm"), reply.text("Sunny"), reply.toolCall("weather", { city })]`. */
@@ -59,13 +61,14 @@ const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
  */
 export function fakeProvider(script: ReplyScript | Reply[], options: FakeProviderOptions = {}): FakeProvider {
   const requests: ProviderRequest[] = [];
-  const next: ReplyScript = typeof script === "function" ? script : ({ index }) => {
-    if (index >= script.length) throw new KarmiError("test.script-exhausted", `fakeProvider has ${script.length} scripted replies but received call #${index + 1}.`);
-    return script[index]!;
-  };
+  let next = toScript(script);
   const capabilities = { ...DEFAULT_CAPABILITIES, ...options.capabilities };
   const provider: FakeProvider = {
     requests,
+    script(replacement) {
+      next = toScript(replacement);
+      requests.length = 0;
+    },
     async *stream(request, { signal }) {
       const index = requests.length;
       requests.push(structuredClone(request));
@@ -85,6 +88,14 @@ export function fakeProvider(script: ReplyScript | Reply[], options: FakeProvide
     provider.countTokens = async (request) => ({ tokens: count(request) });
   }
   return provider;
+}
+
+function toScript(script: ReplyScript | Reply[]): ReplyScript {
+  if (typeof script === "function") return script;
+  return ({ index }) => {
+    if (index >= script.length) throw new KarmiError("test.script-exhausted", `fakeProvider has ${script.length} scripted replies but received call #${index + 1}.`);
+    return script[index]!;
+  };
 }
 
 function isEventStream(reply: Reply): reply is ProviderEvent[] {

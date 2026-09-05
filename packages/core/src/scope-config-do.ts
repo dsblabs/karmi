@@ -5,7 +5,9 @@ import type { KarmiBindings } from "./bindings.js";
 import type { ScopeId } from "./context.js";
 import type { Deployment } from "./deployment.js";
 import { KarmiError } from "./errors.js";
+import { fail, ok, type Outcome } from "./outcome.js";
 import { parseScopeConfig, resolveScopeConfig, type ScopeConfigDocument } from "./scope-config.js";
+import { encodeKey, type ThreadSummary } from "./thread.js";
 import { validateAgentSpec, type ValidationResult } from "./validate.js";
 
 // One Durable Object per Scope, named `{scope}/config` (keys.ts). Its SQLite holds the config revisions, the
@@ -17,6 +19,8 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS agent_specs (agent_id TEXT NOT NULL, version INTEGER NOT NULL, spec_json TEXT NOT NULL, catalogue_fingerprint TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (agent_id, version));
   CREATE TABLE IF NOT EXISTS agent_heads (agent_id TEXT PRIMARY KEY, current_version INTEGER NOT NULL, deleted_at INTEGER);
   CREATE TABLE IF NOT EXISTS destroy_operations (operation_id TEXT PRIMARY KEY, state TEXT NOT NULL, started_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, cursor_json TEXT);
+  CREATE TABLE IF NOT EXISTS threads (thread_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL, last_active_at INTEGER NOT NULL, title TEXT);
+  CREATE INDEX IF NOT EXISTS threads_by_agent_user ON threads (agent_id, user_id, last_active_at);
 `;
 
 /** Versions kept per Agent; older ones are dropped on put. */
@@ -61,14 +65,25 @@ export interface DestroyStatus {
   state: "destroying" | "destroyed";
 }
 
-/**
- * Workers RPC keeps only an Error's message, so every method reports failure as data and the handle
- * rethrows it as a `KarmiError` (or `SpecInvalidError` when `result` is present).
- */
-export type Outcome<T> = { ok: true; value: T } | { ok: false; code: string; message: string; result?: ValidationResult };
+/** What a Thread reports about itself when its Turn snapshots; the index row is created or touched from it. */
+export interface ThreadActivity {
+  threadId: string;
+  userId?: string;
+  createdAt: number;
+  activeAt: number;
+  title?: string;
+}
 
-const ok = <T>(value: T): Outcome<T> => ({ ok: true, value });
-const fail = (error: KarmiError): Outcome<never> => ({ ok: false, code: error.code, message: error.message });
+/** Everything a Turn needs from the Scope, resolved once at its first Step. */
+export interface TurnSnapshotSource {
+  state: ScopeState;
+  agent: AgentRecord;
+  /** Deployment defaults merged under the Scope revision; secret-free by construction. */
+  config: ScopeConfigDocument;
+}
+
+export type { Outcome } from "./outcome.js";
+
 const notFound = (agentId: string) => fail(new KarmiError("agent.notFound", `Agent "${agentId}" does not exist in this Scope.`));
 
 type HeadRow = {
@@ -76,6 +91,15 @@ type HeadRow = {
   state: ScopeState;
   current_revision: number;
   destroy_operation_id: string | null;
+};
+
+type ThreadRow = {
+  thread_id: string;
+  agent_id: string;
+  user_id: string | null;
+  created_at: number;
+  last_active_at: number;
+  title: string | null;
 };
 
 type AgentHeadRow = {
@@ -173,7 +197,11 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
     const fingerprint = await this.deployment.catalogue.fingerprint();
     const head = this.enter(scope);
     if (!head.ok) return head;
-    const result = this.validate(head.value, spec);
+    return this.store(head.value, spec, fingerprint, ifVersion);
+  }
+
+  private store(head: HeadRow, spec: unknown, fingerprint: string, ifVersion?: number): Outcome<{ agentId: string; version: number }> {
+    const result = this.validate(head, spec);
     if (!result.normalized) return { ok: false, code: "agent.spec.invalid", message: "Agent Spec is invalid.", result };
     const normalized = result.normalized;
     return this.ctx.storage.transactionSync(() => {
@@ -233,6 +261,54 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
     if (!agent) return notFound(agentId);
     if (agent.deleted_at === null) this.sql.exec("UPDATE agent_heads SET deleted_at = ? WHERE agent_id = ?", Date.now(), agentId);
     return ok(undefined);
+  }
+
+  /**
+   * The Scope side of a Turn snapshot. A code-defined Agent is seeded on first use; a stored Spec whose
+   * Catalogue changed is revalidated before it may run again. The Thread index row is created or touched here.
+   */
+  async turnSnapshot(scope: ScopeId, agentId: string, thread: ThreadActivity): Promise<Outcome<TurnSnapshotSource>> {
+    const fingerprint = await this.deployment.catalogue.fingerprint();
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    if (!this.agentHead(agentId)) {
+      const defined = this.deployment.catalogue.agents.get(agentId);
+      if (!defined) return notFound(agentId);
+      const seeded = this.store(head.value, defined.spec, fingerprint, 0);
+      if (!seeded.ok) return seeded;
+    }
+    const agent = await this.agentsGet(scope, agentId);
+    if (!agent.ok) return agent;
+    if (agent.value.catalogueChanged) {
+      const result = this.validate(head.value, agent.value.spec);
+      if (!result.normalized) return { ok: false, code: "agent.spec.invalid", message: `Agent "${agentId}" no longer validates against the Catalogue.`, result };
+    }
+    this.sql.exec(
+      "INSERT INTO threads (thread_id, agent_id, user_id, created_at, last_active_at, title) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (thread_id) DO UPDATE SET last_active_at = excluded.last_active_at, title = COALESCE(threads.title, excluded.title)",
+      thread.threadId,
+      agentId,
+      thread.userId ?? null,
+      thread.createdAt,
+      thread.activeAt,
+      thread.title ?? null,
+    );
+    return ok({ state: head.value.state, agent: agent.value, config: resolveScopeConfig(this.deployment.defaults, this.document(head.value.current_revision)) });
+  }
+
+  /** Threads of an Agent, most recently active first; `user` narrows to one User, `null` to user-less Threads. */
+  threadsList(scope: ScopeId, agent: string, user?: string | null): Outcome<ThreadSummary[]> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    const rows =
+      user === undefined
+        ? this.sql.exec<ThreadRow>("SELECT * FROM threads WHERE agent_id = ? ORDER BY last_active_at DESC", agent)
+        : this.sql.exec<ThreadRow>("SELECT * FROM threads WHERE agent_id = ? AND user_id IS ? ORDER BY last_active_at DESC", agent, user);
+    return ok(
+      rows.toArray().map((row) => {
+        const identity = { agent: row.agent_id, threadId: row.thread_id, ...(row.user_id !== null && { user: row.user_id }) };
+        return { ...identity, key: encodeKey(identity), createdAt: row.created_at, lastActiveAt: row.last_active_at, ...(row.title !== null && { title: row.title }) };
+      }),
+    );
   }
 
   status(scope: ScopeId): Outcome<ScopeStatus> {

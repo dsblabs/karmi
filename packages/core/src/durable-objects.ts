@@ -1,7 +1,8 @@
-import { DurableObject } from "cloudflare:workers";
+import type { DurableObject } from "cloudflare:workers";
 import type { KarmiBindings } from "./bindings.js";
 import type { Deployment } from "./deployment.js";
 import { ScopeConfigDurableObject } from "./scope-config-do.js";
+import { ThreadDurableObject } from "./thread-do.js";
 
 export interface KarmiDurableObject extends DurableObject<KarmiBindings> {
   readonly deployment: Deployment;
@@ -17,10 +18,10 @@ export interface DurableObjects {
 
 /**
  * The classes close over the Deployment so a Thread or ScopeConfig reaches the Catalogue and defaults
- * without a global. The Thread body lands with wayfinder #45.
+ * without a global.
  */
 export function makeDurableObjects(deployment: Deployment): DurableObjects {
-  class ThreadDO extends DurableObject<KarmiBindings> {
+  class ThreadDO extends ThreadDurableObject {
     readonly deployment = deployment;
   }
   class ScopeConfigDO extends ScopeConfigDurableObject {
