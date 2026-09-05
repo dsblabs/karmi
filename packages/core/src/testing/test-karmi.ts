@@ -1,6 +1,7 @@
 import type { CatalogueInput } from "../catalogue.js";
 import { createKarmi, type Karmi, type KarmiOptions } from "../karmi.js";
 import type { Scope } from "../scope.js";
+import { isTurnEnd } from "../thread-do.js";
 import type { Thread, ThreadIdentity } from "../thread.js";
 import type { ThreadEvent, TurnInput } from "../thread-events.js";
 import { fakeProvider, type FakeProvider } from "./fake-provider.js";
@@ -43,7 +44,7 @@ function testThread(thread: Thread): TestThread {
       for await (const event of thread.subscribe({ after: seq })) {
         if (event.turn !== turn) continue;
         events.push(event);
-        if (event.type === "turn.completed" || event.type === "turn.failed" || event.type === "turn.paused") break;
+        if (isTurnEnd(event)) break;
       }
       return events;
     },

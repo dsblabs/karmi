@@ -12,7 +12,6 @@ export type TurnInput = { kind: "message"; parts: Part[]; channelRef?: unknown }
 export interface ThreadEventBase {
   seq: number;
   turn: number;
-  /** Milliseconds since the epoch. */
   at: number;
   channelRef?: unknown;
 }

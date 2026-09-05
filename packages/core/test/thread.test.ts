@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ThreadEvent } from "../src/index.js";
 import { lastMessage, reply } from "../src/testing/index.js";
 import { provider, scope } from "./worker.js";
 
@@ -200,6 +201,24 @@ describe("Turn failure paths", () => {
 });
 
 describe("queued input", () => {
+  it("keeps an input queued while the Scope stays suspended, then runs it once resumed", async () => {
+    provider.script(["Back", "Queued"]);
+    const thread = fresh();
+    await scope.suspend();
+    let queued: Promise<ThreadEvent[]>;
+    try {
+      await thread.send(message("First"));
+      queued = thread.send(message("Second"));
+      expect((await take(thread.subscribe({ after: 2 }), 2)).map((e) => e.type)).toEqual(["turn.resumed", "turn.paused"]);
+      expect(await thread.status()).toMatchObject({ state: "parked", turn: 1 });
+    } finally {
+      await scope.resume();
+    }
+    const resumed = await thread.send(message("Third"));
+    expect(lastMessage(await queued)).toBe("Queued");
+    expect(resumed).toContainEvent({ type: "turn.started", turn: 3 });
+  });
+
   it("runs inputs sent during a Turn as later Turns, in order", async () => {
     provider.script(["One", "Two"]);
     const thread = fresh();
