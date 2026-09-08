@@ -11,7 +11,7 @@ export interface ToolAnnotations {
   openWorldHint: boolean;
 }
 
-const DEFAULT_ANNOTATIONS: ToolAnnotations = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
+export const DEFAULT_ANNOTATIONS: ToolAnnotations = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
 
 /** A resolved Connection value: user-level (Scope, User, name) wins over agent-level (Scope, Agent, name). */
 export interface Connection {

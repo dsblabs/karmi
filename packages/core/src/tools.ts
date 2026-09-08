@@ -15,8 +15,6 @@ export interface AvailableTool {
   tool: Tool;
   settings: unknown;
   effect: PolicyEffect;
-  /** Framework built-ins are always allowed: they are Harness machinery, not developer actions. */
-  builtIn: boolean;
 }
 
 export function resolveTools(spec: AgentSpec, catalogue: Catalogue, policy: readonly PolicyRule[], builtIns: readonly Tool[], remembered?: ReadonlySet<string>): Map<string, AvailableTool> {
@@ -28,9 +26,10 @@ export function resolveTools(spec: AgentSpec, catalogue: Catalogue, policy: read
     if (!tool) continue;
     // Validated at put; parsed again so the Tool sees its schema's defaults and transforms.
     const parsed = tool.settings ? z.parse(tool.settings, settings ?? {}) : undefined;
-    available.set(name, { tool, settings: parsed, effect: evaluatePolicy(policy, tool, remembered), builtIn: false });
+    available.set(name, { tool, settings: parsed, effect: evaluatePolicy(policy, tool, remembered) });
   }
-  for (const tool of builtIns) available.set(tool.name, { tool, settings: undefined, effect: "allow", builtIn: true });
+  // Framework built-ins are always allowed: they are Harness machinery, not developer actions.
+  for (const tool of builtIns) available.set(tool.name, { tool, settings: undefined, effect: "allow" });
   return available;
 }
 

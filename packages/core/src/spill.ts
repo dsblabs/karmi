@@ -16,7 +16,7 @@ export function truncateOutput(text: string, limits: OutputLimits): Truncation {
   let head: string;
   let tail: string;
   if (lines.length > limits.maxLines) {
-    const keep = Math.floor(limits.maxLines / 2);
+    const keep = Math.max(1, Math.floor(limits.maxLines / 2));
     head = lines.slice(0, keep).join("\n");
     tail = lines.slice(lines.length - keep).join("\n");
   } else {
@@ -24,7 +24,7 @@ export function truncateOutput(text: string, limits: OutputLimits): Truncation {
     tail = "";
   }
   if (head.length + tail.length > limits.maxChars) {
-    const keep = Math.floor(limits.maxChars / 2);
+    const keep = Math.max(1, Math.floor(limits.maxChars / 2));
     head = head.slice(0, keep);
     tail = tail.slice(tail.length - Math.min(keep, tail.length)) || text.slice(-keep);
   }

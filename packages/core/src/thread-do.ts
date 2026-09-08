@@ -18,7 +18,7 @@ import type { ScopeConfigDurableObject } from "./scope-config-do.js";
 import { titleOf, type ThreadAddress, type ThreadStatus } from "./thread.js";
 import type { Granularity, ThreadEvent, ThreadEventData, ThreadEventType, TurnInput } from "./thread-events.js";
 import { runToolStep, type PriorCalls, type ToolCall } from "./tool-step.js";
-import { resolveTools, toolDefinitions } from "./tools.js";
+import { resolveTools, toolDefinitions, type AvailableTool } from "./tools.js";
 import { splitModelId, transcriptFromEvents } from "./transcript.js";
 
 const SCHEMA = `
@@ -243,12 +243,13 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     if (end.type === "turn.paused") this.update({ state: "parked" });
     else this.update({ state: "idle", step: 0, attempt: 0, recoveries: 0, snapshot_json: null });
     void this.ctx.storage.deleteAlarm();
-    this.turnAbort.abort();
     // The snapshot is gone from the row by now; a Turn that never took one has no Hooks to run.
     const snapshot = row.snapshot_json === null ? undefined : (JSON.parse(row.snapshot_json) as TurnSnapshot);
-    if (!snapshot) return;
-    if (end.type === "turn.failed") await this.hooks(row, snapshot, "on-error", { error: { code: end.reason, message: end.message } });
-    await this.hooks(row, snapshot, "after-turn", { end });
+    if (snapshot) {
+      if (end.type === "turn.failed") await this.turnHooks(row, snapshot, "on-error", { error: { code: end.reason, message: end.message } });
+      await this.turnHooks(row, snapshot, "after-turn", { end });
+    }
+    this.turnAbort.abort();
   }
 
   // One Turn from wherever the log says it stands: model Steps and tool Steps alternate until a model
@@ -256,14 +257,26 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
   // re-runs the same model and only a Provider failure rotates; on a tool Step it counts recoveries.
   private async turn(row: ThreadRow): Promise<void> {
     this.turnAbort = new AbortController();
+    try {
+      await this.steps(row);
+    } catch (caught) {
+      // A bug, not an eviction: end the Turn honestly rather than leave it to the watchdog.
+      await this.finish(this.row(), failure("internal", caught instanceof Error ? caught.message : String(caught)));
+    }
+  }
+
+  private async steps(row: ThreadRow): Promise<void> {
     const channelRef = this.turnInput(row.turn)?.channelRef;
+    // The Tool set is a function of the snapshot, so one resolution serves every Step of the Turn.
+    let tools: ReturnType<typeof resolveTools> | undefined;
+    const available = (snapshot: TurnSnapshot) => (tools ??= resolveTools(snapshot.spec, this.deployment.catalogue, snapshot.policy, [readOutputTool(this.env.KARMI_MEDIA, row.scope_id, row.thread_id)]));
     for (;;) {
       const boundary = await this.snapshot(row);
       if (!boundary.ok) return this.finish(this.row(), boundary.failure);
       const snapshot = boundary.snapshot;
       if (row.step === 0) {
         const input = this.turnInput(row.turn);
-        const before = input && (await this.hooks(row, snapshot, "before-turn", { input }));
+        const before = input && (await this.turnHooks(row, snapshot, "before-turn", { input }));
         if (before && !before.ok) return this.finish(this.row(), before.failure);
       }
       const plan = this.plan(row);
@@ -277,7 +290,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
         this.update({ step: plan.n, attempt, ...(plan.fresh && { recoveries: 0 }) });
         this.append(row.turn, { type: "step.started", kind: "model", n: plan.n, attempt, model, provider: snapshot.profile.adapter, agentVersion: snapshot.agentVersion }, channelRef);
         void this.ctx.storage.setAlarm(Date.now() + STEP_WATCHDOG_MS);
-        const result = await this.modelStep({ ...row, step: plan.n }, snapshot, model, channelRef);
+        const result = await this.modelStep({ ...row, step: plan.n }, snapshot, available(snapshot), model, channelRef);
         // The failed attempt stays in the log; the transcript ignores Steps that never completed.
         if (!result.ok) this.update({ attempt: attempt + 1 });
       } else {
@@ -285,7 +298,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
         this.update({ step: plan.n, attempt, ...(plan.fresh && { recoveries: 0 }) });
         this.append(row.turn, { type: "step.started", kind: "tool", n: plan.n, attempt, agentVersion: snapshot.agentVersion }, channelRef);
         void this.ctx.storage.setAlarm(Date.now() + STEP_WATCHDOG_MS);
-        await this.toolStep({ ...row, step: plan.n }, snapshot, attempt, plan.batch, plan.prior, channelRef);
+        await this.toolStep({ ...row, step: plan.n }, snapshot, available(snapshot), attempt, plan.batch, plan.prior, channelRef);
         this.append(row.turn, { type: "step.completed", kind: "tool", n: plan.n }, channelRef);
       }
       row = this.row();
@@ -385,7 +398,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
 
   // Turn-level Hooks, dispatched by name with the Turn's context. `before-turn` may refuse the Turn by
   // throwing; the observing points only log a failure.
-  private async hooks<P extends "before-turn" | "after-turn" | "on-error">(row: ThreadRow, snapshot: TurnSnapshot, point: P, extra: Omit<HookContexts[P], keyof HookContextBase>): Promise<{ ok: true } | { ok: false; failure: TurnEnd }> {
+  private async turnHooks<P extends "before-turn" | "after-turn" | "on-error">(row: ThreadRow, snapshot: TurnSnapshot, point: P, extra: Omit<HookContexts[P], keyof HookContextBase>): Promise<{ ok: true } | { ok: false; failure: TurnEnd }> {
     const base: HookContextBase = { point, scope: row.scope_id, ...(row.user_id !== null && { user: row.user_id }), thread: { id: row.thread_id }, agent: row.agent_id, turn: row.turn, logger: this.logger(row), signal: this.turnAbort.signal };
     for (const hook of hooksAt(snapshot.spec, this.deployment.catalogue, point)) {
       try {
@@ -399,14 +412,13 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     return { ok: true };
   }
 
-  private async modelStep(row: ThreadRow, snapshot: TurnSnapshot, model: string, channelRef: unknown): Promise<StepResult> {
+  private async modelStep(row: ThreadRow, snapshot: TurnSnapshot, available: ReadonlyMap<string, AvailableTool>, model: string, channelRef: unknown): Promise<StepResult> {
     const { spec, profile } = snapshot;
     const provider = this.deployment.providers[profile.adapter];
     if (!provider) return stepError(`Provider adapter "${profile.adapter}" is not registered.`);
     const [, native] = splitModelId(model);
     const parts: ContentBlock[] = [];
     try {
-      const available = resolveTools(spec, this.deployment.catalogue, snapshot.policy, [readOutputTool(this.env.KARMI_MEDIA, row.scope_id, row.thread_id)]);
       const tools = toolDefinitions(available);
       const offered = tools.map((tool) => available.get(tool.name)!.tool);
       const system = await evaluatePrompt(spec, this.deployment.catalogue, { model, scope: row.scope_id, ...(row.user_id !== null && { user: row.user_id }), thread: { id: row.thread_id }, tools: tools.map((tool) => tool.name), now: new Date() }, offered);
@@ -420,9 +432,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
         ...(spec.model.params && { params: spec.model.params }),
         ...((profile.providerOptions || spec.model.providerOptions) && { providerOptions: { ...profile.providerOptions, ...spec.model.providerOptions } }),
       };
-      const step = new AbortController();
-      const signal = AbortSignal.any([this.turnAbort.signal, step.signal]);
-      for await (const event of provider.stream(request, { fetch, signal })) {
+      for await (const event of provider.stream(request, { fetch, signal: this.turnAbort.signal })) {
         switch (event.type) {
           case "delta":
             this.append(row.turn, { type: "message.delta", index: event.index, kind: event.kind, text: event.text }, channelRef);
@@ -449,7 +459,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     }
   }
 
-  private toolStep(row: ThreadRow, snapshot: TurnSnapshot, attempt: number, batch: ToolCall[], prior: PriorCalls, channelRef: unknown): Promise<void> {
+  private toolStep(row: ThreadRow, snapshot: TurnSnapshot, available: ReadonlyMap<string, AvailableTool>, attempt: number, batch: ToolCall[], prior: PriorCalls, channelRef: unknown): Promise<void> {
     const stub = this.scopeStub(row);
     return runToolStep(
       {
@@ -461,12 +471,14 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
         attempt,
         spec: snapshot.spec,
         catalogue: this.deployment.catalogue,
-        available: resolveTools(snapshot.spec, this.deployment.catalogue, snapshot.policy, [readOutputTool(this.env.KARMI_MEDIA, row.scope_id, row.thread_id)]),
+        available,
         bucket: this.env.KARMI_MEDIA,
         logger: this.logger(row),
         signal: this.turnAbort.signal,
         append: (data) => this.append(row.turn, data, channelRef),
-        connection: async (name) => {
+        connection: async (level, name) => {
+          // The user-level store lands with the Connection ticket; until then only agent-level values exist.
+          if (level === "user") return undefined;
           const value = await stub.connectionGet(row.scope_id, row.agent_id, name);
           return value.ok ? value.value : undefined;
         },

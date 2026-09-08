@@ -79,7 +79,7 @@ const denyBooking = defineHook({ name: "deny-booking", point: "before-tool", run
 const denyLookup = defineHook({ name: "deny-lookup", point: "before-tool", run: () => ({ effect: "deny", reason: "Not now" }) });
 const observe = defineHook({ name: "observe", point: "after-tool", run: ({ call, result }) => void trace.push(`after-tool:${call.name}:${result.isError ? "error" : "ok"}`) });
 const turnLog = defineHook({ name: "turn-start", point: "before-turn", run: ({ input, turn }) => void trace.push(`before-turn:${turn}:${input.kind}`) });
-const turnEnd = defineHook({ name: "turn-end", point: "after-turn", run: ({ end, turn }) => void trace.push(`after-turn:${turn}:${end.type}`) });
+const turnEnd = defineHook({ name: "turn-end", point: "after-turn", run: ({ end, turn, signal }) => void trace.push(`after-turn:${turn}:${end.type}${signal.aborted ? ":aborted" : ""}`) });
 const onError = defineHook({ name: "on-error", point: "on-error", run: ({ error }) => void trace.push(`on-error:${error.code}`) });
 
 const concierge = defineAgent({

@@ -19,8 +19,10 @@ export interface HookContextBase {
 }
 
 export interface HookToolCall {
-  /** `{threadId}:{seq}` once the call is logged; a `before-tool` Hook sees the model's `tool_call` id instead. */
-  callId: string;
+  /** The model's `tool_call` id. */
+  id: string;
+  /** `{threadId}:{seq}`, once the call is logged; absent at `before-tool`, which runs before the log entry. */
+  callId?: string;
   name: string;
   input: unknown;
   annotations: ToolAnnotations;
