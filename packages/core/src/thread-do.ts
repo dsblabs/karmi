@@ -1,9 +1,14 @@
 import { DurableObject } from "cloudflare:workers";
-import type { AgentSpec } from "./agent.js";
+import type { AgentSpec, PolicyRule } from "./agent.js";
 import type { KarmiBindings } from "./bindings.js";
+import { readOutputTool } from "./builtins.js";
+import type { Logger } from "./context.js";
 import type { Deployment } from "./deployment.js";
 import { KarmiError } from "./errors.js";
+import type { HookContextBase, HookContexts, TurnEnd } from "./hook.js";
+import { hooksAt } from "./hooks.js";
 import { keys } from "./keys.js";
+import { consoleLogger } from "./logger.js";
 import { fail, ok, remote, type Outcome } from "./outcome.js";
 import { evaluatePrompt } from "./prompt.js";
 import type { ContentBlock, ProviderError, StopReason, Usage } from "./provider.js";
@@ -12,6 +17,8 @@ import type { ProviderConfig } from "./scope-config.js";
 import type { ScopeConfigDurableObject } from "./scope-config-do.js";
 import { titleOf, type ThreadAddress, type ThreadStatus } from "./thread.js";
 import type { Granularity, ThreadEvent, ThreadEventData, ThreadEventType, TurnInput } from "./thread-events.js";
+import { runToolStep, type PriorCalls, type ToolCall } from "./tool-step.js";
+import { resolveTools, toolDefinitions } from "./tools.js";
 import { splitModelId, transcriptFromEvents } from "./transcript.js";
 
 const SCHEMA = `
@@ -36,6 +43,8 @@ export interface TurnSnapshot {
   spec: AgentSpec;
   /** The chosen Provider profile, secret-free. */
   profile: ProviderConfig;
+  /** Scope rules, then Deployment rules, then the Spec's own. */
+  policy: PolicyRule[];
 }
 
 type ThreadRow = {
@@ -59,6 +68,12 @@ type EventRow = { seq: number; turn: number; at: number; type: ThreadEventType; 
 /** A model Step outcome: the Provider finished, or it failed and the next fallback should try. */
 type StepResult = { ok: true; stopReason: StopReason; message: ContentBlock[] } | { ok: false; error: ProviderError };
 
+/**
+ * What the log says the Turn should do next: re-run or start a model Step, run the tool batch of the
+ * last model Step (re-runs carry what already happened), or end with the last model Step's message.
+ */
+type Plan = { kind: "model"; n: number; fresh: boolean } | { kind: "tool"; n: number; fresh: boolean; batch: ToolCall[]; prior: PriorCalls } | { kind: "finish"; stopReason: StopReason; message: ContentBlock[] };
+
 export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
   abstract readonly deployment: Deployment;
 
@@ -66,6 +81,8 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
   private active = false;
   /** Subscribers parked on an empty poll; each append wakes them all. */
   private waiters: (() => void)[] = [];
+  /** Root of the Turn's AbortSignal tree; aborted when the Turn ends. */
+  private turnAbort = new AbortController();
 
   constructor(ctx: DurableObjectState, env: KarmiBindings) {
     super(ctx, env);
@@ -178,7 +195,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     if (row?.state !== "running") return;
     const recoveries = row.recoveries + 1;
     this.update({ recoveries });
-    if (recoveries > MAX_RECOVERIES) this.finish(row, failure("recovery", `Step ${row.step} of Turn ${row.turn} was interrupted ${recoveries} times.`));
+    if (recoveries > MAX_RECOVERIES) await this.finish(row, failure("recovery", `Step ${row.step} of Turn ${row.turn} was interrupted ${recoveries} times.`));
     await this.run();
   }
 
@@ -221,41 +238,115 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     return row ? (JSON.parse(row.json) as { input: TurnInput }).input : undefined;
   }
 
-  private finish(row: ThreadRow, data: TurnEnd): void {
-    this.append(row.turn, data, this.turnInput(row.turn)?.channelRef);
-    if (data.type === "turn.paused") this.update({ state: "parked" });
+  private async finish(row: ThreadRow, end: TurnEnd): Promise<void> {
+    this.append(row.turn, end, this.turnInput(row.turn)?.channelRef);
+    if (end.type === "turn.paused") this.update({ state: "parked" });
     else this.update({ state: "idle", step: 0, attempt: 0, recoveries: 0, snapshot_json: null });
     void this.ctx.storage.deleteAlarm();
+    this.turnAbort.abort();
+    // The snapshot is gone from the row by now; a Turn that never took one has no Hooks to run.
+    const snapshot = row.snapshot_json === null ? undefined : (JSON.parse(row.snapshot_json) as TurnSnapshot);
+    if (!snapshot) return;
+    if (end.type === "turn.failed") await this.hooks(row, snapshot, "on-error", { error: { code: end.reason, message: end.message } });
+    await this.hooks(row, snapshot, "after-turn", { end });
   }
 
-  // One Turn from wherever the row says it stands: no tools yet, so a single model Step. `attempt`
-  // is the attempt to (re)run next, so an eviction re-runs the same model and only a Provider
-  // failure rotates to the next fallback.
+  // One Turn from wherever the log says it stands: model Steps and tool Steps alternate until a model
+  // Step ends without tool calls. `attempt` on a model Step indexes the fallback list, so an eviction
+  // re-runs the same model and only a Provider failure rotates; on a tool Step it counts recoveries.
   private async turn(row: ThreadRow): Promise<void> {
+    this.turnAbort = new AbortController();
     const channelRef = this.turnInput(row.turn)?.channelRef;
-    const boundary = await this.snapshot(row);
-    if (!boundary.ok) return this.finish(row, boundary.failure);
-    const snapshot = boundary.snapshot;
-    const step = Math.max(row.step, 1);
-    const attempt = Math.max(row.attempt, 1);
-    const models = [snapshot.spec.model.id, ...(snapshot.spec.model.fallbacks ?? [])];
-    const model = models[attempt - 1];
-    if (model === undefined) return this.finish(row, failure("provider", `Every model of Agent "${row.agent_id}" failed.`));
-    this.update({ step, attempt });
-    this.append(row.turn, { type: "step.started", kind: "model", n: step, attempt, model, provider: snapshot.profile.adapter, agentVersion: snapshot.agentVersion }, channelRef);
-    void this.ctx.storage.setAlarm(Date.now() + STEP_WATCHDOG_MS);
+    for (;;) {
+      const boundary = await this.snapshot(row);
+      if (!boundary.ok) return this.finish(this.row(), boundary.failure);
+      const snapshot = boundary.snapshot;
+      if (row.step === 0) {
+        const input = this.turnInput(row.turn);
+        const before = input && (await this.hooks(row, snapshot, "before-turn", { input }));
+        if (before && !before.ok) return this.finish(this.row(), before.failure);
+      }
+      const plan = this.plan(row);
+      if (plan.kind === "finish") return this.finish(this.row(), { type: "turn.completed", stopReason: plan.stopReason, message: plan.message });
 
-    const result = await this.modelStep({ ...row, step }, snapshot, model, channelRef);
-    if (result.ok) return this.finish(row, { type: "turn.completed", stopReason: result.stopReason, message: result.message });
-    // The failed attempt stays in the log; the transcript ignores Steps that never completed.
-    this.update({ attempt: attempt + 1 });
-    return this.turn(this.row());
+      if (plan.kind === "model") {
+        const attempt = plan.fresh ? 1 : Math.max(row.attempt, 1);
+        const models = [snapshot.spec.model.id, ...(snapshot.spec.model.fallbacks ?? [])];
+        const model = models[attempt - 1];
+        if (model === undefined) return this.finish(this.row(), failure("provider", `Every model of Agent "${row.agent_id}" failed.`));
+        this.update({ step: plan.n, attempt, ...(plan.fresh && { recoveries: 0 }) });
+        this.append(row.turn, { type: "step.started", kind: "model", n: plan.n, attempt, model, provider: snapshot.profile.adapter, agentVersion: snapshot.agentVersion }, channelRef);
+        void this.ctx.storage.setAlarm(Date.now() + STEP_WATCHDOG_MS);
+        const result = await this.modelStep({ ...row, step: plan.n }, snapshot, model, channelRef);
+        // The failed attempt stays in the log; the transcript ignores Steps that never completed.
+        if (!result.ok) this.update({ attempt: attempt + 1 });
+      } else {
+        const attempt = (plan.fresh ? 0 : row.recoveries) + 1;
+        this.update({ step: plan.n, attempt, ...(plan.fresh && { recoveries: 0 }) });
+        this.append(row.turn, { type: "step.started", kind: "tool", n: plan.n, attempt, agentVersion: snapshot.agentVersion }, channelRef);
+        void this.ctx.storage.setAlarm(Date.now() + STEP_WATCHDOG_MS);
+        await this.toolStep({ ...row, step: plan.n }, snapshot, attempt, plan.batch, plan.prior, channelRef);
+        this.append(row.turn, { type: "step.completed", kind: "tool", n: plan.n }, channelRef);
+      }
+      row = this.row();
+    }
+  }
+
+  // Reads the Turn's Steps back from the log. Results and started calls are kept across re-runs of the
+  // same tool Step and dropped only when a new model Step starts a new batch.
+  private plan(row: ThreadRow): Plan {
+    const events = this.sql.exec<EventRow>("SELECT * FROM events WHERE turn = ? AND type IN ('step.started', 'step.completed', 'message.part', 'tool.call', 'tool.result') ORDER BY seq", row.turn).toArray();
+    let started: { kind: "model" | "tool"; n: number } | undefined;
+    let completed = true;
+    let parts: ContentBlock[] = [];
+    let last: { stopReason: StopReason; message: ContentBlock[] } | undefined;
+    const calls = new Map<string, { seq: number; input: unknown }>();
+    const results = new Set<string>();
+    for (const { seq, json } of events) {
+      const event = JSON.parse(json) as ThreadEventData;
+      switch (event.type) {
+        case "step.started":
+          started = { kind: event.kind, n: event.n };
+          completed = false;
+          if (event.kind === "model") {
+            parts = [];
+            calls.clear();
+            results.clear();
+          }
+          break;
+        case "message.part":
+          parts[event.index] = event.block;
+          break;
+        case "tool.call":
+          calls.set(event.id, { seq, input: event.input });
+          break;
+        case "tool.result":
+          results.add(event.id);
+          break;
+        case "step.completed":
+          completed = true;
+          if (event.kind === "model") last = { stopReason: event.stopReason, message: parts.filter((part) => part !== undefined) };
+          break;
+        default:
+          break;
+      }
+    }
+    const batch = (): ToolCall[] => (last?.message ?? []).flatMap((block) => (block.type === "tool_call" ? [{ id: block.id, name: block.name, input: block.input }] : []));
+    if (started && !completed) {
+      if (started.kind === "model") return { kind: "model", n: started.n, fresh: false };
+      return { kind: "tool", n: started.n, fresh: false, batch: batch(), prior: { started: calls, finished: results } };
+    }
+    if (!started || !last) return { kind: "model", n: 1, fresh: true };
+    if (started.kind === "tool") return { kind: "model", n: started.n + 1, fresh: true };
+    const pending = batch();
+    if (pending.length > 0) return { kind: "tool", n: started.n + 1, fresh: true, batch: pending, prior: { started: calls, finished: results } };
+    return { kind: "finish", stopReason: last.stopReason, message: last.message };
   }
 
   // The Step boundary: the first Step takes the Turn snapshot from the Scope and persists it; every
   // Step checks the Scope is still active.
   private async snapshot(row: ThreadRow): Promise<{ ok: true; snapshot: TurnSnapshot } | { ok: false; failure: TurnEnd }> {
-    const stub = remote<ScopeConfigDurableObject>(this.env.KARMI_SCOPES, keys.config(row.scope_id));
+    const stub = this.scopeStub(row);
     let snapshot: TurnSnapshot;
     let state: string;
     if (row.snapshot_json !== null) {
@@ -272,7 +363,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
       const spec = source.value.agent.spec as AgentSpec;
       const profile = resolveProfile(spec, source.value.config.providers ?? {});
       if (!profile) return { ok: false, failure: failure("provider.profile.unknown", `Agent "${row.agent_id}" names no configured Provider profile.`) };
-      snapshot = { agentVersion: version, spec, profile };
+      snapshot = { agentVersion: version, spec, profile, policy: [...(source.value.config.policy ?? []), ...(spec.policy ?? [])] };
       const json = JSON.stringify(snapshot);
       const bytes = new TextEncoder().encode(json).byteLength;
       if (bytes > SNAPSHOT_LIMIT) return { ok: false, failure: failure("snapshot.too-large", `Turn snapshot is ${bytes} bytes; the limit is ${SNAPSHOT_LIMIT}.`) };
@@ -284,6 +375,30 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     return { ok: true, snapshot };
   }
 
+  private scopeStub(row: ThreadRow) {
+    return remote<ScopeConfigDurableObject>(this.env.KARMI_SCOPES, keys.config(row.scope_id));
+  }
+
+  private logger(row: ThreadRow): Logger {
+    return consoleLogger({ scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn });
+  }
+
+  // Turn-level Hooks, dispatched by name with the Turn's context. `before-turn` may refuse the Turn by
+  // throwing; the observing points only log a failure.
+  private async hooks<P extends "before-turn" | "after-turn" | "on-error">(row: ThreadRow, snapshot: TurnSnapshot, point: P, extra: Omit<HookContexts[P], keyof HookContextBase>): Promise<{ ok: true } | { ok: false; failure: TurnEnd }> {
+    const base: HookContextBase = { point, scope: row.scope_id, ...(row.user_id !== null && { user: row.user_id }), thread: { id: row.thread_id }, agent: row.agent_id, turn: row.turn, logger: this.logger(row), signal: this.turnAbort.signal };
+    for (const hook of hooksAt(snapshot.spec, this.deployment.catalogue, point)) {
+      try {
+        await hook.run({ ...base, ...extra } as HookContexts[P]);
+      } catch (caught) {
+        const message = caught instanceof Error ? caught.message : String(caught);
+        if (point === "before-turn") return { ok: false, failure: failure("hook", `Hook "${hook.name}" refused the Turn: ${message}`) };
+        base.logger.warn(`${point} Hook "${hook.name}" failed`, { error: message });
+      }
+    }
+    return { ok: true };
+  }
+
   private async modelStep(row: ThreadRow, snapshot: TurnSnapshot, model: string, channelRef: unknown): Promise<StepResult> {
     const { spec, profile } = snapshot;
     const provider = this.deployment.providers[profile.adapter];
@@ -291,17 +406,23 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     const [, native] = splitModelId(model);
     const parts: ContentBlock[] = [];
     try {
-      const system = await evaluatePrompt(spec, this.deployment.catalogue, { model, scope: row.scope_id, ...(row.user_id !== null && { user: row.user_id }), thread: { id: row.thread_id }, tools: [], now: new Date() });
+      const available = resolveTools(spec, this.deployment.catalogue, snapshot.policy, [readOutputTool(this.env.KARMI_MEDIA, row.scope_id, row.thread_id)]);
+      const tools = toolDefinitions(available);
+      const offered = tools.map((tool) => available.get(tool.name)!.tool);
+      const system = await evaluatePrompt(spec, this.deployment.catalogue, { model, scope: row.scope_id, ...(row.user_id !== null && { user: row.user_id }), thread: { id: row.thread_id }, tools: tools.map((tool) => tool.name), now: new Date() }, offered);
       const { messages } = prepareMessages(transcriptFromEvents(this.read(0, "part", Number.MAX_SAFE_INTEGER)), { provider: profile.adapter, model: native });
       const request = {
         model: native,
         config: profile,
         ...(system !== undefined && { system }),
         messages,
+        ...(tools.length > 0 && { tools }),
         ...(spec.model.params && { params: spec.model.params }),
         ...((profile.providerOptions || spec.model.providerOptions) && { providerOptions: { ...profile.providerOptions, ...spec.model.providerOptions } }),
       };
-      for await (const event of provider.stream(request, { fetch, signal: new AbortController().signal })) {
+      const step = new AbortController();
+      const signal = AbortSignal.any([this.turnAbort.signal, step.signal]);
+      for await (const event of provider.stream(request, { fetch, signal })) {
         switch (event.type) {
           case "delta":
             this.append(row.turn, { type: "message.delta", index: event.index, kind: event.kind, text: event.text }, channelRef);
@@ -327,10 +448,36 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
       return stepError(error instanceof Error ? error.message : String(error));
     }
   }
+
+  private toolStep(row: ThreadRow, snapshot: TurnSnapshot, attempt: number, batch: ToolCall[], prior: PriorCalls, channelRef: unknown): Promise<void> {
+    const stub = this.scopeStub(row);
+    return runToolStep(
+      {
+        scope: row.scope_id,
+        ...(row.user_id !== null && { user: row.user_id }),
+        threadId: row.thread_id,
+        agent: row.agent_id,
+        turn: row.turn,
+        attempt,
+        spec: snapshot.spec,
+        catalogue: this.deployment.catalogue,
+        available: resolveTools(snapshot.spec, this.deployment.catalogue, snapshot.policy, [readOutputTool(this.env.KARMI_MEDIA, row.scope_id, row.thread_id)]),
+        bucket: this.env.KARMI_MEDIA,
+        logger: this.logger(row),
+        signal: this.turnAbort.signal,
+        append: (data) => this.append(row.turn, data, channelRef),
+        connection: async (name) => {
+          const value = await stub.connectionGet(row.scope_id, row.agent_id, name);
+          return value.ok ? value.value : undefined;
+        },
+      },
+      batch,
+      prior,
+    );
+  }
 }
 
-/** A Turn's last event; `TestThread.send` and the loop both key on it. */
-export type TurnEnd = ThreadEventData & { type: "turn.completed" | "turn.failed" | "turn.paused" };
+export type { TurnEnd } from "./hook.js";
 
 export function isTurnEnd(event: ThreadEventData): event is TurnEnd {
   return event.type === "turn.completed" || event.type === "turn.failed" || event.type === "turn.paused";

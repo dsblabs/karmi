@@ -28,6 +28,12 @@ export interface Scope {
     delete(agentId: string): Promise<void>;
     /** The same validation `put` runs, without storing anything. */
     validate(spec: AgentSpec): Promise<ValidationResult>;
+    /** Agent-level Connection values, write-only: a Spec declares them, this sets them, only a Turn reads them. */
+    readonly connections: {
+      set(agentId: string, name: string, value: unknown): Promise<void>;
+      delete(agentId: string, name: string): Promise<void>;
+      list(agentId: string): Promise<{ name: string; updatedAt: number }[]>;
+    };
   };
   /** An identity creates the Thread on first use; a key from `thread.key` reopens one and never creates. */
   thread(target: ThreadIdentity | string): Thread;
@@ -59,6 +65,11 @@ export function openScope(bindings: KarmiBindings, id: ScopeId): Scope {
       history: (agentId) => call(stub.agentsHistory(id, agentId)),
       delete: (agentId) => call(stub.agentsDelete(id, agentId)),
       validate: (spec) => call(stub.agentsValidate(id, spec)),
+      connections: {
+        set: (agentId, name, value) => call(stub.connectionsSet(id, agentId, name, value)),
+        delete: (agentId, name) => call(stub.connectionsDelete(id, agentId, name)),
+        list: (agentId) => call(stub.connectionsList(id, agentId)),
+      },
     },
     thread: (target) => openThread(bindings, id, target),
     threads: { list: (filter) => call(stub.threadsList(id, filter.agent, filter.user)) },

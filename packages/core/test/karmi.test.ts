@@ -9,8 +9,8 @@ describe("createKarmi", () => {
     expect(response.status).toBe(200);
     const description = await response.json();
     expect(description).toMatchObject({
-      tools: [{ name: "weather", annotations: { readOnlyHint: true } }],
-      agents: [{ agentId: "concierge", name: "Concierge" }],
+      tools: expect.arrayContaining([expect.objectContaining({ name: "weather", annotations: expect.objectContaining({ readOnlyHint: true }) })]),
+      agents: expect.arrayContaining([{ agentId: "concierge", name: "Concierge" }]),
     });
   });
 

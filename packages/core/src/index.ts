@@ -18,10 +18,12 @@ export { AgentSpecSchema, agentSpecJsonSchema, AGENT_SPEC_DEFAULTS, PROVIDER_TOO
 export { ScopeConfigSchema, scopeConfigJsonSchema, parseScopeConfig, resolveScopeConfig, type ScopeConfigDocument, type ProviderConfig, type GatewayConfig, type Ceilings } from "./scope-config.js";
 export { validateAgentSpec, ISSUE_CODES, type Issue, type IssueCode, type ValidationResult, type ScopeContext } from "./validate.js";
 export { defineFragment, type Fragment, type FragmentContext, type FragmentRender } from "./fragment.js";
-export { defineHook, HOOK_POINTS, type Hook, type HookContext, type HookPoint } from "./hook.js";
+export { defineHook, HOOK_POINTS, type Hook, type HookInput, type HookContextBase, type HookContexts, type HookResults, type HookToolCall, type BeforeToolDecision, type HookPoint, type TurnEnd } from "./hook.js";
 export { defineRetriever, type Retriever, type RetrieverContext, type KnowledgeRef, type KnowledgeDocument, type Passage } from "./retriever.js";
 export { defineSkill, type Skill } from "./skill.js";
-export { defineTool, type Tool, type ToolAnnotations, type ToolContext, type ToolContent, type ToolResult } from "./tool.js";
+export { defineTool, type Tool, type ToolAnnotations, type ToolContext, type ToolContent, type ToolResult, type Connection } from "./tool.js";
+export { evaluatePolicy, type PolicyEffect } from "./policy.js";
+export { truncateOutput, type OutputLimits, type Truncation } from "./spill.js";
 export { KarmiError, SpecInvalidError } from "./errors.js";
 export { BUILT_IN_TOOL_NAMES, type CatalogueKind } from "./names.js";
 export type { Logger, MediaRef, ScopeId, ThreadRef, UserId } from "./context.js";

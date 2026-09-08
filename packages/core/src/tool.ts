@@ -13,12 +13,22 @@ export interface ToolAnnotations {
 
 const DEFAULT_ANNOTATIONS: ToolAnnotations = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
 
+/** A resolved Connection value: user-level (Scope, User, name) wins over agent-level (Scope, Agent, name). */
+export interface Connection {
+  name: string;
+  type: string;
+  level: "agent" | "user";
+  value: unknown;
+}
+
 export interface ToolContext<Settings = undefined> {
   scope: ScopeId;
   user?: UserId;
   thread: ThreadRef;
   /** The per-reference `settings` from the Agent Spec, validated against the Tool's schema. */
   settings: Settings;
+  /** Present when the Tool `requires` a Connection and one resolved. */
+  connection?: Connection;
   /** Recovery attempt of the enclosing Step, starting at 1. */
   attempt: number;
   /** Stable across re-runs; pass it upstream as an idempotency key. */
