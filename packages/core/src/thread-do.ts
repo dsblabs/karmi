@@ -88,6 +88,9 @@ type StepResult = { ok: true; stopReason: StopReason; message: ContentBlock[] } 
  */
 type Plan = { kind: "model"; n: number; fresh: boolean } | { kind: "tool"; n: number; fresh: boolean; batch: ToolCall[]; prior: PriorCalls } | { kind: "finish"; stopReason: StopReason; message: ContentBlock[] };
 
+/** An `approval.requested` before its `timeoutAt` is stamped; distributive so each kind keeps its own fields. */
+type ApprovalRequest = Extract<ThreadEventData, { type: "approval.requested" }> extends infer E ? (E extends { timeoutAt: number } ? Omit<E, "timeoutAt"> : never) : never;
+
 type Request = { kind: "tool"; id: string; tool: string; timeoutAt: number; answered: boolean } | { kind: "continue"; timeoutAt: number; answered: boolean };
 
 /** The Turn as the log tells it: the next Step, what it waits on, and what it has spent. */
@@ -275,9 +278,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return rows.toArray().map((row) => ({ seq: row.seq, turn: row.turn, at: row.at, ...(JSON.parse(row.json) as ThreadEventData) }));
   }
 
-  private append(turn: number, data: ThreadEventData, channelRef: unknown): ThreadEvent {
+  private append(turn: number, data: ThreadEventData, channelRef: unknown, at = this.deployment.clock.now()): ThreadEvent {
     const seq = ++this.head;
-    const at = this.deployment.clock.now();
     const body = channelRef === undefined ? data : { ...data, channelRef };
     const event: ThreadEvent = { seq, turn, at, ...body };
     this.sql.exec("INSERT INTO events (seq, turn, at, type, json) VALUES (?, ?, ?, ?, ?)", seq, turn, at, data.type, JSON.stringify(body));
@@ -417,9 +419,12 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   // Approvals: one request per asked call or per exhausted budget, answered once, by a human, the
   // clock or a cancel. Answering is one append; `settle` decides whether the Turn goes on.
-  private request(row: ThreadRow, data: Extract<ThreadEventData, { type: "approval.requested" }>, channelRef: unknown): void {
-    const { seq } = this.append(row.turn, data, channelRef);
-    this.scheduler.set({ id: `park-timeout:${seq}`, kind: "park-timeout", dueAt: data.timeoutAt, payload: { seq } });
+  /** `timeoutAt` is measured from the request's own `at`, so the two never drift apart. */
+  private request(row: ThreadRow, snapshot: TurnSnapshot, data: ApprovalRequest, channelRef: unknown): void {
+    const at = this.deployment.clock.now();
+    const timeoutAt = at + snapshot.approvalTimeout;
+    const { seq } = this.append(row.turn, { ...data, timeoutAt }, channelRef, at);
+    this.scheduler.set({ id: `park-timeout:${seq}`, kind: "park-timeout", dueAt: timeoutAt, payload: { seq } });
   }
 
   private resolve(row: ThreadRow, seq: number, request: Request, answer: ApprovalAnswer, source: ApprovalSource): void {
@@ -515,7 +520,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
       if (plan.fresh && exhausted(turn.budget, snapshot.budget)) {
         for (const request of turn.requests.values()) if (request.kind === "continue" && !request.answered) return this.finish(this.row(), { type: "turn.paused", reason: "budget" });
-        this.request(row, { type: "approval.requested", kind: "continue", budget: turn.budget, timeoutAt: this.deployment.clock.now() + snapshot.approvalTimeout }, channelRef);
+        this.request(row, snapshot, { type: "approval.requested", kind: "continue", budget: turn.budget }, channelRef);
         return this.finish(this.row(), { type: "turn.paused", reason: "budget" });
       }
 
@@ -837,7 +842,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         },
         ask: (call) => {
           signal.throwIfAborted();
-          this.request(row, { type: "approval.requested", kind: "tool", id: call.id, tool: call.name, input: call.input, timeoutAt: this.deployment.clock.now() + snapshot.approvalTimeout }, channelRef);
+          this.request(row, snapshot, { type: "approval.requested", kind: "tool", id: call.id, tool: call.name, input: call.input }, channelRef);
         },
         connection: async (level, name) => {
           // The user-level store lands with the Connection ticket; until then only agent-level values exist.

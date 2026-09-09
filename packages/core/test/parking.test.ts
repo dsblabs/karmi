@@ -31,7 +31,11 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  for (const thread of opened.splice(0)) await thread.cancel();
+  // A cancel that lands during a park's Hooks completes once they return; wait so nothing bleeds into the next test.
+  for (const thread of opened.splice(0)) {
+    await thread.cancel();
+    await expect.poll(async () => (await thread.status()).state).toBe("idle");
+  }
 });
 
 describe("tool Approvals", () => {
