@@ -1,6 +1,11 @@
 import { z } from "zod";
-import { defineAgent, defineFragment, defineTool } from "../src/index.js";
+import { defineAgent, defineFragment, defineHook, defineTool, type ToolContext } from "../src/index.js";
 import { createTestKarmi } from "../src/testing/index.js";
+
+/** What the Tools and Hooks below saw, in order; tests read and reset it. */
+export const trace: string[] = [];
+
+const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const weather = defineTool({
   name: "weather",
@@ -10,17 +15,109 @@ const weather = defineTool({
   execute: ({ city }) => `Sunny in ${city}`,
 });
 
+// Read-only: a batch of these should overlap.
+const lookup = defineTool({
+  name: "lookup",
+  description: "Look a guest up",
+  input: z.object({ id: z.string() }),
+  annotations: { readOnlyHint: true },
+  execute: async ({ id }) => {
+    trace.push(`lookup:start:${id}`);
+    await settle(20);
+    trace.push(`lookup:end:${id}`);
+    return `Guest ${id}`;
+  },
+});
+
+// Mutating: never overlaps with anything.
+const book = defineTool({
+  name: "book",
+  description: "Book a room",
+  input: z.object({ room: z.number() }),
+  execute: async ({ room }) => {
+    trace.push(`book:start:${room}`);
+    await settle(20);
+    trace.push(`book:end:${room}`);
+    return { content: [{ type: "text", text: `Booked ${room}` }], structuredContent: { room } };
+  },
+});
+
+const bigOutput = defineTool({
+  name: "big_output",
+  description: "Returns many numbered lines",
+  input: z.object({ lines: z.number() }),
+  annotations: { readOnlyHint: true },
+  execute: ({ lines }) => Array.from({ length: lines }, (_, i) => `line ${i + 1}`).join("\n"),
+});
+
+const whoami = defineTool({
+  name: "whoami",
+  description: "Reports the Tool context",
+  input: z.object({}),
+  annotations: { readOnlyHint: true },
+  settings: z.object({ tone: z.string() }),
+  requires: "crm",
+  instructions: defineFragment({ name: "whoami-instructions", render: () => "Call whoami when asked who you are." }),
+  execute: (_, ctx: ToolContext<{ tone: string }>) => ({
+    content: [{ type: "text", text: JSON.stringify({ scope: ctx.scope, user: ctx.user, thread: ctx.thread, settings: ctx.settings, connection: ctx.connection, attempt: ctx.attempt, callId: ctx.callId, aborted: ctx.signal.aborted }) }],
+  }),
+});
+
+const failing = defineTool({
+  name: "failing",
+  description: "Always throws",
+  input: z.object({}),
+  execute: () => {
+    throw new Error("boom");
+  },
+});
+
 const guest = defineFragment({ name: "guest", args: z.object({ hotel: z.string() }), render: (ctx, { hotel }) => `You serve ${ctx.user ?? "the front desk"} at ${hotel}.` });
+
+const rewriteCity = defineHook({ name: "rewrite-city", point: "before-tool", run: ({ call }) => (call.name === "weather" ? { effect: "allow", input: { city: "Paris" } } : undefined) });
+const denyBooking = defineHook({ name: "deny-booking", point: "before-tool", run: ({ call }) => (call.name === "book" ? { effect: "deny", reason: "No bookings today" } : undefined) });
+const denyLookup = defineHook({ name: "deny-lookup", point: "before-tool", run: () => ({ effect: "deny", reason: "Not now" }) });
+const observe = defineHook({ name: "observe", point: "after-tool", run: ({ call, result }) => void trace.push(`after-tool:${call.name}:${result.isError ? "error" : "ok"}`) });
+const turnLog = defineHook({ name: "turn-start", point: "before-turn", run: ({ input, turn }) => void trace.push(`before-turn:${turn}:${input.kind}`) });
+const turnEnd = defineHook({ name: "turn-end", point: "after-turn", run: ({ end, turn, signal }) => void trace.push(`after-turn:${turn}:${end.type}${signal.aborted ? ":aborted" : ""}`) });
+const onError = defineHook({ name: "on-error", point: "on-error", run: ({ error }) => void trace.push(`on-error:${error.code}`) });
 
 const concierge = defineAgent({
   agentId: "concierge",
   name: "Concierge",
   instructions: [{ text: "Help the guest." }, { fragment: "guest", args: { hotel: "The Grand" } }, { text: "You are Claude.", models: "anthropic/*" }],
   model: { id: "anthropic/claude-sonnet-5", fallbacks: ["anthropic/claude-haiku-4-5"] },
-  tools: ["weather"],
+  tools: ["weather", "lookup", "book", "big_output", "failing"],
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+  hooks: { "before-turn": ["turn-start"], "after-turn": ["turn-end"], "after-tool": ["observe"], "on-error": ["on-error"] },
+  context: { toolOutput: { maxChars: 400, maxLines: 10 } },
 });
 
-export const { karmi, provider, scope } = createTestKarmi({ tools: [weather], fragments: [guest], agents: [concierge] });
+// Policy and Hooks under test: a denied Tool, a rewriting Hook, a Tool with settings and a Connection.
+const guarded = defineAgent({
+  agentId: "guarded",
+  name: "Guarded",
+  instructions: [{ text: "Be careful." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["weather", "book", "lookup", { name: "whoami", settings: { tone: "formal" } }],
+  connections: { crm: { type: "crm", level: "agent" } },
+  policy: [
+    { match: { tool: "book" }, effect: "deny" },
+    { match: { annotations: { readOnlyHint: true } }, effect: "allow" },
+  ],
+  hooks: { "before-tool": ["rewrite-city", "deny-booking"] },
+});
+
+// Default Policy: nothing matches, so every call is an `ask`.
+const asking = defineAgent({ agentId: "asking", name: "Asking", instructions: [{ text: "Ask first." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["book"] });
+const hooked = defineAgent({ agentId: "hooked", name: "Hooked", instructions: [{ text: "Hooked." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup"], policy: [{ match: { tool: "*" }, effect: "allow" }], hooks: { "before-tool": ["deny-lookup"] } });
+
+export const { karmi, provider, scope } = createTestKarmi({
+  tools: [weather, lookup, book, bigOutput, whoami, failing],
+  fragments: [guest],
+  hooks: [rewriteCity, denyBooking, denyLookup, observe, turnLog, turnEnd, onError],
+  agents: [concierge, guarded, asking, hooked],
+});
 
 export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
 

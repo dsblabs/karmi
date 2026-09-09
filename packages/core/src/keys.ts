@@ -16,6 +16,10 @@ export const keys = {
   r2Prefix(scope: ScopeId): string {
     return `${assertScope(scope)}/`;
   },
+  toolOutput(scope: ScopeId, threadId: string, seq: number): string {
+    assertIdentifier("thread.id.invalid", "threadId", threadId);
+    return `${assertScope(scope)}/threads/${threadId}/tool-output/${seq}`;
+  },
   media(scope: ScopeId, threadId: string, id: string): string {
     assertIdentifier("thread.id.invalid", "threadId", threadId);
     assertIdentifier("media.id.invalid", "media id", id);

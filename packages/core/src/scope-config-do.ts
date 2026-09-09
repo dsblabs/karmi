@@ -21,6 +21,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS destroy_operations (operation_id TEXT PRIMARY KEY, state TEXT NOT NULL, started_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, cursor_json TEXT);
   CREATE TABLE IF NOT EXISTS threads (thread_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL, last_active_at INTEGER NOT NULL, title TEXT);
   CREATE INDEX IF NOT EXISTS threads_by_agent_user ON threads (agent_id, user_id, last_active_at);
+  CREATE TABLE IF NOT EXISTS connections (agent_id TEXT NOT NULL, name TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (agent_id, name));
 `;
 
 /** Versions kept per Agent; older ones are dropped on put. */
@@ -309,6 +310,36 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
         return { ...identity, key: encodeKey(identity), createdAt: row.created_at, lastActiveAt: row.last_active_at, ...(row.title !== null && { title: row.title }) };
       }),
     );
+  }
+
+  // Agent-level Connection values: set through a write-only API, read only by a Turn at call time,
+  // never part of a Spec, a snapshot or a listing.
+  connectionsSet(scope: ScopeId, agentId: string, name: string, value: unknown): Outcome<void> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    if (!this.agentHead(agentId) && !this.deployment.catalogue.agents.has(agentId)) return notFound(agentId);
+    this.sql.exec("INSERT INTO connections (agent_id, name, value_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (agent_id, name) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at", agentId, name, JSON.stringify(value), Date.now());
+    return ok(undefined);
+  }
+
+  connectionsDelete(scope: ScopeId, agentId: string, name: string): Outcome<void> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    this.sql.exec("DELETE FROM connections WHERE agent_id = ? AND name = ?", agentId, name);
+    return ok(undefined);
+  }
+
+  connectionsList(scope: ScopeId, agentId: string): Outcome<{ name: string; updatedAt: number }[]> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    return ok(this.sql.exec<{ name: string; updated_at: number }>("SELECT name, updated_at FROM connections WHERE agent_id = ? ORDER BY name", agentId).toArray().map((row) => ({ name: row.name, updatedAt: row.updated_at })));
+  }
+
+  connectionGet(scope: ScopeId, agentId: string, name: string): Outcome<unknown> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    const row = this.sql.exec<{ value_json: string }>("SELECT value_json FROM connections WHERE agent_id = ? AND name = ?", agentId, name).toArray()[0];
+    return ok(row ? JSON.parse(row.value_json) : undefined);
   }
 
   status(scope: ScopeId): Outcome<ScopeStatus> {
