@@ -197,5 +197,5 @@ The `@karmi/core/testing` export: `createTestKarmi()` plus the doubles it compos
 _Avoid_: mocks (for the doubles), test harness, test utils
 
 **Clock**:
-The single injectable time source `@karmi/core` reads for everything time-driven — watchdog, park timeouts, Approval timeouts, Schedules and cron. In production it is wall time; in the Test kit `clock.advance()` moves it and fires any due Durable Object alarm, so parking and scheduling are testable without waiting.
+The single injectable time source `@karmi/core` reads for everything time-driven — watchdog, park timeouts, Approval timeouts, Schedules and cron. The interface is `Clock.now()` (epoch milliseconds), injected with `createKarmi({ clock })` and defaulting to wall time. In the Test kit, `clock.advance(milliseconds | "24h")` moves it and fires due Durable Object alarms, so recovery, parking and scheduling are testable without waiting.
 _Avoid_: timer, fake timers, `Date.now()`

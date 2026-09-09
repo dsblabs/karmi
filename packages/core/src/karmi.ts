@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { resolveBindings, type BindingsResolver } from "./bindings.js";
 import { assembleCatalogue, type Catalogue, type CatalogueInput } from "./catalogue.js";
+import { wallClock, type Clock } from "./clock.js";
 import { assertCompatibilityBaseline } from "./compat.js";
 import type { Deployment } from "./deployment.js";
 import { makeDurableObjects, type DurableObjects } from "./durable-objects.js";
@@ -11,6 +12,7 @@ import { openScope, type Scope } from "./scope.js";
 
 export interface KarmiOptions<Env = unknown> {
   catalogue: CatalogueInput;
+  clock?: Clock;
   /** Deployment-wide layer every Scope inherits and may only tighten: the same shape as a Scope config. */
   defaults?: ScopeConfigDocument;
   providers?: Record<string, Provider>;
@@ -28,7 +30,7 @@ export interface Karmi {
 export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
   assertCompatibilityBaseline();
   const providers = options.providers ?? {};
-  const deployment: Deployment = { catalogue: assembleCatalogue(options.catalogue), defaults: parseScopeConfig(options.defaults ?? {}, providers), providers };
+  const deployment: Deployment = { clock: options.clock ?? wallClock, catalogue: assembleCatalogue(options.catalogue), defaults: parseScopeConfig(options.defaults ?? {}, providers), providers };
   const durableObjects = makeDurableObjects(deployment);
   const bindings = resolveBindings(env as Env, options.bindings);
   return {

@@ -64,3 +64,22 @@ Tests run in workerd under `@cloudflare/vitest-plugin` against one shared `test/
 ```sh
 pnpm typecheck && pnpm lint && pnpm test
 ```
+
+## Recovery and time
+
+A Thread resumes from its persisted event log after eviction. It retries the unfinished Step, keeps completed Tool results, and repeats an unfinished Tool only when `readOnlyHint` or `idempotentHint` is true. Other unfinished calls produce an error with `interrupted: { attempt }`; `after-tool` Hooks receive that metadata too. Tool `callId`s remain stable, and `before-tool` Hooks do not repeat for logged calls.
+
+Each Step allows three attempts. Classified platform failures (code-update resets or retryable Durable Object errors) preserve the attempt budget. The watchdog runs on the Durable Object's shared alarm and keeps live calls alive.
+
+Core reads wall time through `Clock.now()`. `createKarmi({ clock })` accepts an implementation; the default uses `Date.now()`. The test kit supplies an advancing clock:
+
+```ts
+// Export these from the test Worker, alongside its Durable Object classes.
+export const { karmi, scope, provider, clock } = createTestKarmi(catalogue);
+export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
+
+// In a test, after evictDurableObject(stub):
+await clock.advance("24h"); // Also fires due alarms through cloudflare:test.
+```
+
+`advance()` accepts milliseconds or durations with `ms`, `s`, `m`, `h`, or `d` suffixes. It moves the clock forward and dispatches due alarms; live or recovered Steps continue in-process, so observe completion through the Thread's event stream.

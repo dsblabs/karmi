@@ -1,4 +1,4 @@
-import { DurableObject } from "cloudflare:workers";
+import { ScheduledDurableObject } from "./scheduler.js";
 import type { NormalizedAgentSpec } from "./agent-spec.js";
 import type { AgentSpec } from "./agent.js";
 import type { KarmiBindings } from "./bindings.js";
@@ -109,7 +109,7 @@ type AgentHeadRow = {
   deleted_at: number | null;
 };
 
-export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindings> {
+export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   abstract readonly deployment: Deployment;
 
   constructor(ctx: DurableObjectState, env: KarmiBindings) {
@@ -126,7 +126,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
   private enter(scope: ScopeId, refuseDestroyed = true): Outcome<HeadRow> {
     let head = this.sql.exec<HeadRow>("SELECT * FROM scope_head").toArray()[0];
     if (!head) {
-      const now = Date.now();
+      const now = this.deployment.clock.now();
       this.sql.exec("INSERT INTO scope_head (scope_id, state, current_revision, created_at, updated_at) VALUES (?, 'active', 0, ?, ?)", scope, now, now);
       head = { scope_id: scope, state: "active", current_revision: 0, destroy_operation_id: null };
     } else if (head.scope_id !== scope) {
@@ -138,7 +138,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
   }
 
   private setState(state: ScopeState): void {
-    this.sql.exec("UPDATE scope_head SET state = ?, updated_at = ?", state, Date.now());
+    this.sql.exec("UPDATE scope_head SET state = ?, updated_at = ?", state, this.deployment.clock.now());
   }
 
   private document(revision: number): ScopeConfigDocument {
@@ -166,7 +166,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
     const current = head.value.current_revision;
     if (ifRevision !== undefined && ifRevision !== current) return fail(new KarmiError("config.conflict", `Scope config is at revision ${current}, not ${ifRevision}.`));
     const revision = current + 1;
-    const now = Date.now();
+    const now = this.deployment.clock.now();
     this.ctx.storage.transactionSync(() => {
       this.sql.exec("INSERT INTO scope_revisions (revision, config_json, created_at) VALUES (?, ?, ?)", revision, JSON.stringify(parsed), now);
       this.sql.exec("UPDATE scope_head SET current_revision = ?, updated_at = ?", revision, now);
@@ -209,7 +209,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
       const current = this.agentHead(normalized.agentId)?.current_version ?? 0;
       if (ifVersion !== undefined && ifVersion !== current) return fail(new KarmiError("agent.conflict", `Agent "${normalized.agentId}" is at version ${current}, not ${ifVersion}.`));
       const version = current + 1;
-      this.sql.exec("INSERT INTO agent_specs (agent_id, version, spec_json, catalogue_fingerprint, created_at) VALUES (?, ?, ?, ?, ?)", normalized.agentId, version, JSON.stringify(normalized), fingerprint, Date.now());
+      this.sql.exec("INSERT INTO agent_specs (agent_id, version, spec_json, catalogue_fingerprint, created_at) VALUES (?, ?, ?, ?, ?)", normalized.agentId, version, JSON.stringify(normalized), fingerprint, this.deployment.clock.now());
       this.sql.exec("INSERT INTO agent_heads (agent_id, current_version, deleted_at) VALUES (?, ?, NULL) ON CONFLICT (agent_id) DO UPDATE SET current_version = excluded.current_version, deleted_at = NULL", normalized.agentId, version);
       this.sql.exec("DELETE FROM agent_specs WHERE agent_id = ? AND version <= ?", normalized.agentId, version - AGENT_HISTORY_DEPTH);
       return ok({ agentId: normalized.agentId, version });
@@ -260,7 +260,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
     if (!head.ok) return head;
     const agent = this.agentHead(agentId);
     if (!agent) return notFound(agentId);
-    if (agent.deleted_at === null) this.sql.exec("UPDATE agent_heads SET deleted_at = ? WHERE agent_id = ?", Date.now(), agentId);
+    if (agent.deleted_at === null) this.sql.exec("UPDATE agent_heads SET deleted_at = ? WHERE agent_id = ?", this.deployment.clock.now(), agentId);
     return ok(undefined);
   }
 
@@ -318,7 +318,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
     const head = this.enter(scope);
     if (!head.ok) return head;
     if (!this.agentHead(agentId) && !this.deployment.catalogue.agents.has(agentId)) return notFound(agentId);
-    this.sql.exec("INSERT INTO connections (agent_id, name, value_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (agent_id, name) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at", agentId, name, JSON.stringify(value), Date.now());
+    this.sql.exec("INSERT INTO connections (agent_id, name, value_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (agent_id, name) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at", agentId, name, JSON.stringify(value), this.deployment.clock.now());
     return ok(undefined);
   }
 
@@ -368,7 +368,7 @@ export abstract class ScopeConfigDurableObject extends DurableObject<KarmiBindin
     if (!head.ok) return head;
     if (head.value.destroy_operation_id !== null) return ok({ operationId: head.value.destroy_operation_id });
     const operationId = crypto.randomUUID();
-    const now = Date.now();
+    const now = this.deployment.clock.now();
     this.ctx.storage.transactionSync(() => {
       this.sql.exec("UPDATE scope_head SET state = 'destroying', destroy_operation_id = ?, updated_at = ?", operationId, now);
       this.sql.exec("INSERT INTO destroy_operations (operation_id, state, started_at, updated_at) VALUES (?, 'destroying', ?, ?)", operationId, now, now);

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { defineAgent, defineFragment, defineHook, defineTool, type ToolContext } from "../src/index.js";
+import { defineAgent, defineFragment, defineHook, defineTool, type ToolContext, type ToolResult } from "../src/index.js";
 import { createTestKarmi } from "../src/testing/index.js";
 
 /** What the Tools and Hooks below saw, in order; tests read and reset it. */
@@ -112,11 +112,25 @@ const guarded = defineAgent({
 const asking = defineAgent({ agentId: "asking", name: "Asking", instructions: [{ text: "Ask first." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["book"] });
 const hooked = defineAgent({ agentId: "hooked", name: "Hooked", instructions: [{ text: "Hooked." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup"], policy: [{ match: { tool: "*" }, effect: "allow" }], hooks: { "before-tool": ["deny-lookup"] } });
 
-export const { karmi, provider, scope } = createTestKarmi({
-  tools: [weather, lookup, book, bigOutput, whoami, failing],
+export const recovery = {
+  execute: async (_input: { id: string }, _ctx: ToolContext): Promise<string> => "done",
+  before: [] as string[],
+  after: [] as ToolResult[],
+};
+const recoveryTools = [
+  { name: "recover_read", annotations: { readOnlyHint: true } },
+  { name: "recover_idempotent", annotations: { idempotentHint: true } },
+  { name: "recover_mutation", annotations: {} },
+].map(({ name, annotations }) => defineTool({ name, annotations, description: "Recovery fixture", input: z.object({ id: z.string() }), execute: (input, ctx) => recovery.execute(input, ctx) }));
+const recoveryBefore = defineHook({ name: "recovery-before", point: "before-tool", run: ({ call }) => { recovery.before.push(call.id); } });
+const recoveryAfter = defineHook({ name: "recovery-after", point: "after-tool", run: ({ result }) => { recovery.after.push(result); } });
+const recoveryAgent = defineAgent({ agentId: "recovery", name: "Recovery", instructions: [{ text: "Recover." }], model: { id: "anthropic/claude-sonnet-5" }, tools: recoveryTools.map(t => t.name), policy: [{ match: { tool: "*" }, effect: "allow" }], hooks: { "before-tool": ["recovery-before"], "after-tool": ["recovery-after"] } });
+
+export const { karmi, clock, provider, scope } = createTestKarmi({
+  tools: [weather, lookup, book, bigOutput, whoami, failing, ...recoveryTools],
   fragments: [guest],
-  hooks: [rewriteCity, denyBooking, denyLookup, observe, turnLog, turnEnd, onError],
-  agents: [concierge, guarded, asking, hooked],
+  hooks: [recoveryBefore, recoveryAfter, rewriteCity, denyBooking, denyLookup, observe, turnLog, turnEnd, onError],
+  agents: [recoveryAgent, concierge, guarded, asking, hooked],
 });
 
 export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;

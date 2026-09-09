@@ -2,9 +2,10 @@ import * as z from "zod/mini";
 import type { AgentSpec } from "./agent.js";
 import type { Catalogue } from "./catalogue.js";
 import type { Logger, MediaRef, ScopeId, UserId } from "./context.js";
-import type { HookContextBase, HookToolCall } from "./hook.js";
+import type { HookContextBase, HookContexts, HookToolCall } from "./hook.js";
 import { hooksAt } from "./hooks.js";
 import { keys } from "./keys.js";
+import { isPlatformFailure } from "./platform-failure.js";
 import { renderTruncated, truncateOutput } from "./spill.js";
 import type { ThreadEvent, ThreadEventData } from "./thread-events.js";
 import { DEFAULT_ANNOTATIONS, type Connection, type Tool, type ToolContent, type ToolContext, type ToolResult } from "./tool.js";
@@ -85,20 +86,21 @@ export async function runToolStep(host: ToolStepHost, batch: readonly ToolCall[]
 }
 
 async function runCall(host: ToolStepHost, call: ToolCall, started: { seq: number; input: unknown } | undefined, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
   const entry = host.available.get(call.name);
   const annotations = entry?.tool.annotations ?? DEFAULT_ANNOTATIONS;
   // The result is persisted first, so an eviction during a Hook cannot lose finished work; Hooks then observe it.
   const finish = (seq: number | undefined, result: ToolResult, extra: Partial<Pick<Extract<ThreadEventData, { type: "tool.result" }>, "interrupted" | "output">> = {}) => {
     const logged = seq ?? host.append({ type: "tool.call", id: call.id, name: call.name, input: call.input }).seq;
     host.append({ type: "tool.result", id: call.id, name: call.name, content: result.content, isError: result.isError === true, ...extra });
-    return afterTool(host, { id: call.id, callId: callId(host, logged), name: call.name, input: started?.input ?? call.input, annotations }, result, signal);
+    return afterTool(host, { id: call.id, callId: callId(host, logged), name: call.name, input: started?.input ?? call.input, annotations }, { ...result, ...(extra.interrupted && { interrupted: extra.interrupted }) }, signal);
   };
 
   if (!entry) return finish(started?.seq, error(`Unknown tool "${call.name}".`));
   const { tool } = entry;
 
   // A re-run may repeat only work that is safe to repeat; anything else gets an honest "interrupted".
-  if (started && host.attempt >= 2 && !(annotations.readOnlyHint || annotations.idempotentHint)) {
+  if (started && !(annotations.readOnlyHint || annotations.idempotentHint)) {
     return finish(started.seq, error(INTERRUPTED_TEXT), { interrupted: { attempt: host.attempt } });
   }
 
@@ -109,6 +111,7 @@ async function runCall(host: ToolStepHost, call: ToolCall, started: { seq: numbe
     // Approvals park the Step in a later ticket; until then an `ask` cannot be honoured.
     if (entry.effect === "ask") return finish(undefined, error(`Tool "${call.name}" requires approval, which this Agent cannot request yet.`));
     const decision = await beforeTool(host, { id: call.id, name: call.name, input, annotations }, signal);
+    signal.throwIfAborted();
     if (decision.effect === "deny") return finish(undefined, error(`Tool "${call.name}" was refused by a Hook${decision.reason ? `: ${decision.reason}` : "."}`));
     if (decision.input !== undefined) input = decision.input;
     seq = host.append({ type: "tool.call", id: call.id, name: call.name, input }).seq;
@@ -118,6 +121,7 @@ async function runCall(host: ToolStepHost, call: ToolCall, started: { seq: numbe
   if (!parsed.success) return finish(seq, error(`Invalid input for "${call.name}": ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; ")}`));
 
   const connection = await resolveConnection(host, tool);
+  signal.throwIfAborted();
   if (!connection.ok) return finish(seq, error(connection.message));
 
   const ctx: ToolContext<unknown> = {
@@ -136,6 +140,7 @@ async function runCall(host: ToolStepHost, call: ToolCall, started: { seq: numbe
   try {
     result = normalize(await tool.execute(parsed.data, ctx as never));
   } catch (caught) {
+    if (isPlatformFailure(caught)) throw caught;
     result = error(errorMessage(caught));
   }
   const spilled = await spill(host, tool, seq, result);
@@ -164,17 +169,19 @@ async function beforeTool(host: ToolStepHost, call: HookToolCall, signal: AbortS
       if (decision.effect === "deny") return decision;
       if (decision.input !== undefined) input = decision.input;
     } catch (caught) {
+      if (isPlatformFailure(caught)) throw caught;
       return { effect: "deny", reason: `Hook "${hook.name}" failed: ${errorMessage(caught)}` };
     }
   }
   return input === call.input ? { effect: "allow" } : { effect: "allow", input };
 }
 
-async function afterTool(host: ToolStepHost, call: HookToolCall, result: ToolResult, signal: AbortSignal): Promise<void> {
+async function afterTool(host: ToolStepHost, call: HookToolCall, result: HookContexts["after-tool"]["result"], signal: AbortSignal): Promise<void> {
   for (const hook of hooksAt(host.spec, host.catalogue, "after-tool")) {
     try {
       await hook.run({ ...hookContext(host, "after-tool", signal), call, result });
     } catch (caught) {
+      if (isPlatformFailure(caught)) throw caught;
       host.logger.warn(`after-tool Hook "${hook.name}" failed`, { error: errorMessage(caught) });
     }
   }
@@ -208,6 +215,7 @@ async function spill(host: ToolStepHost, tool: Tool, seq: number, result: ToolRe
       await host.bucket.put(key, bytes, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
       output = { id: String(seq), key, mimeType: "text/plain; charset=utf-8", bytes: bytes.byteLength };
     } catch (caught) {
+      if (isPlatformFailure(caught)) throw caught;
       host.logger.error("Spilling a Tool output to R2 failed; the full output is lost.", { tool: tool.name, seq, error: errorMessage(caught) });
     }
   } else host.logger.warn("Tool output exceeded the limit but no KARMI_MEDIA bucket is bound; the full output is lost.", { tool: tool.name, seq });

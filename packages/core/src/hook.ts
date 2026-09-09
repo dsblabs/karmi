@@ -37,7 +37,7 @@ export interface HookContexts {
   "before-turn": HookContextBase & { input: TurnInput };
   "after-turn": HookContextBase & { end: TurnEnd };
   "before-tool": HookContextBase & { call: HookToolCall };
-  "after-tool": HookContextBase & { call: HookToolCall; result: ToolResult };
+  "after-tool": HookContextBase & { call: HookToolCall; result: ToolResult & { interrupted?: { attempt: number } } };
   "before-compact": HookContextBase;
   "after-compact": HookContextBase;
   "on-error": HookContextBase & { error: { code: string; message: string } };
