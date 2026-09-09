@@ -2,10 +2,14 @@ import type { ThreadEvent, ThreadEventType } from "../thread-events.js";
 
 type MatcherResult = { pass: boolean; message: () => string };
 
+type DeepPartial<T> = T extends readonly (infer Item)[] ? DeepPartial<Item>[] : T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
+/** A `type` plus any subset of that event's fields, nested objects partially too. */
+export type EventPartial = { [T in ThreadEventType]: DeepPartial<Extract<ThreadEvent, { type: T }>> & { type: T } }[ThreadEventType];
+
 /** `expect.extend(matchers)` once per test file (or in a vitest setup file) makes these available. */
 export const matchers = {
   /** Some event in the list matches the partial, `expect.objectContaining` style. */
-  toContainEvent(received: ThreadEvent[], partial: Partial<ThreadEvent> & { type: ThreadEventType }): MatcherResult {
+  toContainEvent(received: ThreadEvent[], partial: EventPartial): MatcherResult {
     const pass = received.some((event) => matches(event, partial));
     return { pass, message: () => `expected events ${pass ? "not " : ""}to contain ${JSON.stringify(partial)}; types seen: ${received.map((event) => event.type).join(", ")}` };
   },

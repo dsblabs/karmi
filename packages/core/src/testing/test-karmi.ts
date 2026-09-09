@@ -5,13 +5,13 @@ import type { CatalogueInput } from "../catalogue.js";
 import { createKarmi, type Karmi, type KarmiOptions } from "../karmi.js";
 import type { Scope } from "../scope.js";
 import { isTurnEnd } from "../thread-do.js";
-import type { Thread, ThreadIdentity } from "../thread.js";
+import type { SendOptions, Thread, ThreadIdentity } from "../thread.js";
 import type { ThreadEvent, TurnInput } from "../thread-events.js";
 import { fakeProvider, type FakeProvider } from "./fake-provider.js";
 
 export interface TestThread extends Omit<Thread, "send"> {
-  /** Resolves when the Turn ends (completed, failed or paused) with everything it logged. */
-  send(input: TurnInput): Promise<ThreadEvent[]>;
+  /** Resolves when the Turn ends or parks (completed, failed or paused) with everything it logged from this call on. */
+  send(input: TurnInput, options?: SendOptions): Promise<ThreadEvent[]>;
 }
 
 export interface TestScope extends Omit<Scope, "thread"> {
@@ -43,8 +43,8 @@ export function createTestKarmi(catalogue: CatalogueInput, options: Omit<KarmiOp
 function testThread(thread: Thread): TestThread {
   return {
     ...thread,
-    async send(input) {
-      const { turn, seq } = await thread.send(input);
+    async send(input, options) {
+      const { turn, seq } = await thread.send(input, options);
       const events: ThreadEvent[] = [];
       for await (const event of thread.subscribe({ after: seq })) {
         if (event.turn !== turn) continue;

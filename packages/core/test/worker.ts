@@ -72,6 +72,34 @@ const failing = defineTool({
   },
 });
 
+// Parking fixture: a Tool that hands its work to a Job.
+const startJob = defineTool({
+  name: "start_job",
+  description: "Starts a background job",
+  input: z.object({ job: z.string() }),
+  execute: ({ job }) => ({ pending: job }),
+});
+
+/**
+ * A read-only Tool that blocks until the test opens the gate, so a test can act mid-Step deterministically.
+ * It polls on a timer of its own rather than awaiting a test-side promise: a continuation resolved from
+ * the test context would run there, outside the Durable Object's I/O context.
+ */
+export const gate = { open: false };
+export const untilOpen = async () => {
+  while (!gate.open) await settle(5);
+};
+const waitGate = defineTool({
+  name: "wait_gate",
+  description: "Waits for the test",
+  input: z.object({}),
+  annotations: { readOnlyHint: true },
+  execute: async () => {
+    await untilOpen();
+    return "released";
+  },
+});
+
 const guest = defineFragment({ name: "guest", args: z.object({ hotel: z.string() }), render: (ctx, { hotel }) => `You serve ${ctx.user ?? "the front desk"} at ${hotel}.` });
 
 const rewriteCity = defineHook({ name: "rewrite-city", point: "before-tool", run: ({ call }) => (call.name === "weather" ? { effect: "allow", input: { city: "Paris" } } : undefined) });
@@ -110,6 +138,10 @@ const guarded = defineAgent({
 
 // Default Policy: nothing matches, so every call is an `ask`.
 const asking = defineAgent({ agentId: "asking", name: "Asking", instructions: [{ text: "Ask first." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["book"] });
+// Approvals: `lookup` and the Job/Scope fixtures are allowed, everything else asks, with a one-hour timeout.
+const approver = defineAgent({ agentId: "approver", name: "Approver", instructions: [{ text: "Ask before booking." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup", "book", "weather", "start_job", "wait_gate"], policy: [{ match: { tool: ["lookup", "start_job", "wait_gate"] }, effect: "allow" }], approvals: { timeout: 60 * 60 * 1000 }, hooks: { "after-turn": ["turn-end"] } });
+// Budgets: a tiny `longRunning` grant so exhaustion is a few Steps away.
+const budgeted = defineAgent({ agentId: "budgeted", name: "Budgeted", instructions: [{ text: "Loop." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup"], policy: [{ match: { tool: "*" }, effect: "allow" }], capabilities: { longRunning: { maxSteps: 3, maxTokens: 100 } } });
 const hooked = defineAgent({ agentId: "hooked", name: "Hooked", instructions: [{ text: "Hooked." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup"], policy: [{ match: { tool: "*" }, effect: "allow" }], hooks: { "before-tool": ["deny-lookup"] } });
 
 export const recovery = {
@@ -127,10 +159,10 @@ const recoveryAfter = defineHook({ name: "recovery-after", point: "after-tool", 
 const recoveryAgent = defineAgent({ agentId: "recovery", name: "Recovery", instructions: [{ text: "Recover." }], model: { id: "anthropic/claude-sonnet-5" }, tools: recoveryTools.map(t => t.name), policy: [{ match: { tool: "*" }, effect: "allow" }], hooks: { "before-tool": ["recovery-before"], "after-tool": ["recovery-after"] } });
 
 export const { karmi, clock, provider, scope } = createTestKarmi({
-  tools: [weather, lookup, book, bigOutput, whoami, failing, ...recoveryTools],
+  tools: [weather, lookup, book, bigOutput, whoami, failing, startJob, waitGate, ...recoveryTools],
   fragments: [guest],
   hooks: [recoveryBefore, recoveryAfter, rewriteCity, denyBooking, denyLookup, observe, turnLog, turnEnd, onError],
-  agents: [recoveryAgent, concierge, guarded, asking, hooked],
+  agents: [recoveryAgent, concierge, guarded, asking, hooked, approver, budgeted],
 });
 
 export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;

@@ -7,6 +7,6 @@ export const fakeProvider: typeof scripted & { fromRecording: typeof fromRecordi
 export { reply, toEvents, type FakeProvider, type FakeProviderOptions, type Reply, type ReplyContext, type ReplyPart, type ReplyScript } from "./fake-provider.js";
 export { recordingProvider, fromRecording, type RecordingEntry, type RecordingOptions, type RecordingProvider } from "./recording.js";
 export { createTestKarmi, type TestKarmi, type TestScope, type TestThread } from "./test-karmi.js";
-export { matchers, lastMessage } from "./matchers.js";
+export { matchers, lastMessage, type EventPartial } from "./matchers.js";
 
 export type { TestClock } from "./clock.js";

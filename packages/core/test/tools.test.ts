@@ -54,10 +54,12 @@ describe("Permission Policy", () => {
     expect(provider.requests[1]?.messages.at(-2)).toMatchObject({ role: "toolResult", toolCallId: "c1", isError: true });
   });
 
-  it("answers an ask with an isError result until Approvals exist", async () => {
+  it("parks an ask for an Approval without running the Tool", async () => {
     provider.script([[reply.toolCall("book", { room: 1 }, "c1")], "Ok"]);
     const events = await fresh("asking").send(message("Book"));
-    expect(events).toContainEvent({ type: "tool.result", id: "c1", isError: true, content: [{ type: "text", text: 'Tool "book" requires approval, which this Agent cannot request yet.' }] });
+    expect(events).toHaveSequence(["step.started", "approval.requested", "turn.paused"]);
+    expect(events).toContainEvent({ type: "approval.requested", kind: "tool", id: "c1", tool: "book" });
+    expect(events.map((e) => e.type)).not.toContain("tool.call");
     expect(trace).toEqual([]);
   });
 });

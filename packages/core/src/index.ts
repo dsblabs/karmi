@@ -22,7 +22,7 @@ export { defineFragment, type Fragment, type FragmentContext, type FragmentRende
 export { defineHook, HOOK_POINTS, type Hook, type HookInput, type HookContextBase, type HookContexts, type HookResults, type HookToolCall, type BeforeToolDecision, type HookPoint, type TurnEnd } from "./hook.js";
 export { defineRetriever, type Retriever, type RetrieverContext, type KnowledgeRef, type KnowledgeDocument, type Passage } from "./retriever.js";
 export { defineSkill, type Skill } from "./skill.js";
-export { defineTool, type Tool, type ToolAnnotations, type ToolContext, type ToolContent, type ToolResult, type Connection } from "./tool.js";
+export { defineTool, type Tool, type ToolAnnotations, type ToolContext, type ToolContent, type ToolResult, type ToolPending, type ToolOutcome, type Connection } from "./tool.js";
 export { evaluatePolicy, type PolicyEffect } from "./policy.js";
 export { truncateOutput, type OutputLimits, type Truncation } from "./spill.js";
 export { KarmiError, SpecInvalidError } from "./errors.js";
@@ -37,8 +37,8 @@ export { prepareMessages, normalizeToolCallId, type ReplayTarget, type ReplayRes
 export { resolveBindings, type KarmiBindings, type BindingsResolver } from "./bindings.js";
 export { assertCompatibilityBaseline, COMPATIBILITY_DATE_FLOOR } from "./compat.js";
 export type { Scope, ScopeState, ScopeStatus, ConfigRecord, AgentRecord, AgentSummary, AgentVersion, DestroyStatus } from "./scope.js";
-export type { Thread, ThreadIdentity, ThreadStatus, ThreadSummary } from "./thread.js";
-export type { TurnInput, Part, ThreadEvent, ThreadEventType, Granularity } from "./thread-events.js";
+export type { Thread, ThreadIdentity, ThreadStatus, ThreadBudget, PendingApproval, ThreadJobs, SendOptions, ThreadSummary } from "./thread.js";
+export type { TurnInput, Part, ThreadEvent, ThreadEventType, Granularity, PauseReason, ResumeReason, BudgetUsed, ApprovalAnswer } from "./thread-events.js";
 export { evaluatePrompt } from "./prompt.js";
 export { transcriptFromEvents, renderEvent } from "./transcript.js";
 export type { DurableObjects, DurableObjectClass, KarmiDurableObject } from "./durable-objects.js";

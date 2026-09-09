@@ -47,6 +47,13 @@ export interface ToolResult {
   structuredContent?: unknown;
 }
 
+/** Hands the call to a Job: the Step parks until `thread.jobs` reports the Job's outcome under this id. */
+export interface ToolPending {
+  pending: string;
+}
+
+export type ToolOutcome = string | ToolResult | ToolPending;
+
 export interface ToolInput<In extends Schema, Settings extends Schema | undefined> {
   name: string;
   description: string;
@@ -59,7 +66,7 @@ export interface ToolInput<In extends Schema, Settings extends Schema | undefine
   instructions?: Fragment;
   /** Lower the Spill limit for this Tool's output below the Agent's `context.toolOutput`. */
   output?: { max: { maxChars?: number; maxLines?: number } };
-  execute: (input: Output<In>, ctx: ToolContext<Output<Settings>>) => string | ToolResult | Promise<string | ToolResult>;
+  execute: (input: Output<In>, ctx: ToolContext<Output<Settings>>) => ToolOutcome | Promise<ToolOutcome>;
 }
 
 export interface Tool<In extends Schema = Schema, Settings extends Schema | undefined = Schema | undefined> {
@@ -72,7 +79,7 @@ export interface Tool<In extends Schema = Schema, Settings extends Schema | unde
   readonly requires?: string;
   readonly instructions?: Fragment;
   readonly output?: { max: { maxChars?: number; maxLines?: number } };
-  readonly execute: (input: Output<In>, ctx: ToolContext<Output<Settings>>) => string | ToolResult | Promise<string | ToolResult>;
+  readonly execute: (input: Output<In>, ctx: ToolContext<Output<Settings>>) => ToolOutcome | Promise<ToolOutcome>;
 }
 
 export function defineTool<In extends Schema, Settings extends Schema | undefined = undefined>(input: ToolInput<In, Settings>): Tool<In, Settings> {

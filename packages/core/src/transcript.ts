@@ -14,6 +14,7 @@ export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] 
   for (const event of events) {
     switch (event.type) {
       case "turn.started":
+      case "turn.input":
         messages.push({ role: "user", content: inputContent(event.input) });
         break;
       case "step.started":

@@ -1,6 +1,6 @@
 import type { MediaRef } from "./context.js";
 import type { ContentBlock, StopReason, Usage } from "./provider.js";
-import type { ToolContent } from "./tool.js";
+import type { ToolContent, ToolResult } from "./tool.js";
 
 // The Thread's outbound vocabulary: Turn inputs going in, Thread events coming out. Everything is plain
 // JSON — the event log is the only state a Thread has, and every client reads the same shape.
@@ -17,13 +17,46 @@ export interface ThreadEventBase {
   channelRef?: unknown;
 }
 
+/** Why a Turn is parked: a human answer, a budget `continue`, a Job, or the Scope. */
+export type PauseReason = "approval" | "budget" | "job" | "scope_suspended";
+export type ResumeReason = "input" | "recovered" | "approval" | "job" | "resume";
+
+/** What a Turn has spent since its budget window opened: the Turn start or the last `continue` allow. */
+export interface BudgetUsed {
+  steps: number;
+  wallMs: number;
+  tokens: number;
+}
+
+export interface ApprovalAnswer {
+  decision: "allow" | "deny";
+  reason?: string;
+  /** Allow this Tool by name for the rest of the Thread; ignored on a deny or a `continue`. */
+  remember?: boolean;
+  /** Who answered, recorded and never authorised by the Framework. */
+  by?: string;
+}
+
 export type ThreadEventData =
   | { type: "turn.started"; input: TurnInput; toolsVersion: string }
+  /** A further input of the same Turn: coalesced at Turn start, or steered in at a batch boundary. */
+  | { type: "turn.input"; input: TurnInput; steer?: boolean }
   /** `message` is the Turn's final assistant content, so a `turn` subscriber needs nothing else. */
-  | { type: "turn.completed"; stopReason: StopReason; message: ContentBlock[] }
+  | { type: "turn.completed"; stopReason: StopReason | "budget"; message: ContentBlock[] }
   | { type: "turn.failed"; reason: string; message: string }
-  | { type: "turn.paused"; reason: "scope_suspended" }
-  | { type: "turn.resumed"; reason: "input" | "recovered" }
+  | { type: "turn.paused"; reason: PauseReason }
+  | { type: "turn.resumed"; reason: ResumeReason }
+  /** Its `seq` is what `thread.approve` answers; `timeoutAt` is when an unanswered request becomes a deny. */
+  | { type: "approval.requested"; kind: "tool"; id: string; tool: string; input: unknown; timeoutAt: number }
+  | { type: "approval.requested"; kind: "continue"; budget: BudgetUsed; timeoutAt: number }
+  /** `request` is the seq of the `approval.requested` it answers; `tool` names the asked Tool. */
+  | ({ type: "approval.resolved"; request: number; kind: "tool" | "continue"; tool?: string; source: "answer" | "timeout" | "cancel" } & ApprovalAnswer)
+  /** A Tool handed call `id` to a Job; the Step waits for the Job's outcome. */
+  | { type: "job.started"; id: string; jobId: string }
+  | { type: "job.progress"; jobId: string; content: ToolContent[] }
+  | { type: "job.completed"; jobId: string; result: ToolResult }
+  | { type: "job.failed"; jobId: string; message: string }
+  | { type: "job.cancelled"; jobId: string }
   /** `provider` is the adapter serving `model`; replay keys provider-opaque blocks on it, not on the id's prefix. */
   | { type: "step.started"; kind: "model"; n: number; attempt: number; model: string; provider: string; agentVersion: number }
   /** `attempt` counts recovery re-runs of the same tool batch. */
