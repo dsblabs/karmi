@@ -214,19 +214,23 @@ describe("queued input", () => {
     } finally {
       await scope.resume();
     }
+    // The two inputs that waited coalesce into the one next Turn.
     const resumed = await thread.send(message("Third"));
     expect(lastMessage(await queued)).toBe("Queued");
-    expect(resumed).toContainEvent({ type: "turn.started", turn: 3 });
+    expect(resumed).toContainEvent({ type: "turn.started", turn: 2, input: message("Second") });
+    expect(resumed).toContainEvent({ type: "turn.input", turn: 2, input: message("Third") });
   });
 
-  it("runs inputs sent during a Turn as later Turns, in order", async () => {
+  it("coalesces inputs sent during a Turn into the one next Turn, in order", async () => {
     provider.script(["One", "Two"]);
     const thread = fresh();
-    const [first, second] = await Promise.all([thread.send(message("A")), thread.send(message("B"))]);
+    const [first, second, third] = await Promise.all([thread.send(message("A")), thread.send(message("B")), thread.send(message("C"))]);
     expect(first[0]).toMatchObject({ type: "turn.started", turn: 1 });
-    expect(second[0]).toMatchObject({ type: "turn.started", turn: 2 });
+    expect(second[0]).toMatchObject({ type: "turn.started", turn: 2, input: message("B") });
+    expect(second[1]).toMatchObject({ type: "turn.input", turn: 2, input: message("C") });
+    expect(third).toEqual(second);
     expect(lastMessage(first)).toBe("One");
     expect(lastMessage(second)).toBe("Two");
-    expect(provider.requests[1]?.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+    expect(provider.requests[1]?.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "user"]);
   });
 });
