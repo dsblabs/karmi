@@ -1,4 +1,3 @@
-import { DurableObject } from "cloudflare:workers";
 import type { AgentSpec, PolicyRule } from "./agent.js";
 import type { KarmiBindings } from "./bindings.js";
 import { readOutputTool } from "./builtins.js";
@@ -10,13 +9,15 @@ import { hooksAt } from "./hooks.js";
 import { keys } from "./keys.js";
 import { consoleLogger } from "./logger.js";
 import { fail, ok, remote, type Outcome } from "./outcome.js";
+import { isPlatformFailure } from "./platform-failure.js";
 import { evaluatePrompt } from "./prompt.js";
 import type { ContentBlock, ProviderError, StopReason, Usage } from "./provider.js";
 import { prepareMessages } from "./replay.js";
-import type { ProviderConfig } from "./scope-config.js";
+import { ScheduledDurableObject, type ScheduledJob } from "./scheduler.js";
 import type { ScopeConfigDurableObject } from "./scope-config-do.js";
-import { titleOf, type ThreadAddress, type ThreadStatus } from "./thread.js";
+import type { ProviderConfig } from "./scope-config.js";
 import type { Granularity, ThreadEvent, ThreadEventData, ThreadEventType, TurnInput } from "./thread-events.js";
+import { titleOf, type ThreadAddress, type ThreadStatus } from "./thread.js";
 import { runToolStep, type PriorCalls, type ToolCall } from "./tool-step.js";
 import { resolveTools, toolDefinitions, type AvailableTool } from "./tools.js";
 import { splitModelId, transcriptFromEvents } from "./transcript.js";
@@ -29,7 +30,7 @@ const SCHEMA = `
 
 /** Eager snapshot ceiling; a larger one is a Spec problem, not something to page lazily. */
 export const SNAPSHOT_LIMIT = 256 * 1024;
-const MAX_RECOVERIES = 3;
+const MAX_STEP_ATTEMPTS = 3;
 const POLL_TIMEOUT_MS = 15_000;
 const POLL_LIMIT = 256;
 /** A Step past this without progress is presumed lost; the alarm re-enters the loop. */
@@ -58,6 +59,7 @@ type ThreadRow = {
   step: number;
   attempt: number;
   recoveries: number;
+  platform_failure: number;
   agent_version: number | null;
   snapshot_json: string | null;
   usage_json: string;
@@ -74,7 +76,7 @@ type StepResult = { ok: true; stopReason: StopReason; message: ContentBlock[] } 
  */
 type Plan = { kind: "model"; n: number; fresh: boolean } | { kind: "tool"; n: number; fresh: boolean; batch: ToolCall[]; prior: PriorCalls } | { kind: "finish"; stopReason: StopReason; message: ContentBlock[] };
 
-export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
+export abstract class ThreadDurableObject extends ScheduledDurableObject {
   abstract readonly deployment: Deployment;
 
   private head = 0;
@@ -87,6 +89,11 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
   constructor(ctx: DurableObjectState, env: KarmiBindings) {
     super(ctx, env);
     ctx.storage.sql.exec(SCHEMA);
+    if (!ctx.storage.sql.exec<{ name: string }>("PRAGMA table_info(thread)").toArray().some(column => column.name === "platform_failure")) {
+      ctx.storage.sql.exec("ALTER TABLE thread ADD COLUMN platform_failure INTEGER NOT NULL DEFAULT 0");
+      // Preserve the raw watchdog installed by versions predating the jobs table.
+      ctx.storage.sql.exec("INSERT OR IGNORE INTO jobs (id, kind, dueAt, payload, attempt, generation) SELECT 'watchdog', 'watchdog', 0, 'null', 0, ? FROM thread WHERE state = 'running'", crypto.randomUUID());
+    }
     this.head = ctx.storage.sql.exec<{ seq: number | null }>("SELECT MAX(seq) AS seq FROM events").one().seq ?? 0;
   }
 
@@ -100,7 +107,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     let row = this.sql.exec<ThreadRow>("SELECT * FROM thread").toArray()[0];
     if (!row) {
       if (!address.create) return fail(new KarmiError("thread.notFound", `Thread "${address.threadId}" does not exist.`));
-      row = { scope_id: address.scope, agent_id: address.agent, user_id: address.user ?? null, thread_id: address.threadId, created_at: Date.now(), state: "idle", turn: 0, step: 0, attempt: 0, recoveries: 0, agent_version: null, snapshot_json: null, usage_json: JSON.stringify(ZERO_USAGE) };
+      row = { scope_id: address.scope, agent_id: address.agent, user_id: address.user ?? null, thread_id: address.threadId, created_at: this.deployment.clock.now(), state: "idle", turn: 0, step: 0, attempt: 0, recoveries: 0, platform_failure: 0, agent_version: null, snapshot_json: null, usage_json: JSON.stringify(ZERO_USAGE) };
       this.sql.exec("INSERT INTO thread (scope_id, agent_id, user_id, thread_id, created_at, state, turn, step, attempt, recoveries, agent_version, snapshot_json, usage_json) VALUES (?, ?, ?, ?, ?, 'idle', 0, 0, 0, 0, NULL, NULL, ?)", row.scope_id, row.agent_id, row.user_id, row.thread_id, row.created_at, row.usage_json);
     } else if (row.scope_id !== address.scope || row.thread_id !== address.threadId) {
       throw new Error(`Thread "${row.scope_id}/${row.thread_id}" was addressed as "${address.scope}/${address.threadId}".`);
@@ -117,7 +124,8 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     const queued = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM inputs").one().n;
     const turn = row.value.turn + 1 + queued;
     this.sql.exec("INSERT INTO inputs (turn, json) VALUES (?, ?)", turn, JSON.stringify(input));
-    if (!this.active) this.ctx.waitUntil(this.run());
+    if (!this.active) this.kick();
+    else this.armWatchdog();
     return ok({ turn, seq: this.head });
   }
 
@@ -168,7 +176,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
 
   private append(turn: number, data: ThreadEventData, channelRef: unknown): ThreadEvent {
     const seq = ++this.head;
-    const at = Date.now();
+    const at = this.deployment.clock.now();
     const body = channelRef === undefined ? data : { ...data, channelRef };
     const event: ThreadEvent = { seq, turn, at, ...body };
     this.sql.exec("INSERT INTO events (seq, turn, at, type, json) VALUES (?, ?, ?, ?, ?)", seq, turn, at, data.type, JSON.stringify(body));
@@ -187,16 +195,28 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     return this.sql.exec<ThreadRow>("SELECT * FROM thread").one();
   }
 
-  // The watchdog: a Step still streaming is fine, so the alarm is pushed out; a Turn left `running` by an
-  // eviction re-enters the loop, and one interrupted too often fails rather than looping forever.
-  async alarm(): Promise<void> {
-    if (this.active) return void this.ctx.storage.setAlarm(Date.now() + STEP_WATCHDOG_MS);
+  private kick(): void {
+    this.armWatchdog();
+    // DO lifetime is independent of the caller. Persisted work, rather than waitUntil, survives eviction.
+    void this.run().catch((error: unknown) => {
+      console.error("Thread loop interrupted", error);
+    });
+  }
+
+  private armWatchdog(): void {
+    this.scheduler.set({ id: "watchdog", kind: "watchdog", dueAt: this.deployment.clock.now() + STEP_WATCHDOG_MS, payload: null });
+  }
+
+  protected override async runJob(job: ScheduledJob): Promise<void> {
+    if (job.kind !== "watchdog") return super.runJob(job);
     const row = this.sql.exec<ThreadRow>("SELECT * FROM thread").toArray()[0];
-    if (row?.state !== "running") return;
-    const recoveries = row.recoveries + 1;
-    this.update({ recoveries });
-    if (recoveries > MAX_RECOVERIES) await this.finish(row, failure("recovery", `Step ${row.step} of Turn ${row.turn} was interrupted ${recoveries} times.`));
-    await this.run();
+    if (!row || row.state === "parked" || (row.state === "idle" && !this.sql.exec("SELECT id FROM inputs LIMIT 1").toArray().length)) {
+      this.scheduler.cancel("watchdog");
+      return;
+    }
+    // A live invocation owns the Step. Its alarm is also the keep-alive heartbeat while streaming.
+    if (this.active) this.armWatchdog();
+    else this.kick();
   }
 
   // The Turn loop: one instance at a time, driven by `send` and the watchdog alarm. It resumes whatever
@@ -204,6 +224,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
   private async run(): Promise<void> {
     if (this.active) return;
     this.active = true;
+    let recovering = this.row().state === "running";
     try {
       for (;;) {
         let row = this.row();
@@ -214,19 +235,36 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
           row = this.row();
         } else if (row.state === "idle") {
           const next = this.sql.exec<{ id: number; json: string }>("SELECT id, json FROM inputs ORDER BY id LIMIT 1").toArray()[0];
-          if (!next) return;
+          if (!next) {
+            this.scheduler.cancel("watchdog");
+            return;
+          }
           // Nothing may yield between taking the input and logging it, or an eviction would lose it.
           const toolsVersion = await this.deployment.catalogue.fingerprint();
           const input = JSON.parse(next.json) as TurnInput;
           const turn = row.turn + 1;
           this.sql.exec("DELETE FROM inputs WHERE id = ?", next.id);
-          this.update({ state: "running", turn, step: 0, attempt: 0, recoveries: 0, snapshot_json: null });
+          this.update({ state: "running", turn, step: 0, attempt: 0, recoveries: 0, platform_failure: 0, snapshot_json: null });
           this.append(turn, { type: "turn.started", input, toolsVersion }, input.channelRef);
           row = this.row();
         }
+        if (recovering) {
+          recovering = false;
+          const plan = this.plan(row);
+          if (plan.kind !== "finish" && !plan.fresh) {
+            if (!row.platform_failure && row.recoveries + 1 >= MAX_STEP_ATTEMPTS) {
+              await this.finish(row, failure("recovery", `Step ${row.step} of Turn ${row.turn} exhausted its three attempts.`));
+              continue;
+            }
+            this.update({ recoveries: row.recoveries + (row.platform_failure ? 0 : 1), platform_failure: 0 });
+          }
+          this.append(row.turn, { type: "turn.resumed", reason: "recovered" }, this.turnInput(row.turn)?.channelRef);
+          row = this.row();
+        }
+        this.armWatchdog();
         await this.turn(row);
-        // Parked again: the input stays queued for the next resume attempt rather than spinning here.
-        if (this.row().state === "parked") return;
+        // A parked Turn or a platform failure waits for input or its watchdog, rather than spinning here.
+        if (this.row().state !== "idle") return;
       }
     } finally {
       this.active = false;
@@ -241,8 +279,9 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
   private async finish(row: ThreadRow, end: TurnEnd): Promise<void> {
     this.append(row.turn, end, this.turnInput(row.turn)?.channelRef);
     if (end.type === "turn.paused") this.update({ state: "parked" });
-    else this.update({ state: "idle", step: 0, attempt: 0, recoveries: 0, snapshot_json: null });
-    void this.ctx.storage.deleteAlarm();
+    else this.update({ state: "idle", step: 0, attempt: 0, recoveries: 0, platform_failure: 0, snapshot_json: null });
+    if (end.type !== "turn.paused" && this.sql.exec("SELECT id FROM inputs LIMIT 1").toArray().length) this.armWatchdog();
+    else this.scheduler.cancel("watchdog");
     // The snapshot is gone from the row by now; a Turn that never took one has no Hooks to run.
     const snapshot = row.snapshot_json === null ? undefined : (JSON.parse(row.snapshot_json) as TurnSnapshot);
     if (snapshot) {
@@ -260,6 +299,12 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     try {
       await this.steps(row);
     } catch (caught) {
+      if (isPlatformFailure(caught)) {
+        this.update({ platform_failure: 1 });
+        this.turnAbort.abort();
+        this.armWatchdog();
+        return;
+      }
       // A bug, not an eviction: end the Turn honestly rather than leave it to the watchdog.
       await this.finish(this.row(), failure("internal", caught instanceof Error ? caught.message : String(caught)));
     }
@@ -283,21 +328,23 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
       if (plan.kind === "finish") return this.finish(this.row(), { type: "turn.completed", stopReason: plan.stopReason, message: plan.message });
 
       if (plan.kind === "model") {
-        const attempt = plan.fresh ? 1 : Math.max(row.attempt, 1);
+        const modelAttempt = plan.fresh ? 1 : Math.max(row.attempt, 1);
+        const attempt = modelAttempt + (plan.fresh ? 0 : row.recoveries);
         const models = [snapshot.spec.model.id, ...(snapshot.spec.model.fallbacks ?? [])];
-        const model = models[attempt - 1];
+        const model = models[modelAttempt - 1];
         if (model === undefined) return this.finish(this.row(), failure("provider", `Every model of Agent "${row.agent_id}" failed.`));
-        this.update({ step: plan.n, attempt, ...(plan.fresh && { recoveries: 0 }) });
+        if (attempt > MAX_STEP_ATTEMPTS) return this.finish(this.row(), failure("recovery", `Step ${plan.n} of Turn ${row.turn} exhausted its three attempts.`));
+        this.update({ step: plan.n, attempt: modelAttempt, ...(plan.fresh && { recoveries: 0, platform_failure: 0 }) });
         this.append(row.turn, { type: "step.started", kind: "model", n: plan.n, attempt, model, provider: snapshot.profile.adapter, agentVersion: snapshot.agentVersion }, channelRef);
-        void this.ctx.storage.setAlarm(Date.now() + STEP_WATCHDOG_MS);
+        this.armWatchdog();
         const result = await this.modelStep({ ...row, step: plan.n }, snapshot, available(snapshot), model, channelRef);
         // The failed attempt stays in the log; the transcript ignores Steps that never completed.
-        if (!result.ok) this.update({ attempt: attempt + 1 });
+        if (!result.ok) this.update({ attempt: modelAttempt + 1 });
       } else {
         const attempt = (plan.fresh ? 0 : row.recoveries) + 1;
-        this.update({ step: plan.n, attempt, ...(plan.fresh && { recoveries: 0 }) });
+        this.update({ step: plan.n, attempt, ...(plan.fresh && { recoveries: 0, platform_failure: 0 }) });
         this.append(row.turn, { type: "step.started", kind: "tool", n: plan.n, attempt, agentVersion: snapshot.agentVersion }, channelRef);
-        void this.ctx.storage.setAlarm(Date.now() + STEP_WATCHDOG_MS);
+        this.armWatchdog();
         await this.toolStep({ ...row, step: plan.n }, snapshot, available(snapshot), attempt, plan.batch, plan.prior, channelRef);
         this.append(row.turn, { type: "step.completed", kind: "tool", n: plan.n }, channelRef);
       }
@@ -370,7 +417,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     } else {
       const input = this.turnInput(row.turn);
       const title = input ? titleOf(input) : undefined;
-      const source = await stub.turnSnapshot(row.scope_id, row.agent_id, { threadId: row.thread_id, ...(row.user_id !== null && { userId: row.user_id }), createdAt: row.created_at, activeAt: Date.now(), ...(title !== undefined && { title }) });
+      const source = await stub.turnSnapshot(row.scope_id, row.agent_id, { threadId: row.thread_id, ...(row.user_id !== null && { userId: row.user_id }), createdAt: row.created_at, activeAt: this.deployment.clock.now(), ...(title !== undefined && { title }) });
       if (!source.ok) return { ok: false, failure: failure(source.code, source.message) };
       const { version } = source.value.agent;
       const spec = source.value.agent.spec as AgentSpec;
@@ -404,6 +451,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
       try {
         await hook.run({ ...base, ...extra } as HookContexts[P]);
       } catch (caught) {
+        if (isPlatformFailure(caught)) throw caught;
         const message = caught instanceof Error ? caught.message : String(caught);
         if (point === "before-turn") return { ok: false, failure: failure("hook", `Hook "${hook.name}" refused the Turn: ${message}`) };
         base.logger.warn(`${point} Hook "${hook.name}" failed`, { error: message });
@@ -421,7 +469,7 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
     try {
       const tools = toolDefinitions(available);
       const offered = tools.map((tool) => available.get(tool.name)!.tool);
-      const system = await evaluatePrompt(spec, this.deployment.catalogue, { model, scope: row.scope_id, ...(row.user_id !== null && { user: row.user_id }), thread: { id: row.thread_id }, tools: tools.map((tool) => tool.name), now: new Date() }, offered);
+      const system = await evaluatePrompt(spec, this.deployment.catalogue, { model, scope: row.scope_id, ...(row.user_id !== null && { user: row.user_id }), thread: { id: row.thread_id }, tools: tools.map((tool) => tool.name), now: new Date(this.deployment.clock.now()) }, offered);
       const { messages } = prepareMessages(transcriptFromEvents(this.read(0, "part", Number.MAX_SAFE_INTEGER)), { provider: profile.adapter, model: native });
       const request = {
         model: native,
@@ -455,12 +503,14 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
       }
       return stepError("The Provider stream ended without a terminal event.");
     } catch (error) {
+      if (isPlatformFailure(error)) throw error;
       return stepError(error instanceof Error ? error.message : String(error));
     }
   }
 
   private toolStep(row: ThreadRow, snapshot: TurnSnapshot, available: ReadonlyMap<string, AvailableTool>, attempt: number, batch: ToolCall[], prior: PriorCalls, channelRef: unknown): Promise<void> {
     const stub = this.scopeStub(row);
+    const signal = this.turnAbort.signal;
     return runToolStep(
       {
         scope: row.scope_id,
@@ -474,8 +524,11 @@ export abstract class ThreadDurableObject extends DurableObject<KarmiBindings> {
         available,
         bucket: this.env.KARMI_MEDIA,
         logger: this.logger(row),
-        signal: this.turnAbort.signal,
-        append: (data) => this.append(row.turn, data, channelRef),
+        signal,
+        append: (data) => {
+          signal.throwIfAborted();
+          return this.append(row.turn, data, channelRef);
+        },
         connection: async (level, name) => {
           // The user-level store lands with the Connection ticket; until then only agent-level values exist.
           if (level === "user") return undefined;

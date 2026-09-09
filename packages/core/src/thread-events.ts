@@ -23,7 +23,7 @@ export type ThreadEventData =
   | { type: "turn.completed"; stopReason: StopReason; message: ContentBlock[] }
   | { type: "turn.failed"; reason: string; message: string }
   | { type: "turn.paused"; reason: "scope_suspended" }
-  | { type: "turn.resumed"; reason: "input" }
+  | { type: "turn.resumed"; reason: "input" | "recovered" }
   /** `provider` is the adapter serving `model`; replay keys provider-opaque blocks on it, not on the id's prefix. */
   | { type: "step.started"; kind: "model"; n: number; attempt: number; model: string; provider: string; agentVersion: number }
   /** `attempt` counts recovery re-runs of the same tool batch. */

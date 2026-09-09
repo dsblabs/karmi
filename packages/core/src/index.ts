@@ -1,3 +1,4 @@
+export { wallClock, type Clock } from "./clock.js";
 export {
   defineAgent,
   type Agent,
