@@ -13,6 +13,7 @@ const fresh = (agent = "approver") => {
   return thread;
 };
 const message = (text: string) => ({ kind: "message" as const, parts: [{ type: "text" as const, text }] });
+const STEP_WATCHDOG_MS = 60_000;
 const requestSeq = (events: ThreadEvent[]) => events.find((e) => e.type === "approval.requested")!.seq;
 /** Everything the Turn logs after the events seen so far, up to its end or next park. */
 async function rest(thread: ReturnType<typeof fresh>, seen: ThreadEvent[]): Promise<ThreadEvent[]> {
@@ -111,6 +112,18 @@ describe("tool Approvals", () => {
     } finally {
       await scope.config.set({}, { ifRevision: revision });
     }
+  });
+
+  it("continues at once on an answer that lands while the park's after-turn Hooks still run", async () => {
+    provider.script([[reply.toolCall("book", { room: 1 }, "c1")], "Quick"]);
+    const thread = fresh();
+    const parked = await thread.send(message("Book"));
+    // The test-kit `send` resolves on the `turn.paused` append, before the slow Hook returns.
+    await thread.approve(requestSeq(parked), { decision: "allow" });
+    const resumed = await rest(thread, parked);
+    expect(resumed.filter((e) => e.type === "turn.resumed")).toEqual([expect.objectContaining({ reason: "approval" })]);
+    expect(lastMessage(resumed)).toBe("Quick");
+    expect(resumed.at(-1)!.at - parked.at(-1)!.at).toBeLessThan(STEP_WATCHDOG_MS);
   });
 
   it("parks until every asked call of the batch is answered", async () => {
@@ -227,6 +240,8 @@ describe("cancel, steer and coalescing", () => {
     const parked = await thread.send(message("Book"));
     const queued = thread.send(message("After"));
     await thread.cancel();
+    // A cancel that lands while the park's Hooks still run is carried out as soon as they return.
+    await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.failed")).toBe(true);
     const events = await thread.events();
     expect(events.filter((e) => e.turn === 1).slice(parked.length).map((e) => e.type)).toEqual(["approval.resolved", "turn.failed"]);
     expect(events).toContainEvent({ type: "approval.resolved", request: requestSeq(parked), decision: "deny", source: "cancel" });

@@ -108,6 +108,8 @@ const denyLookup = defineHook({ name: "deny-lookup", point: "before-tool", run: 
 const observe = defineHook({ name: "observe", point: "after-tool", run: ({ call, result }) => void trace.push(`after-tool:${call.name}:${result.isError ? "error" : "ok"}`) });
 const turnLog = defineHook({ name: "turn-start", point: "before-turn", run: ({ input, turn }) => void trace.push(`before-turn:${turn}:${input.kind}`) });
 const turnEnd = defineHook({ name: "turn-end", point: "after-turn", run: ({ end, turn, signal }) => void trace.push(`after-turn:${turn}:${end.type}${signal.aborted ? ":aborted" : ""}`) });
+// Slow enough that an answer can land while the park's after-turn Hooks are still running.
+const slowTurnEnd = defineHook({ name: "slow-turn-end", point: "after-turn", run: async () => void (await settle(30)) });
 const onError = defineHook({ name: "on-error", point: "on-error", run: ({ error }) => void trace.push(`on-error:${error.code}`) });
 
 const concierge = defineAgent({
@@ -139,7 +141,7 @@ const guarded = defineAgent({
 // Default Policy: nothing matches, so every call is an `ask`.
 const asking = defineAgent({ agentId: "asking", name: "Asking", instructions: [{ text: "Ask first." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["book"] });
 // Approvals: `lookup` and the Job/Scope fixtures are allowed, everything else asks, with a one-hour timeout.
-const approver = defineAgent({ agentId: "approver", name: "Approver", instructions: [{ text: "Ask before booking." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup", "book", "weather", "start_job", "wait_gate"], policy: [{ match: { tool: ["lookup", "start_job", "wait_gate"] }, effect: "allow" }], approvals: { timeout: 60 * 60 * 1000 }, hooks: { "after-turn": ["turn-end"] } });
+const approver = defineAgent({ agentId: "approver", name: "Approver", instructions: [{ text: "Ask before booking." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup", "book", "weather", "start_job", "wait_gate"], policy: [{ match: { tool: ["lookup", "start_job", "wait_gate"] }, effect: "allow" }], approvals: { timeout: 60 * 60 * 1000 }, hooks: { "after-turn": ["turn-end", "slow-turn-end"] } });
 // Budgets: a tiny `longRunning` grant so exhaustion is a few Steps away.
 const budgeted = defineAgent({ agentId: "budgeted", name: "Budgeted", instructions: [{ text: "Loop." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup"], policy: [{ match: { tool: "*" }, effect: "allow" }], capabilities: { longRunning: { maxSteps: 3, maxTokens: 100 } } });
 const hooked = defineAgent({ agentId: "hooked", name: "Hooked", instructions: [{ text: "Hooked." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup"], policy: [{ match: { tool: "*" }, effect: "allow" }], hooks: { "before-tool": ["deny-lookup"] } });
@@ -161,7 +163,7 @@ const recoveryAgent = defineAgent({ agentId: "recovery", name: "Recovery", instr
 export const { karmi, clock, provider, scope } = createTestKarmi({
   tools: [weather, lookup, book, bigOutput, whoami, failing, startJob, waitGate, ...recoveryTools],
   fragments: [guest],
-  hooks: [recoveryBefore, recoveryAfter, rewriteCity, denyBooking, denyLookup, observe, turnLog, turnEnd, onError],
+  hooks: [recoveryBefore, recoveryAfter, rewriteCity, denyBooking, denyLookup, observe, turnLog, turnEnd, slowTurnEnd, onError],
   agents: [recoveryAgent, concierge, guarded, asking, hooked, approver, budgeted],
 });
 

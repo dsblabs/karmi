@@ -7,7 +7,7 @@ import { hooksAt } from "./hooks.js";
 import { keys } from "./keys.js";
 import { isPlatformFailure } from "./platform-failure.js";
 import { renderTruncated, truncateOutput } from "./spill.js";
-import type { ApprovalAnswer, PauseReason, ThreadEvent, ThreadEventData } from "./thread-events.js";
+import type { ApprovalAnswer, ApprovalSource, PauseReason, ThreadEvent, ThreadEventData } from "./thread-events.js";
 import { DEFAULT_ANNOTATIONS, type Connection, type Tool, type ToolContent, type ToolContext, type ToolOutcome, type ToolResult } from "./tool.js";
 import { outputLimits, type AvailableTool } from "./tools.js";
 
@@ -49,7 +49,7 @@ export interface ToolCall {
 /** How an asked call stands: requested, and answered or not. */
 export interface CallApproval {
   request: number;
-  answer?: ApprovalAnswer & { source: "answer" | "timeout" | "cancel" };
+  answer?: ApprovalAnswer & { source: ApprovalSource };
 }
 
 export type JobOutcome = { type: "job.completed"; result: ToolResult } | { type: "job.failed"; message: string } | { type: "job.cancelled" };

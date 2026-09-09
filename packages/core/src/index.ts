@@ -38,7 +38,7 @@ export { resolveBindings, type KarmiBindings, type BindingsResolver } from "./bi
 export { assertCompatibilityBaseline, COMPATIBILITY_DATE_FLOOR } from "./compat.js";
 export type { Scope, ScopeState, ScopeStatus, ConfigRecord, AgentRecord, AgentSummary, AgentVersion, DestroyStatus } from "./scope.js";
 export type { Thread, ThreadIdentity, ThreadStatus, ThreadBudget, PendingApproval, ThreadJobs, SendOptions, ThreadSummary } from "./thread.js";
-export type { TurnInput, Part, ThreadEvent, ThreadEventType, Granularity, PauseReason, ResumeReason, BudgetUsed, ApprovalAnswer } from "./thread-events.js";
+export type { TurnInput, Part, ThreadEvent, ThreadEventType, Granularity, PauseReason, ResumeReason, Budget, ApprovalAnswer, ApprovalSource } from "./thread-events.js";
 export { evaluatePrompt } from "./prompt.js";
 export { transcriptFromEvents, renderEvent } from "./transcript.js";
 export type { DurableObjects, DurableObjectClass, KarmiDurableObject } from "./durable-objects.js";

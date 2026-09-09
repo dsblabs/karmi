@@ -7,7 +7,7 @@ import { remote, type Remote, unwrap } from "./outcome.js";
 import type { Usage } from "./provider.js";
 import type { ThreadDurableObject } from "./thread-do.js";
 import type { ToolContent, ToolResult } from "./tool.js";
-import type { ApprovalAnswer, BudgetUsed, Granularity, PauseReason, ThreadEvent, TurnInput } from "./thread-events.js";
+import type { ApprovalAnswer, Budget, Granularity, PauseReason, ThreadEvent, TurnInput } from "./thread-events.js";
 
 /** What a Channel binding chooses: the Agent, the User (absent for user-less Events) and its own threadId. */
 export interface ThreadIdentity {
@@ -23,8 +23,8 @@ export interface ThreadAddress extends ThreadIdentity {
 }
 
 /** What the running Turn has spent in its current budget window, against the bounds it runs under. */
-export interface ThreadBudget extends BudgetUsed {
-  max: { steps: number; wallMs: number; tokens: number };
+export interface ThreadBudget extends Budget {
+  max: Budget;
 }
 
 export interface PendingApproval {

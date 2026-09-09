@@ -17,7 +17,7 @@ import { prepareMessages } from "./replay.js";
 import { ScheduledDurableObject, type ScheduledJob } from "./scheduler.js";
 import type { ScopeConfigDurableObject } from "./scope-config-do.js";
 import type { Ceilings, ProviderConfig } from "./scope-config.js";
-import type { ApprovalAnswer, BudgetUsed, Granularity, PauseReason, ResumeReason, ThreadEvent, ThreadEventData, ThreadEventType, TurnInput } from "./thread-events.js";
+import type { ApprovalAnswer, ApprovalSource, Budget, Granularity, PauseReason, ResumeReason, ThreadEvent, ThreadEventData, ThreadEventType, TurnInput } from "./thread-events.js";
 import { titleOf, type PendingApproval, type ThreadAddress, type ThreadStatus } from "./thread.js";
 import { runToolStep, type CallApproval, type JobOutcome, type PriorCalls, type ToolCall } from "./tool-step.js";
 import { resolveTools, toolDefinitions, type AvailableTool } from "./tools.js";
@@ -38,16 +38,10 @@ const POLL_LIMIT = 256;
 const STEP_WATCHDOG_MS = 60_000;
 const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 /** What a Turn may spend before asking to continue, when the Agent has no `longRunning` grant. */
-export const DEFAULT_BUDGET: Readonly<TurnBudget> = Object.freeze({ steps: 25, wallMs: 10 * 60_000, tokens: 500_000 });
+export const DEFAULT_BUDGET: Readonly<Budget> = Object.freeze({ steps: 25, wallMs: 10 * 60_000, tokens: 500_000 });
 /** A granted `longRunning` bound the Spec leaves out; JSON has no Infinity. */
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 const CANCELLED = Symbol("cancelled");
-
-export interface TurnBudget {
-  steps: number;
-  wallMs: number;
-  tokens: number;
-}
 
 /** What a Turn runs under, persisted locally at its first Step so a Spec change lands on the next Turn. */
 export interface TurnSnapshot {
@@ -61,7 +55,7 @@ export interface TurnSnapshot {
   /** The Spec's `approvals.timeout` under the Scope ceiling, in milliseconds. */
   approvalTimeout: number;
   /** The `longRunning` grant under the Scope ceiling, or the small defaults without one. */
-  budget: TurnBudget;
+  budget: Budget;
 }
 
 type ThreadRow = {
@@ -99,7 +93,7 @@ type Request = { kind: "tool"; id: string; tool: string; timeoutAt: number; answ
 /** The Turn as the log tells it: the next Step, what it waits on, and what it has spent. */
 interface TurnState {
   plan: Plan;
-  budget: BudgetUsed;
+  budget: Budget;
   /** Set while the Turn is parked. */
   paused?: PauseReason;
   /** Every `approval.requested` of the current Step, by its seq. */
@@ -222,7 +216,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const row = entered.value;
     if (row.state === "idle") return ok(undefined);
     if (this.active) {
-      // The loop owns the Turn: it notices the abort at once and ends the Turn itself.
+      // The loop owns the Turn: it notices the abort at once (or as soon as the park's Hooks return) and ends the Turn itself.
       this.update({ cancelled: 1 });
       this.turnAbort.abort();
       return ok(undefined);
@@ -345,7 +339,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       const toolsVersion = await this.deployment.catalogue.fingerprint();
       for (;;) {
         let row = this.row();
-        if (row.state === "running" && row.cancelled) {
+        if (row.state !== "idle" && row.cancelled) {
           await this.cancelTurn(row);
           continue;
         }
@@ -384,8 +378,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         }
         this.armWatchdog();
         await this.turn(row);
-        // A parked Turn or a platform failure waits for input or its watchdog, rather than spinning here.
-        if (this.row().state !== "idle") return;
+        // A parked Turn or a platform failure waits for its answer or watchdog, rather than spinning here;
+        // an answer or cancel that landed during the park's Hooks is picked up by the next iteration.
+        const after = this.row();
+        if (after.platform_failure || (after.state === "parked" && !after.cancelled)) return;
       }
     } finally {
       this.active = false;
@@ -426,7 +422,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     this.scheduler.set({ id: `park-timeout:${seq}`, kind: "park-timeout", dueAt: data.timeoutAt, payload: { seq } });
   }
 
-  private resolve(row: ThreadRow, seq: number, request: Request, answer: ApprovalAnswer, source: "answer" | "timeout" | "cancel"): void {
+  private resolve(row: ThreadRow, seq: number, request: Request, answer: ApprovalAnswer, source: ApprovalSource): void {
     const remember = answer.remember === true && answer.decision === "allow" && request.kind === "tool";
     this.append(row.turn, { type: "approval.resolved", request: seq, kind: request.kind, ...(request.kind === "tool" && { tool: request.tool }), decision: answer.decision, ...(answer.reason !== undefined && { reason: answer.reason }), ...(remember && { remember }), ...(answer.by !== undefined && { by: answer.by }), source }, this.turnInput(row.turn)?.channelRef);
     this.scheduler.cancel(`park-timeout:${seq}`);
@@ -446,8 +442,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private async settle(row: ThreadRow): Promise<void> {
     if (this.row().state !== "parked") return;
     const turn = this.readTurn(row);
-    for (const request of turn.requests.values()) if (!request.answered) return;
-    for (const job of turn.jobs.values()) if (!job.outcome) return;
+    if (this.waiting(turn) !== undefined) return;
     // An allowed `continue` leaves no request behind; a refused one ends the Turn.
     for (const request of turn.requests.values()) {
       if (request.kind !== "continue") continue;
@@ -496,11 +491,13 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     };
     for (;;) {
       const boundary = await this.snapshot(row);
+      if (this.row().cancelled) return this.cancelTurn(this.row());
       if (!boundary.ok) return this.finish(this.row(), boundary.failure);
       const snapshot = boundary.snapshot;
       if (row.step === 0) {
         const input = this.turnInput(row.turn);
         const before = input && (await this.turnHooks(row, snapshot, "before-turn", { input }));
+        if (this.row().cancelled) return this.cancelTurn(this.row());
         if (before && !before.ok) return this.finish(this.row(), before.failure);
       }
       let turn = this.readTurn(row);
@@ -545,8 +542,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         if (waits === CANCELLED) return this.cancelTurn(this.row());
         if (waits !== undefined) {
           // An answer may have landed while the batch was still running; only a real wait parks.
-          const still = this.waiting(this.readTurn(row));
-          if (still !== undefined) return this.finish(this.row(), { type: "turn.paused", reason: still });
+          const waitsOn = this.waiting(this.readTurn(row));
+          if (waitsOn !== undefined) return this.finish(this.row(), { type: "turn.paused", reason: waitsOn });
           row = this.row();
           continue;
         }
@@ -565,6 +562,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   private untilCancelled<T>(work: Promise<T>): Promise<T | typeof CANCELLED> {
     const signal = this.turnAbort.signal;
+    if (signal.aborted) return Promise.resolve(CANCELLED);
     return Promise.race([work, new Promise<typeof CANCELLED>((resolve) => signal.addEventListener("abort", () => resolve(CANCELLED), { once: true }))]);
   }
 
@@ -594,21 +592,23 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const approvals = new Map<string, CallApproval>();
     const jobs = new Map<string, { jobId: string; outcome?: JobOutcome }>();
     const byJob = new Map<string, string>();
-    const budget: BudgetUsed = { steps: 0, wallMs: 0, tokens: 0 };
+    const budget: Budget = { steps: 0, wallMs: 0, tokens: 0 };
     let countedStep = 0;
-    let since: number | undefined;
+    /** When the current stretch of active wall time began; unset while parked. */
+    let activeSince: number | undefined;
     let paused: PauseReason | undefined;
     for (const { seq, at, json } of events) {
       const event = JSON.parse(json) as ThreadEventData;
       switch (event.type) {
         case "turn.started":
         case "turn.resumed":
-          since = at;
+          // A recovery resumes without a pause before it, so its stretch keeps counting from where it began.
+          activeSince ??= at;
           paused = undefined;
           break;
         case "turn.paused":
-          if (since !== undefined) budget.wallMs += at - since;
-          since = undefined;
+          if (activeSince !== undefined) budget.wallMs += at - activeSince;
+          activeSince = undefined;
           paused = event.reason;
           break;
         case "turn.input":
@@ -683,7 +683,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           break;
       }
     }
-    if (since !== undefined) budget.wallMs += this.deployment.clock.now() - since;
+    if (activeSince !== undefined) budget.wallMs += this.deployment.clock.now() - activeSince;
     const prior: PriorCalls = { started: calls, finished: results, approvals, jobs };
     const batch = (): ToolCall[] => (last?.message ?? []).flatMap((block) => (block.type === "tool_call" ? [{ id: block.id, name: block.name, input: block.input }] : []));
     const state = { budget, requests, approvals, jobs, lastMessage: last?.message ?? [], ...(paused !== undefined && { paused }) };
@@ -867,17 +867,15 @@ function resolveProfile(spec: AgentSpec, providers: Record<string, ProviderConfi
 }
 
 /** A grant lifts each bound it names and leaves the others open; the Scope ceiling caps all of them. */
-function resolveBudget(grant: Capabilities["longRunning"], ceiling: Ceilings["longRunning"]): TurnBudget {
-  const budget: TurnBudget = grant ? { steps: grant.maxSteps ?? UNBOUNDED, wallMs: grant.maxWallMs ?? UNBOUNDED, tokens: grant.maxTokens ?? UNBOUNDED } : { ...DEFAULT_BUDGET };
-  if (ceiling) {
-    budget.steps = Math.min(budget.steps, ceiling.maxSteps ?? UNBOUNDED);
-    budget.wallMs = Math.min(budget.wallMs, ceiling.maxWallMs ?? UNBOUNDED);
-    budget.tokens = Math.min(budget.tokens, ceiling.maxTokens ?? UNBOUNDED);
-  }
-  return budget;
+function resolveBudget(grant: Capabilities["longRunning"], ceiling: Ceilings["longRunning"]): Budget {
+  const limits = (bounds: { maxSteps?: number; maxWallMs?: number; maxTokens?: number }): Budget => ({ steps: bounds.maxSteps ?? UNBOUNDED, wallMs: bounds.maxWallMs ?? UNBOUNDED, tokens: bounds.maxTokens ?? UNBOUNDED });
+  const budget = grant ? limits(grant) : { ...DEFAULT_BUDGET };
+  if (!ceiling) return budget;
+  const cap = limits(ceiling);
+  return { steps: Math.min(budget.steps, cap.steps), wallMs: Math.min(budget.wallMs, cap.wallMs), tokens: Math.min(budget.tokens, cap.tokens) };
 }
 
-function exhausted(used: BudgetUsed, max: TurnBudget): boolean {
+function exhausted(used: Budget, max: Budget): boolean {
   return used.steps >= max.steps || used.wallMs >= max.wallMs || used.tokens >= max.tokens;
 }
 

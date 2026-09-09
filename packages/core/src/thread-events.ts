@@ -21,12 +21,15 @@ export interface ThreadEventBase {
 export type PauseReason = "approval" | "budget" | "job" | "scope_suspended";
 export type ResumeReason = "input" | "recovered" | "approval" | "job" | "resume";
 
-/** What a Turn has spent since its budget window opened: the Turn start or the last `continue` allow. */
-export interface BudgetUsed {
+/** Steps, active wall time and tokens: what a Turn may spend, or has spent since its budget window opened. */
+export interface Budget {
   steps: number;
   wallMs: number;
   tokens: number;
 }
+
+/** Who ended an Approval: a human, the clock, or the cancel of its Turn. */
+export type ApprovalSource = "answer" | "timeout" | "cancel";
 
 export interface ApprovalAnswer {
   decision: "allow" | "deny";
@@ -48,9 +51,9 @@ export type ThreadEventData =
   | { type: "turn.resumed"; reason: ResumeReason }
   /** Its `seq` is what `thread.approve` answers; `timeoutAt` is when an unanswered request becomes a deny. */
   | { type: "approval.requested"; kind: "tool"; id: string; tool: string; input: unknown; timeoutAt: number }
-  | { type: "approval.requested"; kind: "continue"; budget: BudgetUsed; timeoutAt: number }
+  | { type: "approval.requested"; kind: "continue"; budget: Budget; timeoutAt: number }
   /** `request` is the seq of the `approval.requested` it answers; `tool` names the asked Tool. */
-  | ({ type: "approval.resolved"; request: number; kind: "tool" | "continue"; tool?: string; source: "answer" | "timeout" | "cancel" } & ApprovalAnswer)
+  | ({ type: "approval.resolved"; request: number; kind: "tool" | "continue"; tool?: string; source: ApprovalSource } & ApprovalAnswer)
   /** A Tool handed call `id` to a Job; the Step waits for the Job's outcome. */
   | { type: "job.started"; id: string; jobId: string }
   | { type: "job.progress"; jobId: string; content: ToolContent[] }
