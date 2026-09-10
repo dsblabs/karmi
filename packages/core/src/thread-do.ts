@@ -792,9 +792,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         ...((profile.providerOptions || spec.model.providerOptions) && { providerOptions: { ...profile.providerOptions, ...spec.model.providerOptions } }),
       };
       const hosts = providerHosts(profile);
-      const fetch = scopedFetch({ ...(hosts && { hosts }), logger });
+      const egress = scopedFetch({ ...(hosts && { hosts }), logger });
       const attribution = { scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn };
-      for await (const event of provider.stream(request, { fetch, signal, attribution, logger })) {
+      for await (const event of provider.stream(request, { fetch: egress, signal, attribution, logger })) {
         // A cancelled Turn has ended; nothing of this stream belongs in the log any more.
         if (signal.aborted) return stepError("The Turn was cancelled.");
         switch (event.type) {

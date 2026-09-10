@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { retry, type Provider, type ProviderCallOptions, type ProviderConfig, type ProviderError, type ProviderEvent, type ProviderRequest } from "@karmi/core";
+import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages";
+import { retry, type Provider, type ProviderCallOptions, type ProviderConfig, type ProviderError, type ProviderEvent } from "@karmi/core";
 import { toProviderError } from "./errors.js";
 import { gatewaySettings } from "./gateway.js";
 import { capabilities } from "./models.js";
@@ -58,7 +59,7 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
   return {
     async *stream(request, call): AsyncIterable<ProviderEvent> {
       const { logger, signal } = call;
-      let events: AsyncIterable<import("@anthropic-ai/sdk/resources/beta/messages/messages").BetaRawMessageStreamEvent>;
+      let events: AsyncIterable<BetaRawMessageStreamEvent>;
       let gateway: { provider: "cloudflare"; id: string } | undefined;
       try {
         const api = await client(request.config, call);
@@ -74,7 +75,7 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
         return;
       }
       try {
-        yield* mapStream(events, { requested: request.model, logger, raw: anthropicOptions(request).raw, gateway });
+        yield* mapStream(events, { logger, raw: anthropicOptions(request).raw, gateway });
       } catch (error) {
         yield { type: "error", error: failure(error) };
       }
@@ -101,5 +102,3 @@ function toResolver(credentials: AnthropicProviderOptions["credentials"]): Crede
   if (typeof credentials === "function") return credentials;
   return (ref) => credentials[ref];
 }
-
-export type { ProviderRequest };

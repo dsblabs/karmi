@@ -5,12 +5,12 @@ import type { BetaMessageDeltaUsage, BetaRawMessageStreamEvent, BetaStopReason, 
 // land as completed `part`s; a server tool waits for its result block so one `part` carries both, byte-exact.
 
 export interface StreamContext {
-  /** The model the request named; a different served model is a fallback hop. */
-  requested: string;
   logger?: Logger | undefined;
   raw?: boolean | undefined;
   gateway?: Usage["gateway"] | undefined;
 }
+
+type Pending = Map<string, { index: number; block: Extract<ContentBlock, { type: "server_tool" }> }>;
 
 type Open =
   | { kind: "text"; text: string }
@@ -34,7 +34,7 @@ const STOP: Record<BetaStopReason, StopReason> = {
 
 export async function* mapStream(events: AsyncIterable<BetaRawMessageStreamEvent>, context: StreamContext): AsyncGenerator<ProviderEvent> {
   const open = new Map<number, Open>();
-  const pending = new Map<string, { index: number; block: Extract<ContentBlock, { type: "server_tool" }> }>();
+  const pending: Pending = new Map();
   let usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let stopReason: StopReason = "end_turn";
   let stopDetails: unknown;
@@ -51,7 +51,6 @@ export async function* mapStream(events: AsyncIterable<BetaRawMessageStreamEvent
       case "message_start": {
         const { message } = event;
         usage = mergeUsage(usage, message.usage);
-        if (message.model !== context.requested) context.logger?.info("provider fallback", { from: context.requested, to: message.model });
         yield { type: "message.start", model: message.model, responseId: message.id };
         break;
       }
@@ -73,11 +72,9 @@ export async function* mapStream(events: AsyncIterable<BetaRawMessageStreamEvent
           case "compaction":
             open.set(event.index, { kind: "compaction", block: block as unknown as Record<string, unknown>, content: block.content ?? "" });
             break;
-          case "fallback":
-            context.logger?.info("provider fallback", { from: block.from.model, to: block.to.model, trigger: block.trigger });
-            open.set(event.index, { kind: "other", block: block as unknown as Record<string, unknown>, json: "" });
-            break;
           default:
+            // The served model is on `message_start`; the hop itself is this block, logged once.
+            if (block.type === "fallback") context.logger?.info("provider fallback", { from: block.from.model, to: block.to.model, trigger: block.trigger });
             open.set(event.index, { kind: "other", block: block as unknown as Record<string, unknown>, json: "" });
         }
         break;
@@ -140,7 +137,7 @@ export async function* mapStream(events: AsyncIterable<BetaRawMessageStreamEvent
   }
 }
 
-function close(current: Open, index: number, pending: Map<string, { index: number; block: Extract<ContentBlock, { type: "server_tool" }> }>): ProviderEvent | undefined {
+function close(current: Open, index: number, pending: Pending): ProviderEvent | undefined {
   switch (current.kind) {
     case "text":
       return { type: "part", index, block: { type: "text", text: current.text } };

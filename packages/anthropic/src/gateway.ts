@@ -1,9 +1,8 @@
-import type { CallAttribution, GatewayConfig } from "@karmi/core";
+import { GATEWAY_HOST, type CallAttribution, type GatewayConfig } from "@karmi/core";
 
 // Cloudflare AI Gateway is configuration, not code: a base URL and `cf-aig-*` headers on the same client.
-// Attribution goes as `cf-aig-metadata`: karmi's four keys plus one Platform slot, inside the gateway's five.
-
-export const GATEWAY_HOST = "gateway.ai.cloudflare.com";
+// Attribution goes as `cf-aig-metadata`: karmi's four keys plus the first Platform entry, inside the gateway's
+// five; karmi's keys win a name clash.
 
 export interface GatewaySettings {
   baseURL: string;

@@ -1,5 +1,5 @@
 import type { ContentBlock, Message, ProviderRequest, ToolDefinition } from "@karmi/core";
-import type { BetaCacheControlEphemeral, BetaContentBlockParam, BetaMessageParam, BetaTextBlockParam, BetaToolChoice, BetaToolResultBlockParam, BetaToolUnion, MessageCountTokensParams, MessageCreateParamsBase } from "@anthropic-ai/sdk/resources/beta/messages/messages";
+import type { BetaCacheControlEphemeral, BetaContentBlockParam, BetaMessageParam, BetaTextBlockParam, BetaTool, BetaToolChoice, BetaToolResultBlockParam, BetaToolUnion, MessageCountTokensParams, MessageCreateParamsBase } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import { DEFAULT_MAX_TOKENS } from "./models.js";
 import { anthropicOptions, type AnthropicOptions } from "./options.js";
 
@@ -84,7 +84,7 @@ function toTools(tools: ToolDefinition[] | undefined, options: AnthropicOptions,
   const out: BetaToolUnion[] = (tools ?? []).map((tool) => ({
     name: tool.name,
     description: tool.description,
-    input_schema: tool.inputSchema as BetaToolUnion extends infer T ? (T extends { input_schema: infer S } ? S : never) : never,
+    input_schema: tool.inputSchema as BetaTool["input_schema"],
     ...(tool.strict && { strict: true }),
   }));
   if (options.serverTools) out.push(...options.serverTools);
@@ -108,7 +108,7 @@ function toMessages(messages: Message[], cache: BetaCacheControlEphemeral | unde
   const push = (role: BetaMessageParam["role"], content: BetaContentBlockParam[]) => {
     if (content.length === 0) return;
     const last = out[out.length - 1];
-    if (last && last.role === role && role !== "system" && Array.isArray(last.content)) last.content.push(...content);
+    if (last && last.role === role && Array.isArray(last.content)) last.content.push(...content);
     else out.push({ role, content });
   };
   for (const message of messages) {

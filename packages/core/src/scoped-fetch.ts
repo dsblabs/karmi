@@ -6,6 +6,9 @@ import type { ProviderConfig } from "./scope-config.js";
 // It rejects private addresses and hosts outside its allow-list with a synthetic 403, forces manual
 // redirects so a 3xx can never re-route around the check, and stamps nothing outbound.
 
+/** Where every Cloudflare AI Gateway lives; the adapter builds its base URL on it. */
+export const GATEWAY_HOST = "gateway.ai.cloudflare.com";
+
 export interface EgressPolicy {
   /** Hostnames or `*.` globs; absent means any public host. */
   hosts?: string[];
@@ -28,7 +31,7 @@ export function scopedFetch(policy: EgressPolicy = {}): typeof fetch {
 
 /** Which hosts a Provider profile may reach: its gateway, its `baseUrl`, or (absent both) any public host. */
 export function providerHosts(profile: ProviderConfig): string[] | undefined {
-  if (profile.gateway) return ["gateway.ai.cloudflare.com"];
+  if (profile.gateway) return [GATEWAY_HOST];
   if (profile.baseUrl) return [new URL(profile.baseUrl).hostname];
   return undefined;
 }

@@ -34,7 +34,7 @@ export { createKarmi, type Karmi, type KarmiOptions } from "./karmi.js";
 export type { Deployment } from "./deployment.js";
 export type { Provider, ProviderRequest, ProviderEvent, ProviderError, ProviderErrorCode, ProviderCallOptions, CallAttribution, ModelCapabilities, Message, ContentBlock, StopReason, Usage, UsageCost, ToolDefinition } from "./provider.js";
 export { prepareMessages, normalizeToolCallId, type ReplayTarget, type ReplayResult } from "./replay.js";
-export { scopedFetch, providerHosts, isBlockedUrl, type EgressPolicy } from "./scoped-fetch.js";
+export { scopedFetch, providerHosts, isBlockedUrl, GATEWAY_HOST, type EgressPolicy } from "./scoped-fetch.js";
 export { retry, type RetryOptions } from "./retry.js";
 export { resolveBindings, type KarmiBindings, type BindingsResolver } from "./bindings.js";
 export { assertCompatibilityBaseline, COMPATIBILITY_DATE_FLOOR } from "./compat.js";

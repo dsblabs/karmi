@@ -17,13 +17,29 @@ export function toProviderError(error: unknown): ProviderError {
 
 const RETRYABLE: ReadonlySet<ProviderErrorCode> = new Set(["rate_limit", "unavailable", "network"]);
 
+// Anthropic's own error types; a mid-stream `error` event carries one of these and no HTTP status.
+const BY_TYPE: Record<string, ProviderErrorCode> = {
+  authentication_error: "auth",
+  permission_error: "auth",
+  billing_error: "quota",
+  rate_limit_error: "rate_limit",
+  overloaded_error: "unavailable",
+  api_error: "unavailable",
+  timeout_error: "unavailable",
+  not_found_error: "invalid_request",
+  request_too_large: "invalid_request",
+};
+
 function classify(status: number | undefined, type: string | undefined, code: string | undefined, message: string): ProviderErrorCode {
   if (code?.startsWith("egress.")) return "invalid_request";
+  if (/context window|prompt is too long|too many tokens/i.test(message)) return "context_window_exceeded";
+  if (type && BY_TYPE[type]) return BY_TYPE[type];
+  if (type === "invalid_request_error") return "invalid_request";
   switch (status) {
     case 400:
     case 413:
     case 422:
-      return /context window|prompt is too long|too many tokens/i.test(message) ? "context_window_exceeded" : type === "billing_error" ? "quota" : "invalid_request";
+      return "invalid_request";
     case 401:
     case 403:
       return "auth";

@@ -11,6 +11,7 @@ import thinking from "./fixtures/thinking.sse?raw";
 import toolSearch from "./fixtures/tool-search.sse?raw";
 import toolUse from "./fixtures/tool-use.sse?raw";
 import truncated from "./fixtures/truncated.sse?raw";
+import streamError from "./fixtures/stream-error.sse?raw";
 import { collect, request, serve } from "./helpers.js";
 
 const provider = anthropic({ apiKey: "sk-test" });
@@ -87,10 +88,7 @@ describe("stream mapping", () => {
     const events = await collect(provider, request(), { fetch: serve({ sse: fallback }).fetch, logger });
     expect(events[0]).toEqual({ type: "message.start", model: "claude-haiku-4-5", responseId: "msg_01" });
     expect(parts(events)[0]).toEqual({ type: "part", index: 0, block: { type: "provider", raw: { type: "fallback", from: { model: "claude-sonnet-5" }, to: { model: "claude-haiku-4-5" }, trigger: { type: "refusal", stop_details: { type: "refusal", reason: "classifier" } } } } });
-    expect(hops).toEqual([
-      ["provider fallback", { from: "claude-sonnet-5", to: "claude-haiku-4-5" }],
-      ["provider fallback", { from: "claude-sonnet-5", to: "claude-haiku-4-5", trigger: { type: "refusal", stop_details: { type: "refusal", reason: "classifier" } } }],
-    ]);
+    expect(hops).toEqual([["provider fallback", { from: "claude-sonnet-5", to: "claude-haiku-4-5", trigger: { type: "refusal", stop_details: { type: "refusal", reason: "classifier" } } }]]);
   });
 
   it("keeps MCP connector blocks as provider parts, with the call's streamed input filled in", async () => {
@@ -110,6 +108,12 @@ describe("stream mapping", () => {
   it("ends a stream cut before message_stop with a retryable network error", async () => {
     const events = await collect(provider, request(), serve({ sse: truncated }));
     expect(events.at(-1)).toEqual({ type: "error", error: { code: "network", message: "The stream ended before message_stop.", retryable: true } });
+  });
+
+  it("classifies a mid-stream error event by its Anthropic type, keeping what streamed before it", async () => {
+    const events = await collect(provider, request(), serve({ sse: streamError }));
+    expect(parts(events)).toEqual([{ type: "part", index: 0, block: { type: "text", text: "Partial" } }]);
+    expect(events.at(-1)).toMatchObject({ type: "error", error: { code: "unavailable", message: "Overloaded", retryable: true } });
   });
 
   it("passes every SSE event through as raw when asked", async () => {
