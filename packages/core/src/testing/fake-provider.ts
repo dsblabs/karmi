@@ -1,5 +1,5 @@
 import { KarmiError } from "../errors.js";
-import type { ContentBlock, ModelCapabilities, Provider, ProviderError, ProviderEvent, ProviderRequest, StopReason, Usage } from "../provider.js";
+import type { ContentBlock, ModelCapabilities, Provider, ProviderCallOptions, ProviderError, ProviderEvent, ProviderRequest, StopReason, Usage } from "../provider.js";
 
 // A scripted Provider: a real implementation of the seam whose replies a test writes and whose
 // requests a test reads back. Registered under an ordinary profile, so Agent Specs stay unchanged.
@@ -20,6 +20,8 @@ export interface ReplyContext {
   request: ProviderRequest;
   /** 0-based count of calls this provider has served. */
   index: number;
+  /** What the Harness handed the call: the Scope's `fetch`, the Turn's signal, attribution and Logger. */
+  options: ProviderCallOptions;
 }
 
 export type ReplyScript = (ctx: ReplyContext) => Reply | Promise<Reply>;
@@ -69,10 +71,11 @@ export function fakeProvider(script: ReplyScript | Reply[], options: FakeProvide
       next = toScript(replacement);
       requests.length = 0;
     },
-    async *stream(request, { signal }) {
+    async *stream(request, options) {
+      const { signal } = options;
       const index = requests.length;
       requests.push(structuredClone(request));
-      const events = toEvents(await next({ request, index }), request.model);
+      const events = toEvents(await next({ request, index, options }), request.model);
       for (const event of events) {
         if (signal.aborted) {
           yield { type: "error", error: { code: "aborted", message: "aborted", retryable: false } };

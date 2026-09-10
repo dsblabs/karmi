@@ -196,6 +196,10 @@ _Avoid_: permission prompt, confirmation, consent (for the pause), HITL request
 The `@karmi/core/testing` export: `createTestKarmi()` plus the doubles it composes — `fakeProvider` (a scripted Provider profile whose requests are recorded), `Clock`, `LocalProcessSandbox`, the brute-force `VectorStore`, an in-memory `SecretsProvider`, `fakeMcpServer` — and the event-log matchers and Provider record/replay. Every double is a real implementation of a real seam; core has no test-only behaviour. Tests run the real Thread DO in workerd under `@cloudflare/vitest-plugin`; there is no Node-only harness.
 _Avoid_: mocks (for the doubles), test harness, test utils
 
+**Scoped fetch**:
+The one egress seam: a `fetch` built per Turn from the resolved Scope config and handed to every outbound caller — Provider adapters, MCP transports, OAuth discovery. It rejects private and reserved addresses (vendored SSRF guard), hosts outside its allow-list (derived from the Provider profile's gateway or `baseUrl`, or the registered MCP servers) with a synthetic 403, forces manual redirects, and stamps nothing outbound. Gateway headers belong to the adapter, not to it.
+_Avoid_: outbound worker, proxy, egress hook (for this), fetch wrapper (as the concept)
+
 **Clock**:
 The single injectable time source `@karmi/core` reads for everything time-driven — watchdog, park timeouts, Approval timeouts, Schedules and cron. The interface is `Clock.now()` (epoch milliseconds), injected with `createKarmi({ clock })` and defaulting to wall time. In the Test kit, `clock.advance(milliseconds | "24h")` moves it and fires due Durable Object alarms, so recovery, parking and scheduling are testable without waiting.
 _Avoid_: timer, fake timers, `Date.now()`

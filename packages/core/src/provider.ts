@@ -1,4 +1,4 @@
-import type { MediaRef } from "./context.js";
+import type { Logger, MediaRef } from "./context.js";
 import type { JsonSchema } from "./schema.js";
 import type { ProviderConfig } from "./scope-config.js";
 
@@ -114,6 +114,16 @@ export interface ProviderCallOptions {
   /** The per-Scope `scopedFetch`; an adapter never reaches for the global. */
   fetch: typeof fetch;
   signal: AbortSignal;
+  /** Who the call is for: what an adapter may stamp on its own gateway, never on a third party. */
+  attribution?: CallAttribution;
+  logger?: Logger;
+}
+
+export interface CallAttribution {
+  scope: string;
+  agent: string;
+  thread: string;
+  turn: number;
 }
 
 /** A model-provider adapter, registered by name in `createKarmi({ providers })` and chosen by a Provider profile. */

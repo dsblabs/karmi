@@ -23,6 +23,7 @@ const GatewaySchema = z.strictObject({
   credential: z.optional(credentialRef),
   /** The provider key is stored in the gateway, so the profile carries none. */
   byok: z.optional(z.boolean()),
+  /** `cf-aig-metadata` entries beside karmi's own four (scope, agent, thread, turn); an adapter sends the first one. */
   metadata: z.optional(z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).check(z.refine((metadata) => Object.keys(metadata).length <= 5, "at most 5 entries"))),
   cache: z.optional(z.strictObject({ ttl: z.optional(positiveInt), skip: z.optional(z.boolean()), key: z.optional(z.string()) })),
   retry: z.optional(z.strictObject({ maxAttempts: z.optional(z.int().check(z.minimum(1), z.maximum(5))), delayMs: z.optional(z.int().check(z.minimum(0), z.maximum(5000))), backoff: z.optional(z.enum(["constant", "linear", "exponential"])) })),

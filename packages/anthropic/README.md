@@ -1,0 +1,23 @@
+# @karmi/anthropic
+
+The Anthropic Provider for karmi: the full Messages API surface on `@anthropic-ai/sdk`, reached directly or through Cloudflare AI Gateway by profile configuration alone.
+
+```ts
+import { createKarmi } from "@karmi/core";
+import { anthropic } from "@karmi/anthropic";
+
+export const karmi = createKarmi({
+  catalogue,
+  providers: { anthropic: anthropic({ apiKey: env.ANTHROPIC_API_KEY }) },
+  defaults: { providers: { default: { adapter: "anthropic" } } },
+});
+```
+
+A Provider profile decides how the adapter reaches Anthropic:
+
+- **Direct**: `credential: "scope:<name>"` (resolved through the `credentials` option) or the adapter's `apiKey`.
+- **AI Gateway**: `gateway: { kind: "cloudflare", accountId, gatewayId, credential, byok: true }` sends `cf-aig-authorization`, stamps `cf-aig-metadata { scope, agent, thread, turn }` plus one Platform entry, and records `cf-aig-log-id` on the call's Usage. With `byok` no provider auth header leaves the Worker.
+
+What streams back is karmi's own vocabulary: text, adaptive thinking with signatures, tool calls, server-tool calls joined with their byte-exact results, compaction and fallback blocks, `stop_details`, and cumulative usage including the 1h cache split. `providerOptions.anthropic` forwards `thinking`, `effort`, `fallbacks`, `contextManagement`, `taskBudget`, `serverTools`, `mcpServers`, `cache` and `betas`; the betas each feature needs are added for you.
+
+Every request goes through the `fetch` karmi injects, so a Scope's egress policy applies before the SDK sees a byte.

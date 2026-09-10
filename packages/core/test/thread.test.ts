@@ -30,6 +30,17 @@ describe("one text Turn", () => {
   });
 });
 
+describe("Provider call options", () => {
+  it("hands the adapter the Scope's scopedFetch, the Turn's attribution and a Logger", async () => {
+    provider.script(async ({ options }) => {
+      const blocked = await options.fetch("http://169.254.169.254/latest/meta-data");
+      return JSON.stringify({ attribution: options.attribution, logger: typeof options.logger?.warn, blocked: blocked.status, aborted: options.signal.aborted });
+    });
+    const events = await fresh().send(message("probe"));
+    expect(JSON.parse(lastMessage(events)!)).toEqual({ attribution: { scope: "test", agent: "concierge", thread: `t${n}`, turn: 1 }, logger: "function", blocked: 403, aborted: false });
+  });
+});
+
 describe("Turn input", () => {
   it("echoes channelRef on every event of the Turn", async () => {
     provider.script(["Hi"]);
