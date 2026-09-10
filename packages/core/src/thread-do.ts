@@ -15,6 +15,7 @@ import { evaluatePrompt } from "./prompt.js";
 import type { ContentBlock, ProviderError, StopReason, Usage } from "./provider.js";
 import { prepareMessages } from "./replay.js";
 import { ScheduledDurableObject, type ScheduledJob } from "./scheduler.js";
+import { providerHosts, scopedFetch } from "./scoped-fetch.js";
 import type { ScopeConfigDurableObject } from "./scope-config-do.js";
 import type { Ceilings, ProviderConfig } from "./scope-config.js";
 import type { ApprovalAnswer, ApprovalSource, Budget, Granularity, PauseReason, ResumeReason, ThreadEvent, ThreadEventData, ThreadEventType, TurnInput } from "./thread-events.js";
@@ -775,6 +776,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const [, native] = splitModelId(model);
     const parts: ContentBlock[] = [];
     const signal = this.turnAbort.signal;
+    const logger = this.logger(row);
     try {
       const tools = toolDefinitions(available);
       const offered = tools.map((tool) => available.get(tool.name)!.tool);
@@ -789,7 +791,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         ...(spec.model.params && { params: spec.model.params }),
         ...((profile.providerOptions || spec.model.providerOptions) && { providerOptions: { ...profile.providerOptions, ...spec.model.providerOptions } }),
       };
-      for await (const event of provider.stream(request, { fetch, signal })) {
+      const hosts = providerHosts(profile);
+      const egress = scopedFetch({ ...(hosts && { hosts }), logger });
+      const attribution = { scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn };
+      for await (const event of provider.stream(request, { fetch: egress, signal, attribution, logger })) {
         // A cancelled Turn has ended; nothing of this stream belongs in the log any more.
         if (signal.aborted) return stepError("The Turn was cancelled.");
         switch (event.type) {

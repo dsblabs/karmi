@@ -1,0 +1,7 @@
+// The adapter's test Worker: the published baseline, no bindings beyond the live test's key.
+{
+  "name": "karmi-anthropic-test",
+  "main": "./worker.ts",
+  "compatibility_date": "2026-08-04",
+  "compatibility_flags": ["global_fetch_strictly_public"]
+}
