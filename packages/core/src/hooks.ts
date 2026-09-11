@@ -1,6 +1,6 @@
-import type { AgentSpec } from "./agent.js";
-import type { Catalogue } from "./catalogue.js";
-import type { Hook, HookPoint } from "./hook.js";
+import type { AgentSpec } from "./agent";
+import type { Catalogue } from "./catalogue";
+import type { Hook, HookPoint } from "./hook";
 
 /** The Hooks an Agent attached at one point, in Spec order; the Spec was validated, so every name resolves. */
 export function hooksAt<P extends HookPoint>(spec: AgentSpec, catalogue: Catalogue, point: P): Hook<P>[] {

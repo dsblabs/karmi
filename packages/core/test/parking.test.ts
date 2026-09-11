@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { AgentSpec, ThreadEvent } from "../src/index.js";
-import { lastMessage, reply } from "../src/testing/index.js";
-import { clock, gate, karmi, provider, scope, trace, untilOpen } from "./worker.js";
+import type { AgentSpec, ThreadEvent } from "../src/index";
+import { lastMessage, reply } from "../src/testing/index";
+import { clock, gate, karmi, provider, scope, trace, untilOpen } from "./worker";
 
 // Storage is shared across the file, so each test uses a Thread of its own; every Thread is cancelled
 // afterwards so a park left behind cannot wake on a later test's clock and eat its scripted replies.

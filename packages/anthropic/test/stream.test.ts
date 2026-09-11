@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { anthropic } from "../src/index.js";
+import { anthropic } from "../src/index";
 import compaction from "./fixtures/compaction.sse?raw";
 import contextWindow from "./fixtures/context-window.sse?raw";
 import fallback from "./fixtures/fallback.sse?raw";
@@ -12,7 +12,7 @@ import toolSearch from "./fixtures/tool-search.sse?raw";
 import toolUse from "./fixtures/tool-use.sse?raw";
 import truncated from "./fixtures/truncated.sse?raw";
 import streamError from "./fixtures/stream-error.sse?raw";
-import { collect, request, serve } from "./helpers.js";
+import { collect, request, serve } from "./helpers";
 
 const provider = anthropic({ apiKey: "sk-test" });
 const parts = (events: Awaited<ReturnType<typeof collect>>) =>

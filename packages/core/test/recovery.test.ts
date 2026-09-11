@@ -1,10 +1,10 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject } from "cloudflare:test";
 import { expect, it } from "vitest";
-import { reply } from "../src/testing/index.js";
-import type { KarmiBindings } from "../src/bindings.js";
-import { keys } from "../src/keys.js";
-import { clock, karmi, provider, recovery, scope } from "./worker.js";
+import { reply } from "../src/testing/index";
+import type { KarmiBindings } from "../src/bindings";
+import { keys } from "../src/keys";
+import { clock, karmi, provider, recovery, scope } from "./worker";
 
 it("recovers an evicted model Step on the clock's watchdog without rotating models", async () => {
   provider.script(({ index }) => (index === 0 ? new Promise<string>(() => {}) : "Recovered"));

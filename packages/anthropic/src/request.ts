@@ -13,8 +13,8 @@ import type {
   MessageCountTokensParams,
   MessageCreateParamsBase,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
-import { DEFAULT_MAX_TOKENS } from "./models.js";
-import { anthropicOptions, type AnthropicOptions } from "./options.js";
+import { DEFAULT_MAX_TOKENS } from "./models";
+import { anthropicOptions, type AnthropicOptions } from "./options";
 
 // karmi's plain-JSON request → the Messages API body. Reserved block families (`compaction`, server-tool
 // results, `provider`) go back on the wire byte-exact; the replay rules already decided they belong here.

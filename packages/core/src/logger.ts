@@ -1,4 +1,4 @@
-import type { Logger } from "./context.js";
+import type { Logger } from "./context";
 
 /** The default Logger: structured lines on the Worker console, each carrying the fields it was opened with. */
 export function consoleLogger(fields: Record<string, unknown>): Logger {

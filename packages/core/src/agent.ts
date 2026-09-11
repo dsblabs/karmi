@@ -1,11 +1,11 @@
 import * as z from "zod/mini";
-import { AgentSpecSchema, PROVIDER_TOOL_NAMES } from "./agent-spec.js";
-import { KarmiError } from "./errors.js";
-import type { HookPoint } from "./hook.js";
-import { deepFreeze } from "./names.js";
-import type { SkillInvoker } from "./skill.js";
-import type { ToolAnnotations } from "./tool.js";
-import { firstIssue, pointer } from "./validate.js";
+import { AgentSpecSchema, PROVIDER_TOOL_NAMES } from "./agent-spec";
+import { KarmiError } from "./errors";
+import type { HookPoint } from "./hook";
+import { deepFreeze } from "./names";
+import type { SkillInvoker } from "./skill";
+import type { ToolAnnotations } from "./tool";
+import { firstIssue, pointer } from "./validate";
 
 /** One item in an Agent Spec's ordered instructions. */
 export type PromptEntry =

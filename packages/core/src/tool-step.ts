@@ -1,15 +1,15 @@
 import * as z from "zod/mini";
-import type { AgentSpec } from "./agent.js";
-import type { Catalogue } from "./catalogue.js";
-import type { Logger, MediaRef, ScopeId, UserId } from "./context.js";
-import type { HookContextBase, HookContexts, HookToolCall } from "./hook.js";
-import { errorMessage } from "./errors.js";
-import { hooksAt } from "./hooks.js";
-import { keys } from "./keys.js";
-import type { Loaded } from "./loading.js";
-import { isPlatformFailure } from "./platform-failure.js";
-import { renderTruncated, truncateOutput } from "./spill.js";
-import type { ApprovalAnswer, ApprovalSource, PauseReason, ThreadEvent, ThreadEventData } from "./thread-events.js";
+import type { AgentSpec } from "./agent";
+import type { Catalogue } from "./catalogue";
+import type { Logger, MediaRef, ScopeId, UserId } from "./context";
+import type { HookContextBase, HookContexts, HookToolCall } from "./hook";
+import { errorMessage } from "./errors";
+import { hooksAt } from "./hooks";
+import { keys } from "./keys";
+import type { Loaded } from "./loading";
+import { isPlatformFailure } from "./platform-failure";
+import { renderTruncated, truncateOutput } from "./spill";
+import type { ApprovalAnswer, ApprovalSource, PauseReason, ThreadEvent, ThreadEventData } from "./thread-events";
 import {
   DEFAULT_ANNOTATIONS,
   type Connection,
@@ -19,8 +19,8 @@ import {
   type ToolContext,
   type ToolOutcome,
   type ToolResult,
-} from "./tool.js";
-import { inContext, outputLimits, type AvailableTool } from "./tools.js";
+} from "./tool";
+import { inContext, outputLimits, type AvailableTool } from "./tools";
 
 // One tool Step: the model's tool-call batch run under the Harness gate. Read-only Tools run in
 // parallel, anything else alone; every call is logged before it runs and its result as soon as it

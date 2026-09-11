@@ -1,4 +1,4 @@
-import type { MediaRef } from "./context.js";
+import type { MediaRef } from "./context";
 
 // Spill: a Tool result over the Agent's `context.toolOutput` limit is stored whole and shown to the
 // model as head + tail + a marker naming the ref `read_output` re-reads it by.

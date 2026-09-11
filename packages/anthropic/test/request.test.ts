@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Message } from "@karmi/core";
-import { anthropic } from "../src/index.js";
+import { anthropic } from "../src/index";
 import text from "./fixtures/text.sse?raw";
-import { collect, request, serve } from "./helpers.js";
+import { collect, request, serve } from "./helpers";
 
 const provider = anthropic({ apiKey: "sk-test" });
 

@@ -1,14 +1,14 @@
-import { ScheduledDurableObject } from "./scheduler.js";
-import type { NormalizedAgentSpec } from "./agent-spec.js";
-import type { AgentSpec } from "./agent.js";
-import type { KarmiBindings } from "./bindings.js";
-import type { ScopeId } from "./context.js";
-import type { Deployment } from "./deployment.js";
-import { KarmiError } from "./errors.js";
-import { fail, ok, type Outcome } from "./outcome.js";
-import { parseScopeConfig, resolveScopeConfig, type ScopeConfigDocument } from "./scope-config.js";
-import { encodeKey, type ThreadSummary } from "./thread.js";
-import { validateAgentSpec, type ValidationResult } from "./validate.js";
+import { ScheduledDurableObject } from "./scheduler";
+import type { NormalizedAgentSpec } from "./agent-spec";
+import type { AgentSpec } from "./agent";
+import type { KarmiBindings } from "./bindings";
+import type { ScopeId } from "./context";
+import type { Deployment } from "./deployment";
+import { KarmiError } from "./errors";
+import { fail, ok, type Outcome } from "./outcome";
+import { parseScopeConfig, resolveScopeConfig, type ScopeConfigDocument } from "./scope-config";
+import { encodeKey, type ThreadSummary } from "./thread";
+import { validateAgentSpec, type ValidationResult } from "./validate";
 
 // One Durable Object per Scope, named `{scope}/config` (keys.ts). Its SQLite holds the config revisions, the
 // Agent Spec versions and the lifecycle state; the Scope handle (scope.ts) is the only caller.
@@ -83,7 +83,7 @@ export interface TurnSnapshotSource {
   config: ScopeConfigDocument;
 }
 
-export type { Outcome } from "./outcome.js";
+export type { Outcome } from "./outcome";
 
 // The one decode point for each JSON column this Durable Object writes; both are validated before they are stored.
 const decodeConfig = (json: string): ScopeConfigDocument => JSON.parse(json);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { KarmiError } from "../src/index.js";
-import { keys } from "../src/keys.js";
+import { KarmiError } from "../src/index";
+import { keys } from "../src/keys";
 
 // A bug here is a cross-Scope bug (ADR-0001), so the keys module gets tests of its own.
 describe("keys", () => {

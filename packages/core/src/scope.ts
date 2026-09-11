@@ -1,8 +1,8 @@
-import type { AgentSpec } from "./agent.js";
-import type { KarmiBindings } from "./bindings.js";
-import type { ScopeId } from "./context.js";
-import { keys } from "./keys.js";
-import { remote, unwrap as call } from "./outcome.js";
+import type { AgentSpec } from "./agent";
+import type { KarmiBindings } from "./bindings";
+import type { ScopeId } from "./context";
+import { keys } from "./keys";
+import { remote, unwrap as call } from "./outcome";
 import type {
   AgentRecord,
   AgentSummary,
@@ -11,10 +11,10 @@ import type {
   DestroyStatus,
   ScopeConfigDurableObject,
   ScopeStatus,
-} from "./scope-config-do.js";
-import type { ScopeConfigDocument } from "./scope-config.js";
-import { openThread, type Thread, type ThreadIdentity, type ThreadSummary } from "./thread.js";
-import type { ValidationResult } from "./validate.js";
+} from "./scope-config-do";
+import type { ScopeConfigDocument } from "./scope-config";
+import { openThread, type Thread, type ThreadIdentity, type ThreadSummary } from "./thread";
+import type { ValidationResult } from "./validate";
 
 export type {
   AgentRecord,
@@ -24,7 +24,7 @@ export type {
   DestroyStatus,
   ScopeState,
   ScopeStatus,
-} from "./scope-config-do.js";
+} from "./scope-config-do";
 
 /** The explicit handle every entry point takes; there is no ambient Scope (ADR-0001). */
 export interface Scope {

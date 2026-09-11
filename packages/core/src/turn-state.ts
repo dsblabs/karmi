@@ -1,6 +1,6 @@
-import type { ContentBlock, StopReason } from "./provider.js";
-import type { Budget, CompactionTrigger, PauseReason, ThreadEventData } from "./thread-events.js";
-import type { CallApproval, JobOutcome, PriorCalls, ToolCall } from "./tool-step.js";
+import type { ContentBlock, StopReason } from "./provider";
+import type { Budget, CompactionTrigger, PauseReason, ThreadEventData } from "./thread-events";
+import type { CallApproval, JobOutcome, PriorCalls, ToolCall } from "./tool-step";
 
 // The Turn as its event log tells it, folded without any I/O so the Thread DO only reads rows and a test
 // only needs events. Results, started calls, asks and Jobs are kept across re-runs of the same tool Step

@@ -1,4 +1,4 @@
-import type { ThreadEvent, ThreadEventType } from "../thread-events.js";
+import type { ThreadEvent, ThreadEventType } from "../thread-events";
 
 type MatcherResult = { pass: boolean; message: () => string };
 

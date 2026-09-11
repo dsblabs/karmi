@@ -1,11 +1,11 @@
 import * as z from "zod/mini";
-import type { FragmentContext } from "./fragment.js";
-import { keys } from "./keys.js";
-import type { Skill } from "./skill.js";
-import { searchTools, SEARCH_LIMIT } from "./loading.js";
-import type { ThreadEventData } from "./thread-events.js";
-import type { Tool, ToolContent, ToolResult } from "./tool.js";
-import { searchable, type ToolSet } from "./tools.js";
+import type { FragmentContext } from "./fragment";
+import { keys } from "./keys";
+import type { Skill } from "./skill";
+import { searchTools, SEARCH_LIMIT } from "./loading";
+import type { ThreadEventData } from "./thread-events";
+import type { Tool, ToolContent, ToolResult } from "./tool";
+import { searchable, type ToolSet } from "./tools";
 
 // Framework built-in Tools: the same shape as a Catalogue Tool, minted by the Harness rather than a
 // developer, so they bypass the name check that reserves their names.

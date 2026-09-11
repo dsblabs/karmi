@@ -1,4 +1,4 @@
-import { KarmiError } from "./errors.js";
+import { KarmiError } from "./errors";
 
 export const COMPATIBILITY_DATE_FLOOR = "2026-08-04";
 

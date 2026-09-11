@@ -1,4 +1,4 @@
-import type { ContentBlock, Message } from "./provider.js";
+import type { ContentBlock, Message } from "./provider";
 
 // Cross-provider replay rules, ported from pi-ai's transformMessages and run by the Harness before any
 // adapter sees the transcript. Every rule is keyed on the provider/model each assistant message records.

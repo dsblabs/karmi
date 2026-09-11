@@ -18,7 +18,7 @@ import {
   type Issue,
   type IssueCode,
   type ScopeContext,
-} from "../src/index.js";
+} from "../src/index";
 
 const weather = defineTool({
   name: "weather",

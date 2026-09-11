@@ -1,8 +1,8 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { scopedFetch } from "@karmi/core";
-import { anthropic } from "../src/index.js";
-import { collect, request } from "./helpers.js";
+import { anthropic } from "../src/index";
+import { collect, request } from "./helpers";
 
 // Opt in with ANTHROPIC_API_KEY=... pnpm test; one small real call through scopedFetch.
 describe.skipIf(!env.ANTHROPIC_API_KEY)("live Anthropic", () => {

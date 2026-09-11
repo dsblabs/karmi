@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  normalizeToolCallId,
-  prepareMessages,
-  type ContentBlock,
-  type Message,
-  type StopReason,
-} from "../src/index.js";
+import { normalizeToolCallId, prepareMessages, type ContentBlock, type Message, type StopReason } from "../src/index";
 
 const claude = { provider: "anthropic", model: "claude-sonnet-5" };
 const gpt = { provider: "openai", model: "gpt-5" };

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { assembleCatalogue, defineFragment, defineTool, type AgentSpec, type FragmentContext } from "../src/index.js";
-import { deferredIndex, evaluatePrompt, skillIndex } from "../src/prompt.js";
+import { assembleCatalogue, defineFragment, defineTool, type AgentSpec, type FragmentContext } from "../src/index";
+import { deferredIndex, evaluatePrompt, skillIndex } from "../src/prompt";
 
 const greeting = defineFragment({
   name: "greeting",

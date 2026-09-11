@@ -1,8 +1,8 @@
 import * as z from "zod/mini";
-import { HOOK_POINTS } from "./hook.js";
-import { IDENTIFIER } from "./names.js";
-import { toJsonSchema, type JsonSchema } from "./schema.js";
-import { SKILL_INVOKERS } from "./skill.js";
+import { HOOK_POINTS } from "./hook";
+import { IDENTIFIER } from "./names";
+import { toJsonSchema, type JsonSchema } from "./schema";
+import { SKILL_INVOKERS } from "./skill";
 
 // Shape layer of Agent Spec validation: what a Spec looks like before any Catalogue or Scope is consulted.
 

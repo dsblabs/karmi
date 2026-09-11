@@ -1,14 +1,14 @@
 import * as z from "zod/mini";
-import { AGENT_SPEC_DEFAULTS } from "./agent-spec.js";
-import type { AgentSpec, PolicyRule } from "./agent.js";
-import type { Catalogue } from "./catalogue.js";
-import { deferAll, type Loaded } from "./loading.js";
-import { evaluatePolicy, type PolicyEffect } from "./policy.js";
-import type { ToolDefinition } from "./provider.js";
-import { toJsonSchema } from "./schema.js";
-import type { Skill, SkillInvoker } from "./skill.js";
-import type { OutputLimits } from "./spill.js";
-import type { Tool } from "./tool.js";
+import { AGENT_SPEC_DEFAULTS } from "./agent-spec";
+import type { AgentSpec, PolicyRule } from "./agent";
+import type { Catalogue } from "./catalogue";
+import { deferAll, type Loaded } from "./loading";
+import { evaluatePolicy, type PolicyEffect } from "./policy";
+import type { ToolDefinition } from "./provider";
+import { toJsonSchema } from "./schema";
+import type { Skill, SkillInvoker } from "./skill";
+import type { OutputLimits } from "./spill";
+import type { Tool } from "./tool";
 
 // The Tool set of one Step: the Spec's references in order, every Skill's Tools, then the Framework
 // built-ins, each with its parsed settings and its Policy effect. Denied Tools are never shown to the

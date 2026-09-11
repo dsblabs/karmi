@@ -1,7 +1,7 @@
-import type { Logger, ScopeId, ThreadRef, UserId } from "./context.js";
-import { assertName } from "./names.js";
-import type { ToolAnnotations, ToolResult } from "./tool.js";
-import type { CompactionTrigger, ThreadEventData, TurnInput } from "./thread-events.js";
+import type { Logger, ScopeId, ThreadRef, UserId } from "./context";
+import { assertName } from "./names";
+import type { ToolAnnotations, ToolResult } from "./tool";
+import type { CompactionTrigger, ThreadEventData, TurnInput } from "./thread-events";
 
 export const HOOK_POINTS = [
   "before-turn",

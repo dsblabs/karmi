@@ -1,6 +1,6 @@
-import type { PolicyRule } from "./agent.js";
-import { matchGlob } from "./glob.js";
-import type { ToolAnnotations } from "./tool.js";
+import type { PolicyRule } from "./agent";
+import { matchGlob } from "./glob";
+import type { ToolAnnotations } from "./tool";
 
 // Permission Policy evaluation: ordered rules, first match wins, no match means ask. The rule list a
 // Turn evaluates is Scope rules, then Deployment rules, then the Spec's own (resolveScopeConfig

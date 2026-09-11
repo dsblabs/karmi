@@ -1,6 +1,6 @@
-import { summaryMessages } from "./compaction.js";
-import type { ContentBlock, Message } from "./provider.js";
-import type { ThreadEvent, TurnInput } from "./thread-events.js";
+import { summaryMessages } from "./compaction";
+import type { ContentBlock, Message } from "./provider";
+import type { ThreadEvent, TurnInput } from "./thread-events";
 
 // The transcript is derived from the event log, never stored: every Turn input is a user message,
 // every completed model Step an assistant message, every completed tool Step its results in the

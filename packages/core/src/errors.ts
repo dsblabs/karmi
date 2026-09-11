@@ -1,4 +1,4 @@
-import type { ValidationResult } from "./validate.js";
+import type { ValidationResult } from "./validate";
 
 /** Every code karmi throws; a new failure adds its code here first, as `area.camelCase`. */
 export type KarmiErrorCode =

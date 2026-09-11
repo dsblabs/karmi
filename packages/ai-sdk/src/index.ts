@@ -1,9 +1,9 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import type { Provider, ProviderCallOptions, ProviderConfig, ModelCapabilities } from "@karmi/core";
-import { mapProviderOptions } from "./options.js";
-import { buildRequest } from "./request.js";
-import { mapStream } from "./stream.js";
-import { toProviderError } from "./errors.js";
+import { mapProviderOptions } from "./options";
+import { buildRequest } from "./request";
+import { mapStream } from "./stream";
+import { toProviderError } from "./errors";
 
 export interface ModelFactoryContext extends ProviderCallOptions {
   modelId: string;

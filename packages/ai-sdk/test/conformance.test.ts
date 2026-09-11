@@ -12,7 +12,7 @@ import { createWorkersAI } from "workers-ai-provider";
 import { createAiGateway } from "ai-gateway-provider";
 import { createOpenAI as gatewayOpenAI } from "ai-gateway-provider/providers/openai";
 import type { ProviderEvent } from "@karmi/core";
-import { aiSdk, type ModelFactory } from "../src/index.js";
+import { aiSdk, type ModelFactory } from "../src/index";
 import openai from "./fixtures/openai.sse?raw";
 import google from "./fixtures/google.sse?raw";
 import router from "./fixtures/openrouter.sse?raw";

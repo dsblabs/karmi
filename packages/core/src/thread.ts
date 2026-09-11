@@ -1,13 +1,13 @@
-import type { KarmiBindings } from "./bindings.js";
-import type { ScopeId, UserId } from "./context.js";
-import { KarmiError } from "./errors.js";
-import { keys } from "./keys.js";
-import { assertIdentifier } from "./names.js";
-import { remote, type Remote, unwrap } from "./outcome.js";
-import type { Usage } from "./provider.js";
-import type { ThreadDurableObject } from "./thread-do.js";
-import type { ToolContent, ToolResult } from "./tool.js";
-import type { ApprovalAnswer, Budget, Granularity, PauseReason, ThreadEvent, TurnInput } from "./thread-events.js";
+import type { KarmiBindings } from "./bindings";
+import type { ScopeId, UserId } from "./context";
+import { KarmiError } from "./errors";
+import { keys } from "./keys";
+import { assertIdentifier } from "./names";
+import { remote, type Remote, unwrap } from "./outcome";
+import type { Usage } from "./provider";
+import type { ThreadDurableObject } from "./thread-do";
+import type { ToolContent, ToolResult } from "./tool";
+import type { ApprovalAnswer, Budget, Granularity, PauseReason, ThreadEvent, TurnInput } from "./thread-events";
 
 /** What a Channel binding chooses: the Agent, the User (absent for user-less Events) and its own threadId. */
 export interface ThreadIdentity {

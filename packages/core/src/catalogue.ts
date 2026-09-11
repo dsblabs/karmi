@@ -1,14 +1,14 @@
-import type { Deliverer } from "./deliverer.js";
-import type { Agent } from "./agent.js";
-import { KarmiError } from "./errors.js";
-import type { Fragment } from "./fragment.js";
-import type { Hook, HookPoint } from "./hook.js";
-import type { CatalogueKind } from "./names.js";
-import type { Retriever } from "./retriever.js";
-import { toJsonSchema, type JsonSchema } from "./schema.js";
-import type { Skill } from "./skill.js";
-import type { Tool, ToolAnnotations } from "./tool.js";
-import { validateAgentSpec } from "./validate.js";
+import type { Deliverer } from "./deliverer";
+import type { Agent } from "./agent";
+import { KarmiError } from "./errors";
+import type { Fragment } from "./fragment";
+import type { Hook, HookPoint } from "./hook";
+import type { CatalogueKind } from "./names";
+import type { Retriever } from "./retriever";
+import { toJsonSchema, type JsonSchema } from "./schema";
+import type { Skill } from "./skill";
+import type { Tool, ToolAnnotations } from "./tool";
+import { validateAgentSpec } from "./validate";
 
 /** Everything a developer defines in code; registration is only by listing here. */
 export interface CatalogueInput {

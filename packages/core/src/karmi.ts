@@ -1,14 +1,14 @@
 import { env } from "cloudflare:workers";
-import { resolveBindings, type BindingsResolver } from "./bindings.js";
-import { assembleCatalogue, type Catalogue, type CatalogueInput } from "./catalogue.js";
-import { wallClock, type Clock } from "./clock.js";
-import { assertCompatibilityBaseline } from "./compat.js";
-import type { Deployment } from "./deployment.js";
-import { makeDurableObjects, type DurableObjects } from "./durable-objects.js";
-import { deliveryQueueHandler } from "./delivery-queue.js";
-import type { Provider } from "./provider.js";
-import { parseScopeConfig, type ScopeConfigDocument } from "./scope-config.js";
-import { openScope, type Scope } from "./scope.js";
+import { resolveBindings, type BindingsResolver } from "./bindings";
+import { assembleCatalogue, type Catalogue, type CatalogueInput } from "./catalogue";
+import { wallClock, type Clock } from "./clock";
+import { assertCompatibilityBaseline } from "./compat";
+import type { Deployment } from "./deployment";
+import { makeDurableObjects, type DurableObjects } from "./durable-objects";
+import { deliveryQueueHandler } from "./delivery-queue";
+import type { Provider } from "./provider";
+import { parseScopeConfig, type ScopeConfigDocument } from "./scope-config";
+import { openScope, type Scope } from "./scope";
 
 export interface KarmiOptions<Env = unknown> {
   catalogue: CatalogueInput;

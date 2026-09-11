@@ -1,6 +1,6 @@
-import type { Logger, ScopeId } from "./context.js";
-import { assertName } from "./names.js";
-import type { Output, Schema } from "./schema.js";
+import type { Logger, ScopeId } from "./context";
+import { assertName } from "./names";
+import type { Output, Schema } from "./schema";
 
 export interface KnowledgeRef {
   scope: ScopeId;

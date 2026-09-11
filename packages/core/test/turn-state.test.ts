@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ThreadEventData } from "../src/thread-events.js";
-import { foldTurn } from "../src/turn-state.js";
+import type { ThreadEventData } from "../src/thread-events";
+import { foldTurn } from "../src/turn-state";
 
 let seq = 0;
 const logged = (event: ThreadEventData) => ({ seq: ++seq, at: 0, event });

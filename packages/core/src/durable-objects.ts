@@ -1,8 +1,8 @@
 import type { DurableObject } from "cloudflare:workers";
-import type { KarmiBindings } from "./bindings.js";
-import type { Deployment } from "./deployment.js";
-import { ScopeConfigDurableObject } from "./scope-config-do.js";
-import { ThreadDurableObject } from "./thread-do.js";
+import type { KarmiBindings } from "./bindings";
+import type { Deployment } from "./deployment";
+import { ScopeConfigDurableObject } from "./scope-config-do";
+import { ThreadDurableObject } from "./thread-do";
 
 export interface KarmiDurableObject extends DurableObject<KarmiBindings> {
   readonly deployment: Deployment;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ThreadEvent } from "../src/index.js";
-import { lastMessage, matchers } from "../src/testing/index.js";
+import type { ThreadEvent } from "../src/index";
+import { lastMessage, matchers } from "../src/testing/index";
 
 const events: ThreadEvent[] = [
   {

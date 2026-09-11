@@ -1,5 +1,5 @@
-import { KarmiError, SpecInvalidError, type KarmiErrorCode } from "./errors.js";
-import type { ValidationResult } from "./validate.js";
+import { KarmiError, SpecInvalidError, type KarmiErrorCode } from "./errors";
+import type { ValidationResult } from "./validate";
 
 /**
  * Workers RPC keeps only an Error's message, so every Durable Object method reports failure as data and

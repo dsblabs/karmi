@@ -1,4 +1,4 @@
-import { KarmiError } from "../errors.js";
+import { KarmiError } from "../errors";
 import type {
   ContentBlock,
   ModelCapabilities,
@@ -9,7 +9,7 @@ import type {
   ProviderRequest,
   StopReason,
   Usage,
-} from "../provider.js";
+} from "../provider";
 
 // A scripted Provider: a real implementation of the seam whose replies a test writes and whose
 // requests a test reads back. Registered under an ordinary profile, so Agent Specs stay unchanged.

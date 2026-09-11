@@ -1,7 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { assertCompatibilityBaseline, createKarmi, defineTool, KarmiError, resolveBindings } from "../src/index.js";
+import { assertCompatibilityBaseline, createKarmi, defineTool, KarmiError, resolveBindings } from "../src/index";
 
 describe("createKarmi", () => {
   it("boots the Worker in workerd and serves describe()", async () => {

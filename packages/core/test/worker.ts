@@ -9,8 +9,8 @@ import {
   defineTool,
   type ToolContext,
   type ToolResult,
-} from "../src/index.js";
-import { createTestKarmi } from "../src/testing/index.js";
+} from "../src/index";
+import { createTestKarmi } from "../src/testing/index";
 
 /** What the Tools and Hooks below saw, in order; tests read and reset it. */
 export const trace: string[] = [];

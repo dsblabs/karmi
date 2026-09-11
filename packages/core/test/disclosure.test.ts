@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { lastMessage, reply } from "../src/testing/index.js";
-import { provider, scope, shelves } from "./worker.js";
+import { lastMessage, reply } from "../src/testing/index";
+import { provider, scope, shelves } from "./worker";
 
 // Progressive disclosure at Turn level: what the model is offered, what `tool_search` and `use_skill`
 // load, and how long a load lasts. Storage is shared across the file, so each test uses its own Thread.

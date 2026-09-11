@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { evaluatePolicy } from "../src/policy.js";
-import type { PolicyRule } from "../src/index.js";
-import type { ToolAnnotations } from "../src/index.js";
+import { evaluatePolicy } from "../src/policy";
+import type { PolicyRule } from "../src/index";
+import type { ToolAnnotations } from "../src/index";
 
 const ro: ToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 const rw: ToolAnnotations = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };

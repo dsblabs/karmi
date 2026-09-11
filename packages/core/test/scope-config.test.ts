@@ -5,7 +5,7 @@ import {
   resolveScopeConfig,
   scopeConfigJsonSchema,
   type ScopeConfigDocument,
-} from "../src/index.js";
+} from "../src/index";
 
 describe("resolveScopeConfig", () => {
   const deployment: ScopeConfigDocument = {

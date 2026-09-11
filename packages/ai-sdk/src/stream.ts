@@ -1,7 +1,7 @@
 import type { LanguageModelV4StreamPart, SharedV4ProviderMetadata } from "@ai-sdk/provider";
 import type { ContentBlock, ProviderEvent } from "@karmi/core";
-import { toProviderError } from "./errors.js";
-import { usage, stopReason } from "./usage.js";
+import { toProviderError } from "./errors";
+import { usage, stopReason } from "./usage";
 
 type Entry = {
   index: number;

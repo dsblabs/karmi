@@ -1,7 +1,7 @@
-import type { MediaRef } from "./context.js";
-import type { ContentBlock, Message } from "./provider.js";
-import type { ThreadEvent } from "./thread-events.js";
-import { inputContent } from "./transcript.js";
+import type { MediaRef } from "./context";
+import type { ContentBlock, Message } from "./provider";
+import type { ThreadEvent } from "./thread-events";
+import { inputContent } from "./transcript";
 
 // Compaction, the pure part: how full the context is (from the last usage, never re-tokenised), where
 // the log may be cut, and what the summary carries forward. The Thread DO owns the Step around it.

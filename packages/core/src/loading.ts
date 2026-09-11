@@ -1,9 +1,9 @@
-import { estimateTokens } from "./compaction.js";
-import type { Message, ToolDefinition } from "./provider.js";
-import { toJsonSchema } from "./schema.js";
-import type { ThreadEventData } from "./thread-events.js";
-import type { Tool } from "./tool.js";
-import type { ContextConfig } from "./agent.js";
+import { estimateTokens } from "./compaction";
+import type { Message, ToolDefinition } from "./provider";
+import { toJsonSchema } from "./schema";
+import type { ThreadEventData } from "./thread-events";
+import type { Tool } from "./tool";
+import type { ContextConfig } from "./agent";
 
 // Progressive disclosure, the pure part: which Tools the model starts a call with, which it has loaded
 // since, and how `tool_search` finds one. A load point is a `tools.loaded` event; the loaded set is the

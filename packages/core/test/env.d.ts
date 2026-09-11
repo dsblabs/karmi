@@ -6,7 +6,7 @@ declare namespace Cloudflare {
     KARMI_QUEUE: Queue;
   }
   interface GlobalProps {
-    mainModule: typeof import("./worker.js");
+    mainModule: typeof import("./worker");
     durableNamespaces: "ThreadDO" | "ScopeConfigDO";
   }
 }

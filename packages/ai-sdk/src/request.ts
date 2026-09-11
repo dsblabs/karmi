@@ -6,9 +6,9 @@ import {
   type ProviderRequest,
   type ProviderCallOptions,
 } from "@karmi/core";
-import { InvalidRequestError } from "./errors.js";
+import { InvalidRequestError } from "./errors";
 import { z } from "zod";
-import { metadataSchema, providerOptions } from "./options.js";
+import { metadataSchema, providerOptions } from "./options";
 
 type AssistantPart = Extract<LanguageModelV4Message, { role: "assistant" }>["content"][number];
 

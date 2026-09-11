@@ -18,9 +18,9 @@
     "./wrangler.baseline.jsonc": "./wrangler.baseline.jsonc"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json -f -fe .js",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src",
+    "lint": "eslint .",
     "test": "vitest run"
   },
   "peerDependencies": {

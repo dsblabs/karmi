@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseScopeConfig, type Provider, type ProviderEvent, type ProviderRequest } from "../src/index.js";
-import { fakeProvider, recordingProvider, reply } from "../src/testing/index.js";
+import { parseScopeConfig, type Provider, type ProviderEvent, type ProviderRequest } from "../src/index";
+import { fakeProvider, recordingProvider, reply } from "../src/testing/index";
 
 const request = (text: string, model = "claude-sonnet-5"): ProviderRequest => ({
   model,

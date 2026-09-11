@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { KarmiError, SpecInvalidError, type AgentSpec } from "../src/index.js";
-import { karmi } from "./worker.js";
+import { KarmiError, SpecInvalidError, type AgentSpec } from "../src/index";
+import { karmi } from "./worker";
 
 // Storage is shared across the file, so each test works in a Scope of its own.
 let n = 0;

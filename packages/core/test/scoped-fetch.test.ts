@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isBlockedUrl, scopedFetch } from "../src/index.js";
+import { isBlockedUrl, scopedFetch } from "../src/index";
 
 type Seen = { url: string; init: RequestInit | undefined };
 

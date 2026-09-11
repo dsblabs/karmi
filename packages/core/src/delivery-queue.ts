@@ -1,11 +1,11 @@
-import type { KarmiBindings } from "./bindings.js";
-import type { Catalogue } from "./catalogue.js";
-import { KarmiError } from "./errors.js";
-import { keys } from "./keys.js";
-import { remote, unwrap } from "./outcome.js";
-import { openScope } from "./scope.js";
-import type { ThreadDurableObject } from "./thread-do.js";
-import { decodeKey } from "./thread.js";
+import type { KarmiBindings } from "./bindings";
+import type { Catalogue } from "./catalogue";
+import { KarmiError } from "./errors";
+import { keys } from "./keys";
+import { remote, unwrap } from "./outcome";
+import { openScope } from "./scope";
+import type { ThreadDurableObject } from "./thread-do";
+import { decodeKey } from "./thread";
 
 export function deliveryQueueHandler(bindings: KarmiBindings, catalogue: Catalogue): ExportedHandlerQueueHandler {
   return async (batch) => {

@@ -1,8 +1,8 @@
 import { createExecutionContext, createMessageBatch, getQueueResult } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { reply } from "../src/testing/index.js";
+import { reply } from "../src/testing/index";
 import { beforeEach, expect, it } from "vitest";
-import { deliveries, karmi, provider, clock, scope, deliveryFailure } from "./worker.js";
+import { deliveries, karmi, provider, clock, scope, deliveryFailure } from "./worker";
 
 beforeEach(() => {
   deliveries.length = 0;

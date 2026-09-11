@@ -1,5 +1,5 @@
-export { defineDeliverer, type Deliverer, type DeliveryBinding } from "./deliverer.js";
-export { wallClock, type Clock } from "./clock.js";
+export { defineDeliverer, type Deliverer, type DeliveryBinding } from "./deliverer";
+export { wallClock, type Clock } from "./clock";
 export {
   defineAgent,
   type Agent,
@@ -15,14 +15,14 @@ export {
   type MemoryProfileSchema,
   type MemoryProfileProperty,
   type ContextConfig,
-} from "./agent.js";
+} from "./agent";
 export {
   AgentSpecSchema,
   agentSpecJsonSchema,
   AGENT_SPEC_DEFAULTS,
   PROVIDER_TOOL_NAMES,
   type NormalizedAgentSpec,
-} from "./agent-spec.js";
+} from "./agent-spec";
 export {
   ScopeConfigSchema,
   scopeConfigJsonSchema,
@@ -32,7 +32,7 @@ export {
   type ProviderConfig,
   type GatewayConfig,
   type Ceilings,
-} from "./scope-config.js";
+} from "./scope-config";
 export {
   validateAgentSpec,
   ISSUE_CODES,
@@ -40,8 +40,8 @@ export {
   type IssueCode,
   type ValidationResult,
   type ScopeContext,
-} from "./validate.js";
-export { defineFragment, type Fragment, type FragmentContext, type FragmentRender } from "./fragment.js";
+} from "./validate";
+export { defineFragment, type Fragment, type FragmentContext, type FragmentRender } from "./fragment";
 export {
   defineHook,
   HOOK_POINTS,
@@ -56,7 +56,7 @@ export {
   type Compacted,
   type HookPoint,
   type TurnEnd,
-} from "./hook.js";
+} from "./hook";
 export {
   defineRetriever,
   type Retriever,
@@ -64,8 +64,8 @@ export {
   type KnowledgeRef,
   type KnowledgeDocument,
   type Passage,
-} from "./retriever.js";
-export { defineSkill, type Skill, type SkillInvoker } from "./skill.js";
+} from "./retriever";
+export { defineSkill, type Skill, type SkillInvoker } from "./skill";
 export {
   defineTool,
   type Tool,
@@ -76,17 +76,17 @@ export {
   type ToolPending,
   type ToolOutcome,
   type Connection,
-} from "./tool.js";
-export { evaluatePolicy, type PolicyEffect } from "./policy.js";
-export { truncateOutput, type OutputLimits, type Truncation } from "./spill.js";
-export { KarmiError, SpecInvalidError } from "./errors.js";
-export type { KarmiErrorCode } from "./errors.js";
-export { BUILT_IN_TOOL_NAMES, type CatalogueKind } from "./names.js";
-export type { Logger, MediaRef, ScopeId, ThreadRef, UserId } from "./context.js";
-export type { Schema, JsonSchema } from "./schema.js";
-export { assembleCatalogue, type Catalogue, type CatalogueInput, type CatalogueDescription } from "./catalogue.js";
-export { createKarmi, type Karmi, type KarmiOptions } from "./karmi.js";
-export type { Deployment } from "./deployment.js";
+} from "./tool";
+export { evaluatePolicy, type PolicyEffect } from "./policy";
+export { truncateOutput, type OutputLimits, type Truncation } from "./spill";
+export { KarmiError, SpecInvalidError } from "./errors";
+export type { KarmiErrorCode } from "./errors";
+export { BUILT_IN_TOOL_NAMES, type CatalogueKind } from "./names";
+export type { Logger, MediaRef, ScopeId, ThreadRef, UserId } from "./context";
+export type { Schema, JsonSchema } from "./schema";
+export { assembleCatalogue, type Catalogue, type CatalogueInput, type CatalogueDescription } from "./catalogue";
+export { createKarmi, type Karmi, type KarmiOptions } from "./karmi";
+export type { Deployment } from "./deployment";
 export type {
   Provider,
   ProviderRequest,
@@ -102,12 +102,12 @@ export type {
   Usage,
   UsageCost,
   ToolDefinition,
-} from "./provider.js";
-export { prepareMessages, normalizeToolCallId, type ReplayTarget, type ReplayResult } from "./replay.js";
-export { scopedFetch, providerHosts, isBlockedUrl, GATEWAY_HOST, type EgressPolicy } from "./scoped-fetch.js";
-export { retry, type RetryOptions } from "./retry.js";
-export { resolveBindings, type KarmiBindings, type BindingsResolver } from "./bindings.js";
-export { assertCompatibilityBaseline, COMPATIBILITY_DATE_FLOOR } from "./compat.js";
+} from "./provider";
+export { prepareMessages, normalizeToolCallId, type ReplayTarget, type ReplayResult } from "./replay";
+export { scopedFetch, providerHosts, isBlockedUrl, GATEWAY_HOST, type EgressPolicy } from "./scoped-fetch";
+export { retry, type RetryOptions } from "./retry";
+export { resolveBindings, type KarmiBindings, type BindingsResolver } from "./bindings";
+export { assertCompatibilityBaseline, COMPATIBILITY_DATE_FLOOR } from "./compat";
 export type {
   Scope,
   ScopeState,
@@ -117,7 +117,7 @@ export type {
   AgentSummary,
   AgentVersion,
   DestroyStatus,
-} from "./scope.js";
+} from "./scope";
 export type {
   Thread,
   ThreadIdentity,
@@ -128,7 +128,7 @@ export type {
   SendOptions,
   CompactOptions,
   ThreadSummary,
-} from "./thread.js";
+} from "./thread";
 export type {
   TurnInput,
   Part,
@@ -142,9 +142,9 @@ export type {
   ApprovalSource,
   CompactionTrigger,
   CompactionStrategy,
-} from "./thread-events.js";
-export { evaluatePrompt, type PromptSections } from "./prompt.js";
-export { loadedToolNames, type Loaded } from "./loading.js";
-export { transcriptFromEvents, renderEvent } from "./transcript.js";
-export { DEFAULT_WINDOW, type ContextLimits } from "./compaction.js";
-export type { DurableObjects, DurableObjectClass, KarmiDurableObject } from "./durable-objects.js";
+} from "./thread-events";
+export { evaluatePrompt, type PromptSections } from "./prompt";
+export { loadedToolNames, type Loaded } from "./loading";
+export { transcriptFromEvents, renderEvent } from "./transcript";
+export { DEFAULT_WINDOW, type ContextLimits } from "./compaction";
+export type { DurableObjects, DurableObjectClass, KarmiDurableObject } from "./durable-objects";

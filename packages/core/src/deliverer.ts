@@ -1,6 +1,6 @@
-import { KarmiError } from "./errors.js";
-import { assertName } from "./names.js";
-import type { Granularity, ThreadEvent } from "./thread-events.js";
+import { KarmiError } from "./errors";
+import { assertName } from "./names";
+import type { Granularity, ThreadEvent } from "./thread-events";
 
 /** A Channel's offline sink. Calls are at-least-once; deduplicate by Thread key and event seq. */
 export interface Deliverer {

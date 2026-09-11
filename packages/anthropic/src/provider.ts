@@ -8,12 +8,12 @@ import {
   type ProviderError,
   type ProviderEvent,
 } from "@karmi/core";
-import { toProviderError } from "./errors.js";
-import { gatewaySettings } from "./gateway.js";
-import { capabilities } from "./models.js";
-import { anthropicOptions } from "./options.js";
-import { buildParams, countTokensParams } from "./request.js";
-import { mapStream } from "./stream.js";
+import { toProviderError } from "./errors";
+import { gatewaySettings } from "./gateway";
+import { capabilities } from "./models";
+import { anthropicOptions } from "./options";
+import { buildParams, countTokensParams } from "./request";
+import { mapStream } from "./stream";
 
 /** Resolves a profile's credential reference (`scope:<name>` or `deployment:<name>`) to its value. */
 export type CredentialResolver = (ref: string) => string | undefined | Promise<string | undefined>;

@@ -1,4 +1,4 @@
-import { KarmiError, type KarmiErrorCode } from "./errors.js";
+import { KarmiError, type KarmiErrorCode } from "./errors";
 
 export type CatalogueKind = "tool" | "fragment" | "skill" | "retriever" | "hook" | "deliverer";
 

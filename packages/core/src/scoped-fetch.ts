@@ -1,5 +1,5 @@
-import type { Logger } from "./context.js";
-import type { ProviderConfig } from "./scope-config.js";
+import type { Logger } from "./context";
+import type { ProviderConfig } from "./scope-config";
 
 // The one egress seam: every outbound request karmi makes — provider calls, MCP, OAuth discovery — goes
 // through a `scopedFetch` built per Turn from the resolved Scope config (docs/research/outbound-routing.md §5).

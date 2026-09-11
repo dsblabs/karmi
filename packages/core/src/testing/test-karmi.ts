@@ -1,13 +1,13 @@
 import { env } from "cloudflare:workers";
-import { resolveBindings } from "../bindings.js";
-import { testClock, type TestClock } from "./clock.js";
-import type { CatalogueInput } from "../catalogue.js";
-import { createKarmi, type Karmi, type KarmiOptions } from "../karmi.js";
-import type { Scope } from "../scope.js";
-import { isTurnEnd } from "../thread-do.js";
-import type { SendOptions, Thread, ThreadIdentity } from "../thread.js";
-import type { ThreadEvent, TurnInput } from "../thread-events.js";
-import { fakeProvider, type FakeProvider } from "./fake-provider.js";
+import { resolveBindings } from "../bindings";
+import { testClock, type TestClock } from "./clock";
+import type { CatalogueInput } from "../catalogue";
+import { createKarmi, type Karmi, type KarmiOptions } from "../karmi";
+import type { Scope } from "../scope";
+import { isTurnEnd } from "../thread-do";
+import type { SendOptions, Thread, ThreadIdentity } from "../thread";
+import type { ThreadEvent, TurnInput } from "../thread-events";
+import { fakeProvider, type FakeProvider } from "./fake-provider";
 
 export interface TestThread extends Omit<Thread, "send"> {
   /** Resolves when the Turn ends or parks (completed, failed or paused) with everything it logged from this call on. */

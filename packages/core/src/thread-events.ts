@@ -1,6 +1,6 @@
-import type { MediaRef } from "./context.js";
-import type { ContentBlock, StopReason, Usage } from "./provider.js";
-import type { ToolContent, ToolResult } from "./tool.js";
+import type { MediaRef } from "./context";
+import type { ContentBlock, StopReason, Usage } from "./provider";
+import type { ToolContent, ToolResult } from "./tool";
 
 // The Thread's outbound vocabulary: Turn inputs going in, Thread events coming out. Everything is plain
 // JSON — the event log is the only state a Thread has, and every client reads the same shape.

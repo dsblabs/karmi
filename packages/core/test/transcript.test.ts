@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { transcriptFromEvents } from "../src/transcript.js";
-import type { ThreadEvent, ThreadEventData } from "../src/thread-events.js";
+import { transcriptFromEvents } from "../src/transcript";
+import type { ThreadEvent, ThreadEventData } from "../src/thread-events";
 
 let seq = 0;
 const ev = (turn: number, data: ThreadEventData): ThreadEvent => ({ seq: ++seq, turn, at: 0, ...data });

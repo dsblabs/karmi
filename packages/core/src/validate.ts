@@ -1,12 +1,12 @@
 import * as z from "zod/mini";
-import { AGENT_SPEC_DEFAULTS, AgentSpecSchema, type NormalizedAgentSpec } from "./agent-spec.js";
-import type { AgentSpec, Capabilities, MemoryProfileProperty } from "./agent.js";
-import type { Catalogue } from "./catalogue.js";
-import { matchGlob } from "./glob.js";
-import { BUILT_IN_TOOL_NAMES, IDENTIFIER } from "./names.js";
-import type { Ceilings, ScopeConfigDocument } from "./scope-config.js";
-import type { Schema } from "./schema.js";
-import type { Tool } from "./tool.js";
+import { AGENT_SPEC_DEFAULTS, AgentSpecSchema, type NormalizedAgentSpec } from "./agent-spec";
+import type { AgentSpec, Capabilities, MemoryProfileProperty } from "./agent";
+import type { Catalogue } from "./catalogue";
+import { matchGlob } from "./glob";
+import { BUILT_IN_TOOL_NAMES, IDENTIFIER } from "./names";
+import type { Ceilings, ScopeConfigDocument } from "./scope-config";
+import type { Schema } from "./schema";
+import type { Tool } from "./tool";
 
 // The three layers of Agent Spec validation: shape (zod), references (Catalogue), Scope-resolved (ceilings,
 // Provider profiles, the other Agents in the Scope). MCP registry and Connection-value checks join the

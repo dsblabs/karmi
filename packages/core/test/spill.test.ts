@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { truncateOutput } from "../src/spill.js";
+import { truncateOutput } from "../src/spill";
 
 describe("truncateOutput", () => {
   it("leaves output within both limits untouched", () => {

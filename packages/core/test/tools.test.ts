@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { lastMessage, reply } from "../src/testing/index.js";
-import { provider, scope, trace } from "./worker.js";
+import { lastMessage, reply } from "../src/testing/index";
+import { provider, scope, trace } from "./worker";
 
 let n = 0;
 const fresh = (agent = "concierge") => scope.thread({ agent, user: "guest-1", threadId: `tool-${++n}` });

@@ -1,11 +1,11 @@
 import * as z from "zod/mini";
-import type { AgentSpec } from "./agent.js";
-import type { Catalogue } from "./catalogue.js";
-import { KarmiError } from "./errors.js";
-import type { FragmentContext } from "./fragment.js";
-import { matchGlob } from "./glob.js";
-import type { SkillInvoker } from "./skill.js";
-import type { Tool } from "./tool.js";
+import type { AgentSpec } from "./agent";
+import type { Catalogue } from "./catalogue";
+import { KarmiError } from "./errors";
+import type { FragmentContext } from "./fragment";
+import { matchGlob } from "./glob";
+import type { SkillInvoker } from "./skill";
+import type { Tool } from "./tool";
 
 // The Prompt: the Spec's ordered entries, each a Fragment of the turn context, evaluated for the model
 // actually in use, then the Harness sections in fixed order: instructions → tool instructions →

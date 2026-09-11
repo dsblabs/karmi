@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { createOpenAI } from "@ai-sdk/openai";
-import { aiSdk } from "../src/index.js";
+import { aiSdk } from "../src/index";
 import type { ProviderEvent } from "@karmi/core";
 
 it("drives one model call through scopedFetch and reports text and usage", async () => {

@@ -1,6 +1,6 @@
-import { KarmiError } from "../errors.js";
-import type { Provider, ProviderEvent, ProviderRequest } from "../provider.js";
-import { fakeProvider, type FakeProvider, type FakeProviderOptions } from "./fake-provider.js";
+import { KarmiError } from "../errors";
+import type { Provider, ProviderEvent, ProviderRequest } from "../provider";
+import { fakeProvider, type FakeProvider, type FakeProviderOptions } from "./fake-provider";
 
 // Record a real Provider's streams once, replay them forever: real model behaviour as a regression test.
 // Core touches no filesystem; the caller writes `toJSONL()` wherever it keeps fixtures.

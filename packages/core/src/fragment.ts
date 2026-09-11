@@ -1,6 +1,6 @@
-import type { ScopeId, ThreadRef, UserId } from "./context.js";
-import { assertName } from "./names.js";
-import type { Output, Schema } from "./schema.js";
+import type { ScopeId, ThreadRef, UserId } from "./context";
+import { assertName } from "./names";
+import type { Output, Schema } from "./schema";
 
 /** What a Fragment sees: the turn's context, never a template variable bag. */
 export interface FragmentContext {

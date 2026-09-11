@@ -1,5 +1,5 @@
-import type { ThreadEventType } from "../src/index.js";
-import type { EventPartial } from "../src/testing/index.js";
+import type { ThreadEventType } from "../src/index";
+import type { EventPartial } from "../src/testing/index";
 
 // Test-kit matchers, registered by test/setup.ts.
 declare module "vitest" {

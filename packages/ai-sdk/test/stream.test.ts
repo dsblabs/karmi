@@ -2,7 +2,7 @@ import { APICallError } from "@ai-sdk/provider";
 import { expect, it } from "vitest";
 import type { LanguageModelV4, LanguageModelV4StreamPart, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import type { ProviderEvent, ContentBlock, ProviderRequest } from "@karmi/core";
-import { aiSdk } from "../src/index.js";
+import { aiSdk } from "../src/index";
 
 const finish: LanguageModelV4StreamPart = {
   type: "finish",

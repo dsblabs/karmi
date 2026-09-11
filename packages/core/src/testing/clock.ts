@@ -1,5 +1,5 @@
-import type { KarmiBindings } from "../bindings.js";
-import type { Clock } from "../clock.js";
+import type { KarmiBindings } from "../bindings";
+import type { Clock } from "../clock";
 
 export interface TestClock extends Clock {
   /** Move time forward and fire the due alarms of this test Worker's Durable Objects. */

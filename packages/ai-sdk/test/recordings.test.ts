@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import type { ProviderEvent } from "@karmi/core";
-import { aiSdk } from "../src/index.js";
-import { recordings } from "./fixtures/recordings.js";
+import { aiSdk } from "../src/index";
+import { recordings } from "./fixtures/recordings";
 
 it.each(recordings)("replays the recorded $name doStream parts", async ({ provider, parts }) => {
   const adapter = aiSdk(() => ({

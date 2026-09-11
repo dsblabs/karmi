@@ -6,8 +6,8 @@ import {
   DEFAULT_WINDOW,
   estimateTokens,
   resolveWindow,
-} from "../src/compaction.js";
-import type { ThreadEvent, ThreadEventData } from "../src/thread-events.js";
+} from "../src/compaction";
+import type { ThreadEvent, ThreadEventData } from "../src/thread-events";
 
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const media = { id: "m1", key: "test/media/t/m1", mimeType: "image/png", bytes: 10 };

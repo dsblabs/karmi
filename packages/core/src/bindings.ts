@@ -1,4 +1,4 @@
-import { KarmiError } from "./errors.js";
+import { KarmiError } from "./errors";
 
 /** The fixed binding names the published wrangler baseline declares. */
 export interface KarmiBindings {

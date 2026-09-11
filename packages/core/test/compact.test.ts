@@ -1,12 +1,12 @@
 import { env } from "cloudflare:workers";
 import { evictDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import type { KarmiBindings } from "../src/bindings.js";
-import { SUMMARY_SYSTEM } from "../src/compaction.js";
-import { keys } from "../src/keys.js";
-import type { Message, ProviderEvent, Thread, ThreadEvent } from "../src/index.js";
-import { lastMessage, reply, type Reply } from "../src/testing/index.js";
-import { clock, karmi, provider, scope, trace } from "./worker.js";
+import type { KarmiBindings } from "../src/bindings";
+import { SUMMARY_SYSTEM } from "../src/compaction";
+import { keys } from "../src/keys";
+import type { Message, ProviderEvent, Thread, ThreadEvent } from "../src/index";
+import { lastMessage, reply, type Reply } from "../src/testing/index";
+import { clock, karmi, provider, scope, trace } from "./worker";
 
 // Storage is shared across the file, so each test uses a Thread of its own. The `compactor` Agent's
 // window is 1000 tokens with 100 reserved and 100 kept, so a usage of 950 puts the next Step over.

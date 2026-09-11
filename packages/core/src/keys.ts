@@ -1,5 +1,5 @@
-import type { ScopeId } from "./context.js";
-import { assertIdentifier } from "./names.js";
+import type { ScopeId } from "./context";
+import { assertIdentifier } from "./names";
 
 /**
  * The one place a storage name is minted (ADR-0001): every Durable Object name is `{scope}/{kind}/{id}`

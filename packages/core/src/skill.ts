@@ -1,7 +1,7 @@
-import { defineFragment, type Fragment, type FragmentRender } from "./fragment.js";
-import { assertName } from "./names.js";
-import type { Schema } from "./schema.js";
-import type { Tool } from "./tool.js";
+import { defineFragment, type Fragment, type FragmentRender } from "./fragment";
+import { assertName } from "./names";
+import type { Schema } from "./schema";
+import type { Tool } from "./tool";
 
 export interface SkillInput<Settings extends Schema | undefined> {
   name: string;

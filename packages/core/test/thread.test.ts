@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { ThreadEvent } from "../src/index.js";
-import { lastMessage, reply } from "../src/testing/index.js";
-import { provider, scope } from "./worker.js";
+import type { ThreadEvent } from "../src/index";
+import { lastMessage, reply } from "../src/testing/index";
+import { provider, scope } from "./worker";
 
 // Storage is shared across the file, so each test uses a Thread of its own.
 let n = 0;

@@ -1,6 +1,6 @@
-import type { Logger, MediaRef } from "./context.js";
-import type { JsonSchema } from "./schema.js";
-import type { ProviderConfig } from "./scope-config.js";
+import type { Logger, MediaRef } from "./context";
+import type { JsonSchema } from "./schema";
+import type { ProviderConfig } from "./scope-config";
 
 // The Provider seam: karmi's own message, event and usage vocabulary. Everything here is plain JSON —
 // the Thread DO persists it and rebuilds requests from it after eviction — so nothing may depend on a

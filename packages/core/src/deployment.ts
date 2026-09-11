@@ -1,7 +1,7 @@
-import type { Catalogue } from "./catalogue.js";
-import type { Clock } from "./clock.js";
-import type { Provider } from "./provider.js";
-import type { ScopeConfigDocument } from "./scope-config.js";
+import type { Catalogue } from "./catalogue";
+import type { Clock } from "./clock";
+import type { Provider } from "./provider";
+import type { ScopeConfigDocument } from "./scope-config";
 
 /** Everything `createKarmi` assembled at boot, shared by the Worker and its Durable Objects. */
 export interface Deployment {

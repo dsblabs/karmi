@@ -6,11 +6,11 @@ import {
   positiveInt,
   ProviderToolNameSchema,
   ScriptTierSchema,
-} from "./agent-spec.js";
-import type { PolicyRule, ProviderToolName } from "./agent.js";
-import { KarmiError } from "./errors.js";
-import { toJsonSchema, type JsonSchema } from "./schema.js";
-import { firstIssue, pointer } from "./validate.js";
+} from "./agent-spec";
+import type { PolicyRule, ProviderToolName } from "./agent";
+import { KarmiError } from "./errors";
+import { toJsonSchema, type JsonSchema } from "./schema";
+import { firstIssue, pointer } from "./validate";
 
 // The secret-free Scope document: what `scope.config.set` stores as one immutable revision, and what
 // `createKarmi({ defaults })` supplies as the Deployment layer every Scope inherits and may only tighten.

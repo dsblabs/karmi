@@ -1,7 +1,7 @@
-import type { Logger, MediaRef, ScopeId, ThreadRef, UserId } from "./context.js";
-import type { Fragment } from "./fragment.js";
-import { assertName } from "./names.js";
-import type { Output, Schema } from "./schema.js";
+import type { Logger, MediaRef, ScopeId, ThreadRef, UserId } from "./context";
+import type { Fragment } from "./fragment";
+import { assertName } from "./names";
+import type { Output, Schema } from "./schema";
 
 /** MCP tool annotations with MCP's absent-defaults. */
 export interface ToolAnnotations {

@@ -1,7 +1,7 @@
-import { AGENT_SPEC_DEFAULTS } from "./agent-spec.js";
-import type { AgentSpec, Capabilities, PolicyRule } from "./agent.js";
-import type { KarmiBindings } from "./bindings.js";
-import { activateSkill, builtInTools, type BuiltInHost } from "./builtins.js";
+import { AGENT_SPEC_DEFAULTS } from "./agent-spec";
+import type { AgentSpec, Capabilities, PolicyRule } from "./agent";
+import type { KarmiBindings } from "./bindings";
+import { activateSkill, builtInTools, type BuiltInHost } from "./builtins";
 import {
   attachmentsOf,
   chooseCut,
@@ -12,26 +12,26 @@ import {
   SUMMARY_SYSTEM,
   summaryInstruction,
   type ContextLimits,
-} from "./compaction.js";
-import type { Logger } from "./context.js";
-import type { FragmentContext } from "./fragment.js";
-import { foldLoaded, type Loaded } from "./loading.js";
-import { deliveryBinding, type DeliveryBinding } from "./deliverer.js";
-import type { Deployment } from "./deployment.js";
-import { errorMessage, KarmiError } from "./errors.js";
-import type { Compacted, HookContextBase, HookContexts, HookResults, TurnEnd } from "./hook.js";
-import { hooksAt } from "./hooks.js";
-import { keys } from "./keys.js";
-import { consoleLogger } from "./logger.js";
-import { fail, ok, remote, type Outcome } from "./outcome.js";
-import { isPlatformFailure } from "./platform-failure.js";
-import { evaluatePrompt } from "./prompt.js";
-import type { ContentBlock, ProviderError, ProviderEvent, ProviderRequest, StopReason, Usage } from "./provider.js";
-import { prepareMessages } from "./replay.js";
-import { ScheduledDurableObject, type ScheduledJob } from "./scheduler.js";
-import { providerHosts, scopedFetch } from "./scoped-fetch.js";
-import type { ScopeConfigDurableObject } from "./scope-config-do.js";
-import type { Ceilings, ProviderConfig } from "./scope-config.js";
+} from "./compaction";
+import type { Logger } from "./context";
+import type { FragmentContext } from "./fragment";
+import { foldLoaded, type Loaded } from "./loading";
+import { deliveryBinding, type DeliveryBinding } from "./deliverer";
+import type { Deployment } from "./deployment";
+import { errorMessage, KarmiError } from "./errors";
+import type { Compacted, HookContextBase, HookContexts, HookResults, TurnEnd } from "./hook";
+import { hooksAt } from "./hooks";
+import { keys } from "./keys";
+import { consoleLogger } from "./logger";
+import { fail, ok, remote, type Outcome } from "./outcome";
+import { isPlatformFailure } from "./platform-failure";
+import { evaluatePrompt } from "./prompt";
+import type { ContentBlock, ProviderError, ProviderEvent, ProviderRequest, StopReason, Usage } from "./provider";
+import { prepareMessages } from "./replay";
+import { ScheduledDurableObject, type ScheduledJob } from "./scheduler";
+import { providerHosts, scopedFetch } from "./scoped-fetch";
+import type { ScopeConfigDurableObject } from "./scope-config-do";
+import type { Ceilings, ProviderConfig } from "./scope-config";
 import type {
   ApprovalAnswer,
   ApprovalSource,
@@ -44,7 +44,7 @@ import type {
   ThreadEventData,
   ThreadEventType,
   TurnInput,
-} from "./thread-events.js";
+} from "./thread-events";
 import {
   encodeKey,
   titleOf,
@@ -52,11 +52,11 @@ import {
   type PendingApproval,
   type ThreadAddress,
   type ThreadStatus,
-} from "./thread.js";
-import { runToolStep, type PriorCalls, type ToolCall } from "./tool-step.js";
-import { foldTurn, type Plan, type Request, type TurnState } from "./turn-state.js";
-import { resolveToolSet, toolDefinitions, toolsInContext, unloadedDeferred, type ToolSet } from "./tools.js";
-import { splitModelId, transcriptFromEvents } from "./transcript.js";
+} from "./thread";
+import { runToolStep, type PriorCalls, type ToolCall } from "./tool-step";
+import { foldTurn, type Plan, type Request, type TurnState } from "./turn-state";
+import { resolveToolSet, toolDefinitions, toolsInContext, unloadedDeferred, type ToolSet } from "./tools";
+import { splitModelId, transcriptFromEvents } from "./transcript";
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS thread (scope_id TEXT NOT NULL, agent_id TEXT NOT NULL, user_id TEXT, thread_id TEXT NOT NULL, created_at INTEGER NOT NULL, state TEXT NOT NULL, turn INTEGER NOT NULL, step INTEGER NOT NULL, attempt INTEGER NOT NULL, recoveries INTEGER NOT NULL, agent_version INTEGER, snapshot_json TEXT, usage_json TEXT NOT NULL);
@@ -1574,7 +1574,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 }
 
-export type { TurnEnd } from "./hook.js";
+export type { TurnEnd } from "./hook";
 
 export function isTurnEnd(event: ThreadEventData): event is TurnEnd {
   return event.type === "turn.completed" || event.type === "turn.failed" || event.type === "turn.paused";

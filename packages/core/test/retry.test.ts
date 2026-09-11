@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { retry } from "../src/index.js";
+import { retry } from "../src/index";
 
 const retryable = (error: unknown) => error instanceof Error && error.message === "again";
 

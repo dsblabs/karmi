@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
-import type { KarmiBindings } from "./bindings.js";
-import type { Clock } from "./clock.js";
-import type { Deployment } from "./deployment.js";
+import type { KarmiBindings } from "./bindings";
+import type { Clock } from "./clock";
+import type { Deployment } from "./deployment";
 
 export type JobKind = "watchdog" | "park-timeout" | "schedule" | "scope-maintenance" | "delivery";
 export interface ScheduledJob {

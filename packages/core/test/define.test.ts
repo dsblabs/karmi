@@ -8,7 +8,7 @@ import {
   defineSkill,
   defineTool,
   KarmiError,
-} from "../src/index.js";
+} from "../src/index";
 
 const echo = defineTool({
   name: "echo",

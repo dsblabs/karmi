@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderConfig } from "@karmi/core";
-import { anthropic } from "../src/index.js";
+import { anthropic } from "../src/index";
 import text from "./fixtures/text.sse?raw";
-import { collect, request, serve } from "./helpers.js";
+import { collect, request, serve } from "./helpers";
 
 const attribution = { scope: "acme", agent: "concierge", thread: "t1", turn: 3 };
 const gateway = (extra: Partial<ProviderConfig["gateway"] & object> = {}): ProviderConfig => ({

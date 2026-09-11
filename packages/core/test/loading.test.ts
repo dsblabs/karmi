@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { defineTool } from "../src/index.js";
-import type { ThreadEventData } from "../src/thread-events.js";
-import { deferAll, foldLoaded, searchTools, SEARCH_LIMIT } from "../src/loading.js";
+import { defineTool } from "../src/index";
+import type { ThreadEventData } from "../src/thread-events";
+import { deferAll, foldLoaded, searchTools, SEARCH_LIMIT } from "../src/loading";
 
 const tool = (name: string, description: string, input: z.ZodObject = z.object({})) =>
   defineTool({ name, description, input, execute: () => "" });
