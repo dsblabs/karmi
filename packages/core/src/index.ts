@@ -52,6 +52,8 @@ export {
   type HookResults,
   type HookToolCall,
   type BeforeToolDecision,
+  type BeforeCompactDecision,
+  type Compacted,
   type HookPoint,
   type TurnEnd,
 } from "./hook.js";
@@ -124,6 +126,7 @@ export type {
   PendingApproval,
   ThreadJobs,
   SendOptions,
+  CompactOptions,
   ThreadSummary,
 } from "./thread.js";
 export type {
@@ -137,7 +140,10 @@ export type {
   Budget,
   ApprovalAnswer,
   ApprovalSource,
+  CompactionTrigger,
+  CompactionStrategy,
 } from "./thread-events.js";
 export { evaluatePrompt } from "./prompt.js";
 export { transcriptFromEvents, renderEvent } from "./transcript.js";
+export { DEFAULT_WINDOW, type ContextLimits } from "./compaction.js";
 export type { DurableObjects, DurableObjectClass, KarmiDurableObject } from "./durable-objects.js";

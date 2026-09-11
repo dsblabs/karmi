@@ -183,6 +183,22 @@ const onError = defineHook({
   point: "on-error",
   run: ({ error }) => void trace.push(`on-error:${error.code}`),
 });
+// Compaction Hooks: `thread.compact({ instructions })` steers the gate; the log observes every outcome.
+const compactGate = defineHook({
+  name: "compact-gate",
+  point: "before-compact",
+  run: ({ trigger, instructions, tokensBefore }) => {
+    trace.push(`before-compact:${trigger}:${tokensBefore > 0}`);
+    if (instructions === "skip") return { skip: true };
+    if (instructions === "hook") return { summary: "HOOK SUMMARY" };
+    return undefined;
+  },
+});
+const compactLog = defineHook({
+  name: "compact-log",
+  point: "after-compact",
+  run: ({ compacted }) => void trace.push(`after-compact:${compacted.strategy}:${compacted.firstKeptSeq}`),
+});
 
 const concierge = defineAgent({
   agentId: "concierge",
@@ -258,6 +274,27 @@ const hooked = defineAgent({
   hooks: { "before-tool": ["deny-lookup"] },
 });
 
+// Compaction: a window small enough that a few Turns fill it; tokens are estimated at four characters each.
+const compactContext = { window: 1000, reserveTokens: 100, keepRecentTokens: 100 };
+const compactor = defineAgent({
+  agentId: "compactor",
+  name: "Compactor",
+  instructions: [{ text: "Remember everything." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["lookup"],
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+  hooks: { "before-compact": ["compact-gate"], "after-compact": ["compact-log"] },
+  context: compactContext,
+});
+// The same Agent under a profile that delegates the summary to the provider; only the `compact-provider` Scope configures it.
+const providerCompactor = defineAgent({
+  agentId: "compactor-provider",
+  name: "Provider compactor",
+  instructions: [{ text: "Remember everything." }],
+  model: { id: "anthropic/claude-sonnet-5", providerProfile: "provider-compact" },
+  context: compactContext,
+});
+
 export const recovery = {
   execute: async (_input: { id: string }, _ctx: ToolContext): Promise<string> => "done",
   before: [] as string[],
@@ -319,8 +356,10 @@ export const { karmi, clock, provider, scope } = createTestKarmi({
     turnEnd,
     slowTurnEnd,
     onError,
+    compactGate,
+    compactLog,
   ],
-  agents: [recoveryAgent, concierge, guarded, asking, hooked, approver, budgeted],
+  agents: [recoveryAgent, concierge, guarded, asking, hooked, approver, budgeted, compactor, providerCompactor],
 });
 
 export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;

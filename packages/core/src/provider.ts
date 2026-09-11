@@ -86,6 +86,11 @@ export interface ProviderRequest {
   };
   /** Adapter-namespaced escape hatch, already merged over `config.providerOptions`. */
   providerOptions?: Record<string, unknown>;
+  /**
+   * Compact `messages` now through the provider's own mechanism, answering with a `compaction` block.
+   * Set only under `ProviderConfig.compaction: "provider"`; an adapter without one answers nothing.
+   */
+  compact?: { instructions?: string };
 }
 
 /** Codes line up with the Provider-profile fallback triggers (`fallbackOn`). */
@@ -127,6 +132,8 @@ export interface ModelCapabilities {
   video: boolean | "unknown";
   pdf: boolean | "unknown";
   maxMediaBytes?: number;
+  /** The model's context window in tokens; the Compaction default when the Spec sets none. */
+  contextWindow?: number;
 }
 
 export interface ProviderCallOptions {

@@ -94,6 +94,14 @@ await clock.advance("24h"); // Also fires due alarms through cloudflare:test.
 
 `advance()` accepts milliseconds or durations with `ms`, `s`, `m`, `h`, or `d` suffixes. It moves the clock forward and dispatches due alarms; live or recovered Steps continue in-process, so observe completion through the Thread's event stream.
 
+## Compaction and forking
+
+Long Threads keep working. Before every fresh model Step, and after a `context_window_exceeded` stop, the Harness compares the context (the last model Step's usage plus a cheap estimate of what was logged since, never a re-tokenisation) with `context.window - reserveTokens`. Over it, a `compact` Step runs: the cut walks back to `keepRecentTokens`, then to the start of that Turn (falling back to a tool Step boundary, never inside a call/result batch), the events before the cut are summarised, and `thread.compacted { trigger, firstKeptSeq, tokensBefore, tokensAfter, strategy, summary, attachments }` is appended. The log is never rewritten: the next request is the Prompt, the summary, and the events from `firstKeptSeq` on. Summaries chain, and the media of the summarised events is carried forward as `attachments`.
+
+`context.window` defaults to what the adapter reports for the model (`capabilities(model).contextWindow`) and is capped by the Scope ceiling `ceilings.context.window`; `reserveTokens` (16k) and `keepRecentTokens` (20k) have Framework defaults. The summary is written by the Harness's own model call by default, or by the provider when the Provider profile says `compaction: "provider"` (Anthropic's `context_management` compaction; the returned block replays byte-exact to the same provider and as text elsewhere). A `compact` Step counts against `longRunning.maxSteps`, is watchdog-covered and re-runs whole after an eviction.
+
+`before-compact { trigger, instructions?, tokensBefore }` Hooks may answer `{ skip: true }` or `{ summary }`; a Hook summary is ignored under the `provider` strategy, which cannot take one. `after-compact { compacted }` observes. `thread.compact({ instructions })` compacts an idle Thread on request. `thread.fork(seq, { threadId? })` opens a new Thread for the same Agent and User holding the log up to `seq`, after a Compaction included; the fork reads the original's media by reference and joins the Scope's Thread index on its first Turn.
+
 ## Offline delivery
 
 Register a Channel's delivery callback in the Catalogue and set its route on an inbound input:

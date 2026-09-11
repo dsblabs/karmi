@@ -78,6 +78,26 @@ describe("request building", () => {
     });
   });
 
+  it("turns a Harness compact request into a forced compaction edit that pauses with the block", async () => {
+    const call = await sent({ compact: { instructions: "Keep the names." } });
+    expect(call.body).toMatchObject({
+      context_management: {
+        edits: [
+          {
+            type: "compact_20260112",
+            trigger: { type: "input_tokens", value: 50_000 },
+            pause_after_compaction: true,
+            instructions: "Keep the names.",
+          },
+        ],
+      },
+    });
+    expect(call.headers["anthropic-beta"]).toContain("compact-2026-01-12");
+    expect((await sent({ compact: {} })).body).toMatchObject({
+      context_management: { edits: [{ type: "compact_20260112", pause_after_compaction: true }] },
+    });
+  });
+
   it("sends Tools with strict and a cache breakpoint on the last one, appends server tools, and maps tool choice", async () => {
     const tools = [
       {
@@ -289,6 +309,7 @@ describe("countTokens and capabilities", () => {
       video: false,
       pdf: true,
       maxMediaBytes: 32 * 1024 * 1024,
+      contextWindow: 200_000,
     });
     expect(provider.capabilities("claude-haiku-4-5-20251001")).toMatchObject({ image: true });
     expect(provider.capabilities("some-new-model")).toEqual({
