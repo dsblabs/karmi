@@ -116,6 +116,14 @@ Long Threads keep working. Before every fresh model Step, and after a `context_w
 
 `before-compact { trigger, instructions?, tokensBefore }` Hooks may answer `{ skip: true }` or `{ summary }`; a Hook summary is ignored under the `provider` strategy, which cannot take one. `after-compact { compacted }` observes. `thread.compact({ instructions })` compacts an idle Thread on request. `thread.fork(seq, { threadId? })` opens a new Thread for the same Agent and User holding the log up to `seq`, after a Compaction included; the fork reads the original's media by reference and joins the Scope's Thread index on its first Turn.
 
+## Skills and deferred Tools
+
+Context is disclosed progressively. A Skill (`defineSkill({ name, description, body, tools?, invokableBy? })`) always shows its description in the Prompt's Skill index; its body Fragment and Tools enter context only when it is activated, by the model through the built-in `use_skill` or by a User command (`send({ kind: "message", parts, skill: "name" })`), as `invokableBy` allows (`both` by default; a Spec reference may narrow it). Activation appends `tools.loaded { names, skill }`; a Tool of an inactive Skill is neither offered nor callable.
+
+Large Tool sets defer. `context.tools.defer` is `auto` (the default: when the deferrable definitions would take `threshold`, 10 % by default, of the context window, all of them defer), `always` or `never`. Built-ins, Skill Tools and references pinned with `{ name, alwaysLoad: true }` never defer and do not count. The model sees a names-only index after its Tool instructions and loads definitions through the always-present, read-only `tool_search { query }`: `select:a,b` for exact names, or keywords matched in memory over names, descriptions and argument names, at most five per search. Each load appends `tools.loaded { names }`, and the result carries `tool_reference` blocks. The loaded set is the union of load points since the last Compaction's `firstKeptSeq`: it survives Turns and parking, and a Compaction that cuts a load point unloads its Tools. Calling an unloaded Tool answers an `isError` result without running anything. The Policy is resolved on the whole set first: a denied Tool is never indexed, an `ask` still pauses at call time, and a Policy that names `tool_search` to deny it while deferral is on fails validation (`policy.tool-search-denied`).
+
+`@karmi/anthropic` encodes this natively (`defer_loading: true`, references replayed as `tool_reference` blocks in the `tool_result`, no `cache_control` on deferred definitions); `@karmi/ai-sdk` resends the definitions the transcript has loaded, with each reference rendered as text.
+
 ## Offline delivery
 
 Register a Channel's delivery callback in the Catalogue and set its route on an inbound input:

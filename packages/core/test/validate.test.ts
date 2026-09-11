@@ -174,6 +174,11 @@ const cases: Record<IssueCode, { spec: unknown; path: string; severity: Issue["s
     path: "/policy/0/effect",
     severity: "error",
   },
+  "policy.tool-search-denied": {
+    spec: spec({ tools: ["weather"], policy: [{ match: { tool: ["book", "tool_search"] }, effect: "deny" }] }),
+    path: "/policy/0/effect",
+    severity: "error",
+  },
   "policy.unreferenced-tool": {
     spec: spec({ tools: ["echo"], policy: [{ match: { tool: "weather" }, effect: "deny" }] }),
     path: "/policy/0/match/tool",

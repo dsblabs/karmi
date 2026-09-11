@@ -1,5 +1,5 @@
 import * as z from "zod/mini";
-import { AgentSpecSchema, type NormalizedAgentSpec } from "./agent-spec.js";
+import { AGENT_SPEC_DEFAULTS, AgentSpecSchema, type NormalizedAgentSpec } from "./agent-spec.js";
 import type { AgentSpec, Capabilities, MemoryProfileProperty } from "./agent.js";
 import type { Catalogue } from "./catalogue.js";
 import { matchGlob } from "./glob.js";
@@ -35,6 +35,7 @@ export const ISSUE_CODES = [
   "connection.unused",
   "policy.match.empty",
   "policy.ask-on-provider-tool",
+  "policy.tool-search-denied",
   "policy.unreferenced-tool",
   "delegation.no-capability",
   "delegation.no-delegates",
@@ -364,6 +365,7 @@ class ReferenceChecker {
       "tool_search",
     ]);
     if (this.spec.memory !== undefined) for (const name of ["remember", "recall"]) granted.add(name);
+    if ((this.spec.skills ?? []).length > 0) granted.add("use_skill");
     if (capabilities.scripts) granted.add("run_script");
     if (capabilities.delegation) granted.add("delegate");
     if (capabilities.scheduling)
@@ -396,8 +398,17 @@ class ReferenceChecker {
     // A whole-server ref brings Tools only the Scope's registry knows, so literal names cannot be checked.
     const wholeServers = this.mcpRefs.some((ref) => ref.tool === undefined);
 
+    // With deferral on, `tool_search` is the only way to a deferred Tool; a rule that names it to deny it contradicts the Spec.
+    const defer = this.spec.context?.tools?.defer ?? AGENT_SPEC_DEFAULTS.context.tools.defer;
     rules.forEach((rule, i) => {
       const path = `/policy/${i}`;
+      if (defer !== "never" && rule.effect === "deny" && toList(rule.match.tool ?? []).includes("tool_search")) {
+        this.issues.error(
+          "policy.tool-search-denied",
+          `${path}/effect`,
+          '`tool_search` cannot be denied while `context.tools.defer` is not "never": it is how deferred Tools are loaded.',
+        );
+      }
       if (rule.match.tool === undefined && rule.match.annotations === undefined) {
         this.issues.error(
           "policy.match.empty",

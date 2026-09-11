@@ -112,7 +112,7 @@ describe("assembleCatalogue", () => {
           },
         },
       ],
-      skills: [{ name: "research", description: "Deep research", tools: ["search"] }],
+      skills: [{ name: "research", description: "Deep research", tools: ["search"], invokableBy: "both" }],
       retrievers: [{ name: "fts", description: "Full text" }],
       hooks: [{ name: "audit", point: "after-tool", description: "Logs tool calls" }],
       agents: [{ agentId: "concierge", name: "Concierge", description: "Front desk" }],

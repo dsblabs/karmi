@@ -175,6 +175,52 @@ it("validates options before invoking the model factory and maps reasoning off",
   expect(adapter.capabilities("test")).toEqual({ image: true, audio: "unknown", video: "unknown", pdf: "unknown" });
 });
 
+it("offers a deferred Tool only once a tool_reference in the transcript loads it, rendering the reference as text", async () => {
+  const { adapter, requests } = setup([finish]);
+  const tools = [
+    { name: "shelf_01", description: "Maps", inputSchema: { type: "object" }, deferred: true },
+    { name: "shelf_02", description: "Charts", inputSchema: { type: "object" }, deferred: true },
+    { name: "tool_search", description: "Search", inputSchema: { type: "object" } },
+  ];
+  await collect(adapter.stream({ ...request, tools }, call));
+  expect(requests[0]?.tools?.map((tool) => tool.name)).toEqual(["tool_search"]);
+  await collect(
+    adapter.stream(
+      {
+        ...request,
+        tools,
+        messages: [
+          {
+            role: "toolResult",
+            toolCallId: "t1",
+            toolName: "tool_search",
+            content: [{ type: "tool_reference", name: "shelf_02" }],
+            isError: false,
+          },
+        ],
+      },
+      call,
+    ),
+  );
+  expect(requests[1]?.tools).toEqual([
+    { type: "function", name: "shelf_02", description: "Charts", inputSchema: { type: "object" } },
+    { type: "function", name: "tool_search", description: "Search", inputSchema: { type: "object" } },
+  ]);
+  expect(requests[1]?.prompt).toEqual([
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "t1",
+          toolName: "tool_search",
+          output: { type: "text", value: 'Tool "shelf_02" is now loaded.' },
+        },
+      ],
+    },
+  ]);
+});
+
 it("cancels the underlying stream when the consumer stops at message.start", async () => {
   let cancelled = false;
   const adapter = aiSdk(() => ({

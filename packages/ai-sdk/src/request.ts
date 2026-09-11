@@ -1,5 +1,11 @@
 import type { LanguageModelV4CallOptions, LanguageModelV4Message, LanguageModelV4TextPart } from "@ai-sdk/provider";
-import type { ContentBlock, Message, ProviderRequest, ProviderCallOptions } from "@karmi/core";
+import {
+  loadedToolNames,
+  type ContentBlock,
+  type Message,
+  type ProviderRequest,
+  type ProviderCallOptions,
+} from "@karmi/core";
 import { InvalidRequestError } from "./errors.js";
 import { z } from "zod";
 import { metadataSchema, providerOptions } from "./options.js";
@@ -20,7 +26,13 @@ export function buildRequest(request: ProviderRequest, call: ProviderCallOptions
   };
   if (reasoning) result.reasoning = reasoning === "off" ? "none" : reasoning;
   if (request.config.headers) result.headers = request.config.headers;
-  if (request.tools) result.tools = request.tools.map((tool) => ({ type: "function", ...tool }));
+  if (request.tools) {
+    // No native deferral here: a deferred definition is offered once the transcript has loaded it.
+    const loaded = loadedToolNames(request.messages);
+    result.tools = request.tools.flatMap(({ deferred, ...tool }) =>
+      deferred && !loaded.has(tool.name) ? [] : [{ type: "function" as const, ...tool }],
+    );
+  }
   if (request.toolChoice)
     result.toolChoice =
       typeof request.toolChoice === "object"
@@ -60,6 +72,7 @@ function message(value: Message): LanguageModelV4Message {
 
 function userPart(block: ContentBlock): LanguageModelV4TextPart {
   if (block.type === "text") return { type: "text", text: block.text };
+  if (block.type === "tool_reference") return { type: "text", text: `Tool "${block.name}" is now loaded.` };
   if (block.type === "media")
     return {
       type: "text",
@@ -85,6 +98,7 @@ function assistantPart(block: ContentBlock): AssistantPart[] {
     case "provider":
       return [];
     case "media":
+    case "tool_reference":
       return [userPart(block)];
   }
 }

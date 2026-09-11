@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { assembleCatalogue, defineFragment, type AgentSpec, type FragmentContext } from "../src/index.js";
-import { evaluatePrompt } from "../src/prompt.js";
+import { assembleCatalogue, defineFragment, defineTool, type AgentSpec, type FragmentContext } from "../src/index.js";
+import { deferredIndex, evaluatePrompt, skillIndex } from "../src/prompt.js";
 
 const greeting = defineFragment({
   name: "greeting",
@@ -51,6 +51,52 @@ describe("evaluatePrompt", () => {
     expect(await evaluatePrompt(spec(instructions), catalogue, { ...ctx, model: "openai/gpt-5" })).toBe(
       "Everyone.\n\nGPT only.",
     );
+  });
+
+  it("appends the Harness sections after the instructions: Tool instructions, the deferred index, the Skill index", async () => {
+    const guide = defineFragment({ name: "guide", render: () => "Use search sparingly." });
+    const search = defineTool({
+      name: "search",
+      description: "Search",
+      input: z.object({}),
+      instructions: guide,
+      execute: () => "",
+    });
+    const prompt = await evaluatePrompt(spec([{ text: "Be brief." }]), catalogue, ctx, {
+      tools: [search],
+      deferred: ["shelf_01", "github__list_issues", "shelf_02", "github__open_issue"],
+      skills: [
+        { name: "research", description: "Deep research", invokableBy: "both" },
+        { name: "deploy", description: "Ship", invokableBy: "user" },
+      ],
+    });
+    expect(prompt).toBe(
+      [
+        "Be brief.",
+        "Use search sparingly.",
+        [
+          "# Deferred tools",
+          "These tools exist but are not loaded. Call `tool_search` with `select:<name>` (several names comma-separated) or with keywords to load one before calling it.",
+          "",
+          "## Tools",
+          "- shelf_01",
+          "- shelf_02",
+          "",
+          "## MCP server github",
+          "- github__list_issues",
+          "- github__open_issue",
+        ].join("\n"),
+        [
+          "# Skills",
+          "Call `use_skill` with a skill's name to load its instructions and tools when its description fits the task.",
+          "- research: Deep research",
+          "- deploy (invoked by the user): Ship",
+        ].join("\n"),
+      ].join("\n\n"),
+    );
+    expect(deferredIndex([])).toBeUndefined();
+    expect(skillIndex([])).toBeUndefined();
+    expect(skillIndex([{ name: "deploy", description: "Ship", invokableBy: "user" }])).not.toContain("use_skill");
   });
 
   it("is undefined when nothing renders", async () => {

@@ -23,6 +23,9 @@ export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] 
       case "turn.input":
         messages.push({ role: "user", content: inputContent(event.input) });
         break;
+      case "tools.loaded":
+        if (event.skill?.body !== undefined) messages.push(userText(event.skill.body));
+        break;
       case "step.started":
         if (event.kind === "model")
           step = { provider: event.provider, model: splitModelId(event.model)[1], content: [] };
@@ -52,14 +55,7 @@ export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] 
         } else {
           for (const call of calls) {
             const result = results.get(call.id);
-            if (result)
-              messages.push({
-                role: "toolResult",
-                toolCallId: call.id,
-                toolName: call.name,
-                content: result.content,
-                isError: result.isError,
-              });
+            if (result) messages.push(toolResultMessage(call, result));
           }
         }
         break;
@@ -67,6 +63,20 @@ export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] 
   }
   return messages;
 }
+
+const toolResultMessage = (
+  call: { id: string; name: string },
+  result: Extract<ThreadEvent, { type: "tool.result" }>,
+): Message => ({
+  role: "toolResult",
+  toolCallId: call.id,
+  toolName: call.name,
+  content: result.content,
+  isError: result.isError,
+});
+
+/** A Skill a User command activated reads as a user message; `use_skill` returns the same text as its result instead. */
+const userText = (text: string): Message => ({ role: "user", content: [{ type: "text", text }] });
 
 export function inputContent(input: TurnInput): ContentBlock[] {
   if (input.kind === "event") return [{ type: "text", text: renderEvent(input) }];

@@ -11,7 +11,8 @@ export type Part =
 
 /** What drives one Turn: a User message or an Event. `channelRef` is echoed on every event of the Turn; `{ deliverer: { name, ref } }` also sets its offline route. */
 export type TurnInput =
-  | { kind: "message"; parts: Part[]; channelRef?: unknown }
+  /** `skill` is a User command: that Skill is activated before the Turn's first model Step. */
+  | { kind: "message"; parts: Part[]; skill?: string; channelRef?: unknown }
   | { kind: "event"; type: string; payload: unknown; channelRef?: unknown };
 
 export interface ThreadEventBase {
@@ -119,6 +120,11 @@ export type ThreadEventData =
       attachments: MediaRef[];
       usage: Usage;
     }
+  /**
+   * A load point: deferred Tools `names` are in the model's context from here until a Compaction drops
+   * this event. A Skill activation names the Skill; `body` is present when no Tool result carries it.
+   */
+  | { type: "tools.loaded"; names: string[]; skill?: { name: string; body?: string } }
   /** `input` is what the Tool ran with, after any `before-tool` rewrite; `ctx.callId` is `{threadId}:{seq}` of this event. */
   | { type: "tool.call"; id: string; name: string; input: unknown }
   /** `output` is the whole result when it was spilled; `interrupted` marks a Harness-synthesised result after an eviction. */

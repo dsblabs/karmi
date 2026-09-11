@@ -10,6 +10,8 @@ export type ContentBlock = (
   | { type: "text"; text: string }
   /** Binary content by reference; an adapter re-inlines the bytes at request-build. */
   | { type: "media"; media: MediaRef }
+  /** In a Tool result: loads the deferred Tool `name`. Native on Anthropic; text plus a resent definition elsewhere. */
+  | { type: "tool_reference"; name: string }
   /** `signature` and `redacted` are provider-opaque and replay only to the model that produced them. */
   | { type: "thinking"; text: string; signature?: string; redacted?: boolean }
   /** `signature` carries a Gemini thought signature; replayed only to the same model. */
@@ -66,6 +68,11 @@ export interface ToolDefinition {
   description: string;
   inputSchema: JsonSchema;
   strict?: boolean;
+  /**
+   * Out of the model's initial context until a `tool_reference` in the transcript loads it. An adapter
+   * with native support encodes that; any other offers the definition once `loadedToolNames` names it.
+   */
+  deferred?: boolean;
 }
 
 export interface ProviderRequest {

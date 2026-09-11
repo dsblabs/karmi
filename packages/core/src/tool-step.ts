@@ -6,6 +6,7 @@ import type { HookContextBase, HookContexts, HookToolCall } from "./hook.js";
 import { errorMessage } from "./errors.js";
 import { hooksAt } from "./hooks.js";
 import { keys } from "./keys.js";
+import type { Loaded } from "./loading.js";
 import { isPlatformFailure } from "./platform-failure.js";
 import { renderTruncated, truncateOutput } from "./spill.js";
 import type { ApprovalAnswer, ApprovalSource, PauseReason, ThreadEvent, ThreadEventData } from "./thread-events.js";
@@ -19,7 +20,7 @@ import {
   type ToolOutcome,
   type ToolResult,
 } from "./tool.js";
-import { outputLimits, type AvailableTool } from "./tools.js";
+import { inContext, outputLimits, type AvailableTool } from "./tools.js";
 
 // One tool Step: the model's tool-call batch run under the Harness gate. Read-only Tools run in
 // parallel, anything else alone; every call is logged before it runs and its result as soon as it
@@ -39,6 +40,8 @@ export interface ToolStepHost {
   spec: AgentSpec;
   catalogue: Catalogue;
   available: ReadonlyMap<string, AvailableTool>;
+  /** What the model's context has loaded; a call to anything else is answered, never run. */
+  loaded: Loaded;
   bucket: R2Bucket | undefined;
   logger: Logger;
   /** The Turn's signal; the Step and each call derive their own from it. */
@@ -154,6 +157,7 @@ async function runCall(
   const annotations = entry?.tool.annotations ?? DEFAULT_ANNOTATIONS;
   const finish = finisher(host, call, started?.input ?? call.input, annotations, signal);
   if (!entry) return finish(started?.seq, error(`Unknown tool "${call.name}".`));
+  if (!inContext(entry, host.loaded)) return finish(started?.seq, error(notLoaded(entry)));
 
   // A Job's outcome is the call's result, whatever the Tool's annotations say about re-running it.
   const job = prior.jobs.get(call.id);
@@ -281,6 +285,10 @@ async function execute(
 }
 
 const callId = (host: ToolStepHost, seq: number) => `${host.threadId}:${seq}`;
+const notLoaded = ({ tool, skill }: AvailableTool): string =>
+  skill === undefined
+    ? `Tool "${tool.name}" is not loaded. Load it with tool_search (select:${tool.name}) before calling it.`
+    : `Tool "${tool.name}" belongs to the skill "${skill}", which is not active. Activate it with use_skill first.`;
 const error = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
 
 function normalize(raw: ToolOutcome): ToolResult | { pending: string } {

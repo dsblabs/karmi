@@ -60,6 +60,7 @@ describe("tool Step", () => {
       "big_output",
       "failing",
       "read_output",
+      "tool_search",
     ]);
     expect(provider.requests[1]?.messages).toEqual([
       { role: "user", content: [{ type: "text", text: "Find a and b" }] },
@@ -130,7 +131,13 @@ describe("Permission Policy", () => {
       "Sorry",
     ]);
     const events = await fresh("guarded").send(message("Book room 1"));
-    expect(provider.requests[0]?.tools?.map((t) => t.name)).toEqual(["weather", "lookup", "whoami", "read_output"]);
+    expect(provider.requests[0]?.tools?.map((t) => t.name)).toEqual([
+      "weather",
+      "lookup",
+      "whoami",
+      "read_output",
+      "tool_search",
+    ]);
     expect(events).toContainEvent({ type: "tool.call", id: "c1", name: "book" });
     expect(events).toContainEvent({
       type: "tool.result",

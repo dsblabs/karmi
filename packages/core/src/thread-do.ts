@@ -1,7 +1,7 @@
 import { AGENT_SPEC_DEFAULTS } from "./agent-spec.js";
 import type { AgentSpec, Capabilities, PolicyRule } from "./agent.js";
 import type { KarmiBindings } from "./bindings.js";
-import { readOutputTool } from "./builtins.js";
+import { activateSkill, builtInTools, type BuiltInHost } from "./builtins.js";
 import {
   attachmentsOf,
   chooseCut,
@@ -14,6 +14,8 @@ import {
   type ContextLimits,
 } from "./compaction.js";
 import type { Logger } from "./context.js";
+import type { FragmentContext } from "./fragment.js";
+import { foldLoaded, type Loaded } from "./loading.js";
 import { deliveryBinding, type DeliveryBinding } from "./deliverer.js";
 import type { Deployment } from "./deployment.js";
 import { errorMessage, KarmiError } from "./errors.js";
@@ -53,7 +55,7 @@ import {
 } from "./thread.js";
 import { runToolStep, type PriorCalls, type ToolCall } from "./tool-step.js";
 import { foldTurn, type Plan, type Request, type TurnState } from "./turn-state.js";
-import { resolveTools, toolDefinitions, type AvailableTool } from "./tools.js";
+import { resolveToolSet, toolDefinitions, toolsInContext, unloadedDeferred, type ToolSet } from "./tools.js";
 import { splitModelId, transcriptFromEvents } from "./transcript.js";
 
 const SCHEMA = `
@@ -851,13 +853,16 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   private async steps(row: ThreadRow): Promise<void> {
     const channelRef = this.turnInput(row.turn)?.channelRef;
-    const available = this.toolSet(row);
+    const available = this.toolSet(row, channelRef);
     for (;;) {
       const boundary = await this.snapshot(row);
       if (this.row().cancelled) return this.cancelTurn(this.row());
       if (!boundary.ok) return this.finish(this.row(), boundary.failure);
       const { snapshot } = boundary;
-      if (row.step === 0 && (await this.beforeTurn(row, snapshot)) === "stop") return;
+      if (row.step === 0) {
+        if ((await this.beforeTurn(row, snapshot)) === "stop") return;
+        if ((await this.activateCommand(row, snapshot, available(snapshot), channelRef)) === "stop") return;
+      }
       const turn = this.joinSteers(row, this.readTurn(row), channelRef);
       const { plan } = turn;
       if (plan.kind === "finish")
@@ -880,18 +885,75 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     }
   }
 
-  /** The Tool set is a function of the snapshot and the Thread's remembered allows, which only grow. */
-  private toolSet(row: ThreadRow): (snapshot: TurnSnapshot) => Map<string, AvailableTool> {
-    let cached: { remembered: number; available: Map<string, AvailableTool> } | undefined;
+  /**
+   * The Tool set of one Step: the snapshot's references under the Thread's remembered allows and what
+   * the context has loaded so far. Resolved per Step, since a Step may load Tools for the next one.
+   */
+  private toolSet(row: ThreadRow, channelRef: unknown): (snapshot: TurnSnapshot) => ToolSet {
     return (snapshot) => {
-      const remembered = this.remembered();
-      if (cached?.remembered !== remembered.size) {
-        const builtIns = [readOutputTool(this.env.KARMI_MEDIA, row.scope_id, row.thread_id)];
-        const available = resolveTools(snapshot.spec, this.deployment.catalogue, snapshot.policy, builtIns, remembered);
-        cached = { remembered: remembered.size, available };
-      }
-      return cached.available;
+      let set: ToolSet | undefined;
+      const current = (): ToolSet => {
+        if (!set) throw new Error("A built-in Tool ran before its Tool set was resolved.");
+        return set;
+      };
+      const host: BuiltInHost = {
+        scope: row.scope_id,
+        threadId: row.thread_id,
+        bucket: this.env.KARMI_MEDIA,
+        tools: current,
+        fragmentContext: () => this.fragmentContext(row, snapshot, current()),
+        append: (data) => void this.append(row.turn, data, channelRef),
+      };
+      set = resolveToolSet({
+        spec: snapshot.spec,
+        catalogue: this.deployment.catalogue,
+        policy: snapshot.policy,
+        builtIns: builtInTools(host),
+        remembered: this.remembered(),
+        loaded: this.loaded(),
+        window: this.limits(snapshot).window,
+      });
+      return set;
     };
+  }
+
+  /** What every Fragment of this Turn sees; `model` is the one in use when a model Step names it. */
+  private fragmentContext(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    set: ToolSet,
+    model = snapshot.spec.model.id,
+  ): FragmentContext {
+    return {
+      model,
+      scope: row.scope_id,
+      ...(row.user_id !== null && { user: row.user_id }),
+      thread: { id: row.thread_id },
+      tools: toolsInContext(set).map((tool) => tool.name),
+      now: new Date(this.deployment.clock.now()),
+    };
+  }
+
+  /** A Turn input naming a Skill is a User command: the Skill is activated before the first model Step. */
+  private async activateCommand(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    set: ToolSet,
+    channelRef: unknown,
+  ): Promise<Next> {
+    const input = this.turnInput(row.turn);
+    if (input?.kind !== "message" || input.skill === undefined) return "continue";
+    const name = input.skill;
+    // Already active, from an earlier Turn or from before an eviction: nothing to add.
+    if (set.loaded.skills.has(name)) return "continue";
+    const entry = set.skills.find((candidate) => candidate.skill.name === name && candidate.invokableBy !== "model");
+    if (!entry) {
+      const message = `Skill "${name}" cannot be invoked by the User of Agent "${row.agent_id}".`;
+      return stop(this.finish(this.row(), failure("skill.unavailable", message)));
+    }
+    const ctx = this.fragmentContext(row, snapshot, set);
+    await activateSkill(entry.skill, ctx, (data) => void this.append(row.turn, data, channelRef), "event");
+    return "continue";
   }
 
   private async beforeTurn(row: ThreadRow, snapshot: TurnSnapshot): Promise<Next> {
@@ -925,7 +987,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     row: ThreadRow,
     snapshot: TurnSnapshot,
     plan: ModelPlan,
-    available: ReadonlyMap<string, AvailableTool>,
+    available: ToolSet,
     channelRef: unknown,
     turn: TurnState,
     context = this.contextLog(),
@@ -984,7 +1046,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     row: ThreadRow,
     snapshot: TurnSnapshot,
     plan: ToolPlan,
-    available: ReadonlyMap<string, AvailableTool>,
+    available: ToolSet,
     channelRef: unknown,
   ): Promise<Next> {
     const attempt = (plan.fresh ? 0 : row.recoveries) + 1;
@@ -1164,14 +1226,30 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   // `thread.compacted`; the log before the cut is never touched.
   /** The events the next model call is built from: from the last Compaction's `firstKeptSeq` on. */
   private contextLog(): ContextLog {
+    const { seq, firstKeptSeq } = this.lastCompaction();
+    return { events: this.read(firstKeptSeq - 1, "part", Number.MAX_SAFE_INTEGER), floor: seq };
+  }
+
+  /** The last Compaction's seq (0 without one) and the first seq still in the model's context. */
+  private lastCompaction(): { seq: number; firstKeptSeq: number } {
     const last = this.sql
       .exec<{ seq: number; json: string }>(
         "SELECT seq, json FROM events WHERE type = 'thread.compacted' ORDER BY seq DESC LIMIT 1",
       )
       .toArray()[0];
     const compacted = last && decodeEvent(last.json);
-    const firstKeptSeq = compacted?.type === "thread.compacted" ? compacted.firstKeptSeq : 1;
-    return { events: this.read(firstKeptSeq - 1, "part", Number.MAX_SAFE_INTEGER), floor: last?.seq ?? 0 };
+    return { seq: last?.seq ?? 0, firstKeptSeq: compacted?.type === "thread.compacted" ? compacted.firstKeptSeq : 1 };
+  }
+
+  /** What the model's context has loaded: every load point from the last Compaction's `firstKeptSeq` on. */
+  private loaded(): Loaded {
+    const rows = this.sql
+      .exec<{ json: string }>(
+        "SELECT json FROM events WHERE type = 'tools.loaded' AND seq >= ? ORDER BY seq",
+        this.lastCompaction().firstKeptSeq,
+      )
+      .toArray();
+    return foldLoaded(rows.map(({ json }) => decodeEvent(json)));
   }
 
   private limits(snapshot: TurnSnapshot): ContextLimits {
@@ -1337,7 +1415,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private async modelStep(
     row: ThreadRow,
     snapshot: TurnSnapshot,
-    available: ReadonlyMap<string, AvailableTool>,
+    available: ToolSet,
     model: string,
     events: ThreadEvent[],
     channelRef: unknown,
@@ -1364,26 +1442,26 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private async modelRequest(
     row: ThreadRow,
     snapshot: TurnSnapshot,
-    available: ReadonlyMap<string, AvailableTool>,
+    available: ToolSet,
     model: string,
     events: ThreadEvent[],
   ): Promise<ProviderRequest> {
     const { spec, profile } = snapshot;
     const [, native] = splitModelId(model);
     const tools = toolDefinitions(available);
-    const offered = [...available.values()].flatMap(({ tool, effect }) => (effect === "deny" ? [] : [tool]));
     const system = await evaluatePrompt(
       spec,
       this.deployment.catalogue,
+      this.fragmentContext(row, snapshot, available, model),
       {
-        model,
-        scope: row.scope_id,
-        ...(row.user_id !== null && { user: row.user_id }),
-        thread: { id: row.thread_id },
-        tools: tools.map((tool) => tool.name),
-        now: new Date(this.deployment.clock.now()),
+        tools: toolsInContext(available),
+        deferred: unloadedDeferred(available),
+        skills: available.skills.map(({ skill, invokableBy }) => ({
+          name: skill.name,
+          description: skill.description,
+          invokableBy,
+        })),
       },
-      offered,
     );
     const { messages } = prepareMessages(transcriptFromEvents(events), {
       provider: profile.adapter,
@@ -1447,7 +1525,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private toolStep(
     row: ThreadRow,
     snapshot: TurnSnapshot,
-    available: ReadonlyMap<string, AvailableTool>,
+    available: ToolSet,
     attempt: number,
     batch: ToolCall[],
     prior: PriorCalls,
@@ -1465,7 +1543,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         attempt,
         spec: snapshot.spec,
         catalogue: this.deployment.catalogue,
-        available,
+        available: available.available,
+        loaded: available.loaded,
         bucket: this.env.KARMI_MEDIA,
         logger: this.logger(row),
         signal,

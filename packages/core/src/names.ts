@@ -9,6 +9,7 @@ export const BUILT_IN_TOOL_NAMES: readonly string[] = [
   "run_script",
   "read_output",
   "tool_search",
+  "use_skill",
   "delegate",
   "schedule",
   "cancel_schedule",
