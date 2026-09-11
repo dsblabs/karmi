@@ -5,6 +5,7 @@ import {
   defineAgent,
   defineFragment,
   defineHook,
+  defineSkill,
   defineTool,
   type ToolContext,
   type ToolResult,
@@ -296,6 +297,77 @@ const providerCompactor = defineAgent({
   context: compactContext,
 });
 
+// Progressive disclosure: a shelf of small Tools that only crosses the `auto` threshold under a small window.
+const SHELF_TOPICS = [
+  "Ancient maps and atlases",
+  "Sea charts and maps",
+  "Poetry",
+  "Botany",
+  "Astronomy",
+  "Cookery",
+  "Law",
+  "Music",
+  "Medicine",
+  "Travel",
+  "Geology",
+  "Chess",
+  "Coins",
+  "Textiles",
+  "Ceramics",
+  "Letters",
+  "Theatre",
+  "Mathematics",
+  "Rivers",
+  "Birds",
+  "Clocks",
+  "Glass",
+  "Bridges",
+  "Gardens",
+];
+export const shelves = SHELF_TOPICS.map((topic, i) =>
+  defineTool({
+    name: `shelf_${String(i + 1).padStart(2, "0")}`,
+    description: `${topic}: fetch one item from this shelf of the archive`,
+    input: z.object({ item: z.string() }),
+    annotations: { readOnlyHint: true },
+    execute: ({ item }) => `Shelf ${i + 1} holds ${item}`,
+  }),
+);
+const search = defineTool({
+  name: "search",
+  description: "Search the archive catalogue",
+  input: z.object({ q: z.string() }),
+  annotations: { readOnlyHint: true },
+  execute: ({ q }) => `Found ${q}`,
+});
+const research = defineSkill({
+  name: "research",
+  description: "Deep research into the archive",
+  body: (ctx) => `Search first, then summarise for ${ctx.user ?? "the desk"}.`,
+  tools: [search],
+});
+const deploy = defineSkill({
+  name: "deploy",
+  description: "Deploy checklist",
+  body: () => "Deploy checklist.",
+  invokableBy: "user",
+});
+const librarianSpec = {
+  name: "Librarian",
+  instructions: [{ text: "Keep the archive." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: [{ name: "weather", alwaysLoad: true }, ...shelves.map((tool) => tool.name)],
+  skills: [{ name: "research", invokableBy: "model" as const }, "deploy"],
+  policy: [{ match: { tool: "*" }, effect: "allow" as const }],
+};
+const librarian = defineAgent({
+  ...librarianSpec,
+  agentId: "librarian",
+  context: { window: 4000, reserveTokens: 200, keepRecentTokens: 200 },
+});
+// The same shelf under the default window: well under the threshold, so nothing defers.
+const librarianWide = defineAgent({ ...librarianSpec, agentId: "librarian-wide" });
+
 export const recovery = {
   execute: async (_input: { id: string }, _ctx: ToolContext): Promise<string> => "done",
   before: [] as string[],
@@ -344,8 +416,9 @@ export const { karmi, clock, provider, scope } = createTestKarmi({
     defineDeliverer({ name: "receipt-parts", deliver: receipt.deliver }),
     defineDeliverer({ name: "receipt-deltas", granularity: "delta", deliver: receipt.deliver }),
   ],
-  tools: [weather, lookup, book, bigOutput, whoami, failing, startJob, waitGate, ...recoveryTools],
+  tools: [weather, lookup, book, bigOutput, whoami, failing, startJob, waitGate, ...recoveryTools, ...shelves],
   fragments: [guest],
+  skills: [research, deploy],
   hooks: [
     recoveryBefore,
     recoveryAfter,
@@ -360,7 +433,19 @@ export const { karmi, clock, provider, scope } = createTestKarmi({
     compactGate,
     compactLog,
   ],
-  agents: [recoveryAgent, concierge, guarded, asking, hooked, approver, budgeted, compactor, providerCompactor],
+  agents: [
+    recoveryAgent,
+    concierge,
+    guarded,
+    asking,
+    hooked,
+    approver,
+    budgeted,
+    compactor,
+    providerCompactor,
+    librarian,
+    librarianWide,
+  ],
 });
 
 export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;

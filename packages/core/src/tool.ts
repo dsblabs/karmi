@@ -45,7 +45,11 @@ export interface ToolContext<Settings = undefined> {
   signal: AbortSignal;
 }
 
-export type ToolContent = { type: "text"; text: string } | { type: "media"; media: MediaRef };
+export type ToolContent =
+  | { type: "text"; text: string }
+  | { type: "media"; media: MediaRef }
+  /** A load point: the deferred Tool `name` is in the model's context from this result on. */
+  | { type: "tool_reference"; name: string };
 
 /** JSON-Schema-native so an MCP tool's result is the same shape. */
 export interface ToolResult {

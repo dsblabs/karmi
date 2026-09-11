@@ -7,6 +7,7 @@ import type {
   BetaTextBlockParam,
   BetaTool,
   BetaToolChoice,
+  BetaToolReferenceBlockParam,
   BetaToolResultBlockParam,
   BetaToolUnion,
   MessageCountTokensParams,
@@ -146,15 +147,18 @@ function toTools(
   options: AnthropicOptions,
   cache: BetaCacheControlEphemeral | undefined,
 ): BetaToolUnion[] {
-  const out: BetaToolUnion[] = (tools ?? []).map((tool) => ({
+  // Deferred definitions go last: the API strips them from the cached prefix, and they take no cache_control.
+  const ordered = (tools ?? []).toSorted((a, b) => Number(a.deferred === true) - Number(b.deferred === true));
+  const out: BetaToolUnion[] = ordered.map((tool) => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.inputSchema as BetaTool["input_schema"],
     ...(tool.strict && { strict: true }),
+    ...(tool.deferred && { defer_loading: true }),
   }));
   if (options.serverTools) out.push(...options.serverTools);
-  const last = out[out.length - 1];
-  if (cache && last && "input_schema" in last) last.cache_control = cache;
+  const last = out.filter((tool): tool is BetaTool => "input_schema" in tool && !tool.defer_loading).at(-1);
+  if (cache && last) last.cache_control = cache;
   return out;
 }
 
@@ -188,14 +192,20 @@ function toMessages(messages: Message[], cache: BetaCacheControlEphemeral | unde
         push("assistant", message.content.flatMap(assistantBlock));
         break;
       case "toolResult": {
-        const content = message.content.flatMap(userBlock) as BetaToolResultBlockParam["content"];
+        // A load point carries only its references; the API rejects them mixed with text, so any text follows as siblings.
+        const references: BetaToolReferenceBlockParam[] = message.content.flatMap((block) =>
+          block.type === "tool_reference" ? [{ type: "tool_reference", tool_name: block.name }] : [],
+        );
+        const text = message.content.flatMap(userBlock);
+        const content: BetaToolResultBlockParam["content"] = references.length > 0 ? references : text;
         push("user", [
           {
             type: "tool_result",
             tool_use_id: message.toolCallId,
             is_error: message.isError,
-            ...(content && content.length > 0 && { content }),
+            ...(content.length > 0 && { content }),
           },
+          ...(references.length > 0 ? text : []),
         ]);
         break;
       }

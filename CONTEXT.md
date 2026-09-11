@@ -1,6 +1,6 @@
 # karmi
 
-A code-first TypeScript framework for building agent harnesses that run natively on a serverless runtime. An agent *platform* is a later product built with it, not part of it.
+A code-first TypeScript framework for building agent harnesses that run natively on a serverless runtime. An agent _platform_ is a later product built with it, not part of it.
 
 ## Language
 
@@ -9,7 +9,7 @@ karmi itself — the code-first library a developer uses to define and deploy ag
 _Avoid_: platform, SDK (when referring to karmi as a whole)
 
 **Platform**:
-A product built *with* the Framework that lets its own users run agents. Owns tenants, sign-up, billing. Out of karmi's scope.
+A product built _with_ the Framework that lets its own users run agents. Owns tenants, sign-up, billing. Out of karmi's scope.
 _Avoid_: framework, app
 
 **Harness**:
@@ -33,7 +33,7 @@ A gated ability an Agent may be granted in its Agent Spec, such as running small
 _Avoid_: permission, feature flag
 
 **Script**:
-Model-written code run under the `scripts` Capability through the built-in `run_script` Tool. Two tiers behind one `Sandbox` seam: `isolate` (v0 — JS in a Dynamic Worker with no filesystem, egress, secrets or storage; its only API is the Agent's allow-resolved Tools, every call re-entering the Harness gate) and `container` (shell or Python in a Sandbox SDK container with a Workspace, allow-listed egress and no Tool bridge). Nested Tool calls are child Thread events, not model context; files come back as `artifacts: MediaRef[]`. A container Script still running at `wallMs` is promoted to a Job.
+Model-written code run under the `scripts` Capability through the built-in `run_script` Tool. Two tiers behind one `Sandbox` seam: `isolate` (v0 — JS in a Dynamic Worker with no filesystem, egress, secrets or storage; its only API is the Agent's allow-resolved Tools, every call re-entering the Harness gate) and `container` (shell or Python in a Sandbox SDK container with a Workspace, allow-listed egress and no Tool bridge). Nested Tool calls are child Thread events, not model context; files come back as `artifacts: MediaRef[]`. A container Script still running at `wallMs` is promoted to a Job. A Script reaches every allow-resolved Tool whether or not the model has loaded it: the deferred loaded set gates model calls only.
 _Avoid_: code execution, bash tool, sandbox (for the script itself), function calling
 
 **Workspace**:
@@ -113,7 +113,7 @@ A named, reusable piece of a Prompt: a function of the turn's context (model, Sc
 _Avoid_: section, snippet, partial, context provider
 
 **Skill**:
-A named procedure an Agent can load on demand: a description the model always sees, a body Fragment that enters context only when invoked (by the model, by a User command, or both), and optional Tools that exist only while it is active. Attached to an Agent by reference, defined in code.
+A named procedure an Agent can load on demand: a description the model always sees, a body Fragment that enters context only when invoked (by the model through the built-in `use_skill`, by a User command naming it on a Turn input, or both), and optional Tools that exist only while it is active. Activation is a load point (`tools.loaded`), so a Skill stays active until a Compaction drops it. Attached to an Agent by reference, defined in code.
 _Avoid_: command, slash command, plugin, playbook
 
 **Memory**:

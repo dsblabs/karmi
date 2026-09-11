@@ -63,6 +63,7 @@ export interface SkillDescription {
   name: string;
   description: string;
   tools: string[];
+  invokableBy: Skill["invokableBy"];
   settings?: JsonSchema;
 }
 export interface RetrieverDescription {
@@ -165,6 +166,7 @@ function describe(c: Omit<Catalogue, "describe">): CatalogueDescription {
       name: s.name,
       description: s.description,
       tools: s.tools.map((t) => t.name),
+      invokableBy: s.invokableBy,
       ...optional("settings", s.settings && toJsonSchema(s.settings)),
     })),
     retrievers: [...c.retrievers.values()].map((r) => ({

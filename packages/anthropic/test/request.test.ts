@@ -226,6 +226,57 @@ describe("request building", () => {
     expect(call.headers["anthropic-beta"]).toBe("compact-2026-01-12");
   });
 
+  it("defers Tools natively: defer_loading last and uncached, references in the tool_result, text as siblings", async () => {
+    const tools = [
+      { name: "shelf_01", description: "Maps", inputSchema: { type: "object" }, deferred: true },
+      { name: "weather", description: "Weather", inputSchema: { type: "object" } },
+      { name: "tool_search", description: "Search", inputSchema: { type: "object" } },
+    ];
+    const messages: Message[] = [
+      { role: "user", content: [{ type: "text", text: "Maps" }] },
+      {
+        role: "assistant",
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        stopReason: "tool_use",
+        content: [{ type: "tool_call", id: "t1", name: "tool_search", input: { query: "select:shelf_01,nope" } }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "t1",
+        toolName: "tool_search",
+        content: [
+          { type: "tool_reference", name: "shelf_01" },
+          { type: "text", text: "Not in the deferred index: nope." },
+        ],
+        isError: false,
+      },
+    ];
+    const call = await sent({ tools, messages });
+    expect(call.body!.tools).toEqual([
+      { name: "weather", description: "Weather", input_schema: { type: "object" } },
+      {
+        name: "tool_search",
+        description: "Search",
+        input_schema: { type: "object" },
+        cache_control: { type: "ephemeral" },
+      },
+      { name: "shelf_01", description: "Maps", input_schema: { type: "object" }, defer_loading: true },
+    ]);
+    expect((call.body!.messages as unknown[]).at(-1)).toEqual({
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: "t1",
+          is_error: false,
+          content: [{ type: "tool_reference", tool_name: "shelf_01" }],
+        },
+        { type: "text", text: "Not in the deferred index: nope.", cache_control: { type: "ephemeral" } },
+      ],
+    });
+  });
+
   it("puts the cache breakpoint on the last tool_result when that ends the conversation", async () => {
     const messages: Message[] = [
       { role: "user", content: [{ type: "text", text: "Book" }] },

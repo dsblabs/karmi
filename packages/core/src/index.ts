@@ -65,7 +65,7 @@ export {
   type KnowledgeDocument,
   type Passage,
 } from "./retriever.js";
-export { defineSkill, type Skill } from "./skill.js";
+export { defineSkill, type Skill, type SkillInvoker } from "./skill.js";
 export {
   defineTool,
   type Tool,
@@ -143,7 +143,8 @@ export type {
   CompactionTrigger,
   CompactionStrategy,
 } from "./thread-events.js";
-export { evaluatePrompt } from "./prompt.js";
+export { evaluatePrompt, type PromptSections } from "./prompt.js";
+export { loadedToolNames, type Loaded } from "./loading.js";
 export { transcriptFromEvents, renderEvent } from "./transcript.js";
 export { DEFAULT_WINDOW, type ContextLimits } from "./compaction.js";
 export type { DurableObjects, DurableObjectClass, KarmiDurableObject } from "./durable-objects.js";
