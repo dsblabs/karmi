@@ -1,12 +1,31 @@
 import { z } from "zod";
-import { defineDeliverer, type ThreadEvent, defineAgent, defineFragment, defineHook, defineTool, type ToolContext, type ToolResult } from "../src/index.js";
+import {
+  defineDeliverer,
+  type ThreadEvent,
+  defineAgent,
+  defineFragment,
+  defineHook,
+  defineTool,
+  type ToolContext,
+  type ToolResult,
+} from "../src/index.js";
 import { createTestKarmi } from "../src/testing/index.js";
 
 /** What the Tools and Hooks below saw, in order; tests read and reset it. */
 export const trace: string[] = [];
 export const deliveries: { key: string; events: ThreadEvent[]; ref: unknown }[] = [];
 export const deliveryFailure = { remaining: 0 };
-const receipt = defineDeliverer({ name: "receipt", granularity: "turn", deliver: (key, events, ref) => { if (deliveryFailure.remaining > 0) { deliveryFailure.remaining--; throw new Error("Delivery unavailable"); } deliveries.push({ key, events, ref }); } });
+const receipt = defineDeliverer({
+  name: "receipt",
+  granularity: "turn",
+  deliver: (key, events, ref) => {
+    if (deliveryFailure.remaining > 0) {
+      deliveryFailure.remaining--;
+      throw new Error("Delivery unavailable");
+    }
+    deliveries.push({ key, events, ref });
+  },
+});
 
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -62,7 +81,21 @@ const whoami = defineTool({
   requires: "crm",
   instructions: defineFragment({ name: "whoami-instructions", render: () => "Call whoami when asked who you are." }),
   execute: (_, ctx: ToolContext<{ tone: string }>) => ({
-    content: [{ type: "text", text: JSON.stringify({ scope: ctx.scope, user: ctx.user, thread: ctx.thread, settings: ctx.settings, connection: ctx.connection, attempt: ctx.attempt, callId: ctx.callId, aborted: ctx.signal.aborted }) }],
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          scope: ctx.scope,
+          user: ctx.user,
+          thread: ctx.thread,
+          settings: ctx.settings,
+          connection: ctx.connection,
+          attempt: ctx.attempt,
+          callId: ctx.callId,
+          aborted: ctx.signal.aborted,
+        }),
+      },
+    ],
   }),
 });
 
@@ -103,26 +136,71 @@ const waitGate = defineTool({
   },
 });
 
-const guest = defineFragment({ name: "guest", args: z.object({ hotel: z.string() }), render: (ctx, { hotel }) => `You serve ${ctx.user ?? "the front desk"} at ${hotel}.` });
+const guest = defineFragment({
+  name: "guest",
+  args: z.object({ hotel: z.string() }),
+  render: (ctx, { hotel }) => `You serve ${ctx.user ?? "the front desk"} at ${hotel}.`,
+});
 
-const rewriteCity = defineHook({ name: "rewrite-city", point: "before-tool", run: ({ call }) => (call.name === "weather" ? { effect: "allow", input: { city: "Paris" } } : undefined) });
-const denyBooking = defineHook({ name: "deny-booking", point: "before-tool", run: ({ call }) => (call.name === "book" ? { effect: "deny", reason: "No bookings today" } : undefined) });
-const denyLookup = defineHook({ name: "deny-lookup", point: "before-tool", run: () => ({ effect: "deny", reason: "Not now" }) });
-const observe = defineHook({ name: "observe", point: "after-tool", run: ({ call, result }) => void trace.push(`after-tool:${call.name}:${result.isError ? "error" : "ok"}`) });
-const turnLog = defineHook({ name: "turn-start", point: "before-turn", run: ({ input, turn }) => void trace.push(`before-turn:${turn}:${input.kind}`) });
-const turnEnd = defineHook({ name: "turn-end", point: "after-turn", run: ({ end, turn, signal }) => void trace.push(`after-turn:${turn}:${end.type}${signal.aborted ? ":aborted" : ""}`) });
+const rewriteCity = defineHook({
+  name: "rewrite-city",
+  point: "before-tool",
+  run: ({ call }) => (call.name === "weather" ? { effect: "allow", input: { city: "Paris" } } : undefined),
+});
+const denyBooking = defineHook({
+  name: "deny-booking",
+  point: "before-tool",
+  run: ({ call }) => (call.name === "book" ? { effect: "deny", reason: "No bookings today" } : undefined),
+});
+const denyLookup = defineHook({
+  name: "deny-lookup",
+  point: "before-tool",
+  run: () => ({ effect: "deny", reason: "Not now" }),
+});
+const observe = defineHook({
+  name: "observe",
+  point: "after-tool",
+  run: ({ call, result }) => void trace.push(`after-tool:${call.name}:${result.isError ? "error" : "ok"}`),
+});
+const turnLog = defineHook({
+  name: "turn-start",
+  point: "before-turn",
+  run: ({ input, turn }) => void trace.push(`before-turn:${turn}:${input.kind}`),
+});
+const turnEnd = defineHook({
+  name: "turn-end",
+  point: "after-turn",
+  run: ({ end, turn, signal }) => void trace.push(`after-turn:${turn}:${end.type}${signal.aborted ? ":aborted" : ""}`),
+});
 // Slow enough that an answer can land while the park's after-turn Hooks are still running.
-const slowTurnEnd = defineHook({ name: "slow-turn-end", point: "after-turn", run: async () => void (await settle(30)) });
-const onError = defineHook({ name: "on-error", point: "on-error", run: ({ error }) => void trace.push(`on-error:${error.code}`) });
+const slowTurnEnd = defineHook({
+  name: "slow-turn-end",
+  point: "after-turn",
+  run: async () => void (await settle(30)),
+});
+const onError = defineHook({
+  name: "on-error",
+  point: "on-error",
+  run: ({ error }) => void trace.push(`on-error:${error.code}`),
+});
 
 const concierge = defineAgent({
   agentId: "concierge",
   name: "Concierge",
-  instructions: [{ text: "Help the guest." }, { fragment: "guest", args: { hotel: "The Grand" } }, { text: "You are Claude.", models: "anthropic/*" }],
+  instructions: [
+    { text: "Help the guest." },
+    { fragment: "guest", args: { hotel: "The Grand" } },
+    { text: "You are Claude.", models: "anthropic/*" },
+  ],
   model: { id: "anthropic/claude-sonnet-5", fallbacks: ["anthropic/claude-haiku-4-5"] },
   tools: ["weather", "lookup", "book", "big_output", "failing"],
   policy: [{ match: { tool: "*" }, effect: "allow" }],
-  hooks: { "before-turn": ["turn-start"], "after-turn": ["turn-end"], "after-tool": ["observe"], "on-error": ["on-error"] },
+  hooks: {
+    "before-turn": ["turn-start"],
+    "after-turn": ["turn-end"],
+    "after-tool": ["observe"],
+    "on-error": ["on-error"],
+  },
   context: { toolOutput: { maxChars: 400, maxLines: 10 } },
 });
 
@@ -142,12 +220,43 @@ const guarded = defineAgent({
 });
 
 // Default Policy: nothing matches, so every call is an `ask`.
-const asking = defineAgent({ agentId: "asking", name: "Asking", instructions: [{ text: "Ask first." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["book"] });
+const asking = defineAgent({
+  agentId: "asking",
+  name: "Asking",
+  instructions: [{ text: "Ask first." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["book"],
+});
 // Approvals: `lookup` and the Job/Scope fixtures are allowed, everything else asks, with a one-hour timeout.
-const approver = defineAgent({ agentId: "approver", name: "Approver", instructions: [{ text: "Ask before booking." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup", "book", "weather", "start_job", "wait_gate"], policy: [{ match: { tool: ["lookup", "start_job", "wait_gate"] }, effect: "allow" }], approvals: { timeout: 60 * 60 * 1000 }, hooks: { "after-turn": ["turn-end", "slow-turn-end"] } });
+const approver = defineAgent({
+  agentId: "approver",
+  name: "Approver",
+  instructions: [{ text: "Ask before booking." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["lookup", "book", "weather", "start_job", "wait_gate"],
+  policy: [{ match: { tool: ["lookup", "start_job", "wait_gate"] }, effect: "allow" }],
+  approvals: { timeout: 60 * 60 * 1000 },
+  hooks: { "after-turn": ["turn-end", "slow-turn-end"] },
+});
 // Budgets: a tiny `longRunning` grant so exhaustion is a few Steps away.
-const budgeted = defineAgent({ agentId: "budgeted", name: "Budgeted", instructions: [{ text: "Loop." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup"], policy: [{ match: { tool: "*" }, effect: "allow" }], capabilities: { longRunning: { maxSteps: 3, maxTokens: 100 } } });
-const hooked = defineAgent({ agentId: "hooked", name: "Hooked", instructions: [{ text: "Hooked." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["lookup"], policy: [{ match: { tool: "*" }, effect: "allow" }], hooks: { "before-tool": ["deny-lookup"] } });
+const budgeted = defineAgent({
+  agentId: "budgeted",
+  name: "Budgeted",
+  instructions: [{ text: "Loop." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["lookup"],
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+  capabilities: { longRunning: { maxSteps: 3, maxTokens: 100 } },
+});
+const hooked = defineAgent({
+  agentId: "hooked",
+  name: "Hooked",
+  instructions: [{ text: "Hooked." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["lookup"],
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+  hooks: { "before-tool": ["deny-lookup"] },
+});
 
 export const recovery = {
   execute: async (_input: { id: string }, _ctx: ToolContext): Promise<string> => "done",
@@ -158,16 +267,59 @@ const recoveryTools = [
   { name: "recover_read", annotations: { readOnlyHint: true } },
   { name: "recover_idempotent", annotations: { idempotentHint: true } },
   { name: "recover_mutation", annotations: {} },
-].map(({ name, annotations }) => defineTool({ name, annotations, description: "Recovery fixture", input: z.object({ id: z.string() }), execute: (input, ctx) => recovery.execute(input, ctx) }));
-const recoveryBefore = defineHook({ name: "recovery-before", point: "before-tool", run: ({ call }) => { recovery.before.push(call.id); } });
-const recoveryAfter = defineHook({ name: "recovery-after", point: "after-tool", run: ({ result }) => { recovery.after.push(result); } });
-const recoveryAgent = defineAgent({ agentId: "recovery", name: "Recovery", instructions: [{ text: "Recover." }], model: { id: "anthropic/claude-sonnet-5" }, tools: recoveryTools.map(t => t.name), policy: [{ match: { tool: "*" }, effect: "allow" }], hooks: { "before-tool": ["recovery-before"], "after-tool": ["recovery-after"] } });
+].map(({ name, annotations }) =>
+  defineTool({
+    name,
+    annotations,
+    description: "Recovery fixture",
+    input: z.object({ id: z.string() }),
+    execute: (input, ctx) => recovery.execute(input, ctx),
+  }),
+);
+const recoveryBefore = defineHook({
+  name: "recovery-before",
+  point: "before-tool",
+  run: ({ call }) => {
+    recovery.before.push(call.id);
+  },
+});
+const recoveryAfter = defineHook({
+  name: "recovery-after",
+  point: "after-tool",
+  run: ({ result }) => {
+    recovery.after.push(result);
+  },
+});
+const recoveryAgent = defineAgent({
+  agentId: "recovery",
+  name: "Recovery",
+  instructions: [{ text: "Recover." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: recoveryTools.map((t) => t.name),
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+  hooks: { "before-tool": ["recovery-before"], "after-tool": ["recovery-after"] },
+});
 
 export const { karmi, clock, provider, scope } = createTestKarmi({
-  deliverers: [receipt, defineDeliverer({ name: "receipt-parts", deliver: receipt.deliver }), defineDeliverer({ name: "receipt-deltas", granularity: "delta", deliver: receipt.deliver })],
+  deliverers: [
+    receipt,
+    defineDeliverer({ name: "receipt-parts", deliver: receipt.deliver }),
+    defineDeliverer({ name: "receipt-deltas", granularity: "delta", deliver: receipt.deliver }),
+  ],
   tools: [weather, lookup, book, bigOutput, whoami, failing, startJob, waitGate, ...recoveryTools],
   fragments: [guest],
-  hooks: [recoveryBefore, recoveryAfter, rewriteCity, denyBooking, denyLookup, observe, turnLog, turnEnd, slowTurnEnd, onError],
+  hooks: [
+    recoveryBefore,
+    recoveryAfter,
+    rewriteCity,
+    denyBooking,
+    denyLookup,
+    observe,
+    turnLog,
+    turnEnd,
+    slowTurnEnd,
+    onError,
+  ],
   agents: [recoveryAgent, concierge, guarded, asking, hooked, approver, budgeted],
 });
 

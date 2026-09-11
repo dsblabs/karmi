@@ -1,4 +1,4 @@
-import { KarmiError } from "./errors.js";
+import { KarmiError, type KarmiErrorCode } from "./errors.js";
 
 export type CatalogueKind = "tool" | "fragment" | "skill" | "retriever" | "hook" | "deliverer";
 
@@ -19,7 +19,10 @@ export const BUILT_IN_TOOL_NAMES: readonly string[] = [
 
 export function assertName(kind: CatalogueKind, name: string): void {
   if (name.startsWith("__") || name.startsWith("mcp:")) {
-    throw new KarmiError("name.reserved", `${kind} name "${name}" is reserved: names may not start with "__" or "mcp:".`);
+    throw new KarmiError(
+      "name.reserved",
+      `${kind} name "${name}" is reserved: names may not start with "__" or "mcp:".`,
+    );
   }
   if (!NAME.test(name)) {
     throw new KarmiError("name.invalid", `${kind} name "${name}" must match [a-z0-9_-]{1,64}.`);
@@ -32,7 +35,7 @@ export function assertName(kind: CatalogueKind, name: string): void {
 export const IDENTIFIER = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** Caller-chosen identifiers (agentId, ScopeId) are wider than Catalogue names. */
-export function assertIdentifier(code: string, label: string, value: string): void {
+export function assertIdentifier(code: KarmiErrorCode, label: string, value: string): void {
   if (!IDENTIFIER.test(value)) {
     throw new KarmiError(code, `${label} "${value}" must match [A-Za-z0-9_-]{1,64}.`);
   }

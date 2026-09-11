@@ -9,6 +9,19 @@
 - Always design for performance. Write code that is efficient in latency, memory, and cost, and pick data structures and access patterns that stay efficient at scale.
 - Comments explain intent, not code. The code is its own source of truth. A comment on a function or class saying why it exists is welcome; a comment restating what the next line does is not.
 
+## TypeScript
+
+The formatter, linter and type checker enforce the mechanical rules. Run all three before you finish, and never add to a lint suppressions file. Beyond the tooling:
+
+- Narrow types instead of asserting them.
+- Decode external or stored data in one function per shape.
+- Load state once and pass it down. Never mix a stale copy with a fresh read.
+- Keep one source of truth. Extract shared logic instead of mirroring it, and derive types from schemas.
+- Use one error style per layer: return results or throw, not both.
+- Keep pure logic apart from I/O.
+
+Details, including persistence schema, ids and tests: `docs/agents/typescript.md`.
+
 ## Agent skills
 
 ### Issue tracker

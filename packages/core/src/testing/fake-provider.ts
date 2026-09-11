@@ -1,5 +1,15 @@
 import { KarmiError } from "../errors.js";
-import type { ContentBlock, ModelCapabilities, Provider, ProviderCallOptions, ProviderError, ProviderEvent, ProviderRequest, StopReason, Usage } from "../provider.js";
+import type {
+  ContentBlock,
+  ModelCapabilities,
+  Provider,
+  ProviderCallOptions,
+  ProviderError,
+  ProviderEvent,
+  ProviderRequest,
+  StopReason,
+  Usage,
+} from "../provider.js";
 
 // A scripted Provider: a real implementation of the seam whose replies a test writes and whose
 // requests a test reads back. Registered under an ordinary profile, so Agent Specs stay unchanged.
@@ -45,11 +55,15 @@ export const reply = {
   text: (...chunks: string[]): ReplyPart => ({ part: "text", chunks }),
   reasoning: (...chunks: string[]): ReplyPart => ({ part: "reasoning", chunks }),
   /** Without an id the call gets `call_<block index>`, so transcripts stay stable across test order. */
-  toolCall: (name: string, input: unknown = {}, id?: string): ReplyPart => (id === undefined ? { part: "toolCall", name, input } : { part: "toolCall", id, name, input }),
+  toolCall: (name: string, input: unknown = {}, id?: string): ReplyPart =>
+    id === undefined ? { part: "toolCall", name, input } : { part: "toolCall", id, name, input },
   usage: (usage: Partial<Usage>): ReplyPart => ({ part: "usage", usage }),
   raw: (raw: unknown): ReplyPart => ({ part: "raw", raw }),
   /** Ends the stream with an `error` event instead of `message.end`. */
-  error: (error: Partial<ProviderError> & Pick<ProviderError, "code">): ReplyPart => ({ part: "error", error: { message: error.code, retryable: false, ...error } }),
+  error: (error: Partial<ProviderError> & Pick<ProviderError, "code">): ReplyPart => ({
+    part: "error",
+    error: { message: error.code, retryable: false, ...error },
+  }),
   /** Overrides the stop reason the fake would infer (`tool_use` with a tool call, `end_turn` otherwise). */
   stop: (stopReason: StopReason): ReplyPart => ({ part: "stop", stopReason }),
 };
@@ -96,8 +110,13 @@ export function fakeProvider(script: ReplyScript | Reply[], options: FakeProvide
 function toScript(script: ReplyScript | Reply[]): ReplyScript {
   if (typeof script === "function") return script;
   return ({ index }) => {
-    if (index >= script.length) throw new KarmiError("test.script-exhausted", `fakeProvider has ${script.length} scripted replies but received call #${index + 1}.`);
-    return script[index]!;
+    const reply = script[index];
+    if (reply === undefined)
+      throw new KarmiError(
+        "test.script-exhausted",
+        `fakeProvider has ${script.length} scripted replies but received call #${index + 1}.`,
+      );
+    return reply;
   };
 }
 
@@ -108,7 +127,9 @@ function isEventStream(reply: Reply): reply is ProviderEvent[] {
 /** Expands a scripted reply into the event stream a real adapter would produce. */
 export function toEvents(reply: Reply, model: string): ProviderEvent[] {
   if (isEventStream(reply)) return reply;
-  const parts = (Array.isArray(reply) ? reply : [reply]).map((part): ReplyPart => (typeof part === "string" ? { part: "text", chunks: [part] } : part));
+  const parts = (Array.isArray(reply) ? reply : [reply]).map((part): ReplyPart =>
+    typeof part === "string" ? { part: "text", chunks: [part] } : part,
+  );
 
   const events: ProviderEvent[] = [{ type: "message.start", model }];
   let usage: Usage = ZERO_USAGE;
@@ -126,7 +147,11 @@ export function toEvents(reply: Reply, model: string): ProviderEvent[] {
       }
       case "toolCall": {
         events.push({ type: "delta", index, kind: "tool_input", text: JSON.stringify(part.input) });
-        events.push({ type: "part", index, block: { type: "tool_call", id: part.id ?? `call_${index}`, name: part.name, input: part.input } });
+        events.push({
+          type: "part",
+          index,
+          block: { type: "tool_call", id: part.id ?? `call_${index}`, name: part.name, input: part.input },
+        });
         index++;
         if (stopReason === "end_turn") stopReason = "tool_use";
         break;

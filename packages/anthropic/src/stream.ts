@@ -1,5 +1,10 @@
 import type { ContentBlock, Logger, ProviderEvent, StopReason, Usage } from "@karmi/core";
-import type { BetaMessageDeltaUsage, BetaRawMessageStreamEvent, BetaStopReason, BetaUsage } from "@anthropic-ai/sdk/resources/beta/messages/messages";
+import type {
+  BetaMessageDeltaUsage,
+  BetaRawMessageStreamEvent,
+  BetaStopReason,
+  BetaUsage,
+} from "@anthropic-ai/sdk/resources/beta/messages/messages";
 
 // Anthropic's SSE events → karmi's ProviderEvents. Text, thinking and tool input stream as deltas and
 // land as completed `part`s; a server tool waits for its result block so one `part` carries both, byte-exact.
@@ -32,7 +37,10 @@ const STOP: Record<BetaStopReason, StopReason> = {
   model_context_window_exceeded: "context_window_exceeded",
 };
 
-export async function* mapStream(events: AsyncIterable<BetaRawMessageStreamEvent>, context: StreamContext): AsyncGenerator<ProviderEvent> {
+export async function* mapStream(
+  events: AsyncIterable<BetaRawMessageStreamEvent>,
+  context: StreamContext,
+): AsyncGenerator<ProviderEvent> {
   const open = new Map<number, Open>();
   const pending: Pending = new Map();
   let usage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -54,67 +62,11 @@ export async function* mapStream(events: AsyncIterable<BetaRawMessageStreamEvent
         yield { type: "message.start", model: message.model, responseId: message.id };
         break;
       }
-      case "content_block_start": {
-        const block = event.content_block;
-        switch (block.type) {
-          case "text":
-            open.set(event.index, { kind: "text", text: block.text });
-            break;
-          case "thinking":
-            open.set(event.index, { kind: "thinking", text: block.thinking, signature: block.signature });
-            break;
-          case "tool_use":
-            open.set(event.index, { kind: "tool", id: block.id, name: block.name, json: "", input: block.input });
-            break;
-          case "server_tool_use":
-            open.set(event.index, { kind: "server", id: block.id, name: block.name, json: "", input: block.input });
-            break;
-          case "compaction":
-            open.set(event.index, { kind: "compaction", block: block as unknown as Record<string, unknown>, content: block.content ?? "" });
-            break;
-          default:
-            // The served model is on `message_start`; the hop itself is this block, logged once.
-            if (block.type === "fallback") context.logger?.info("provider fallback", { from: block.from.model, to: block.to.model, trigger: block.trigger });
-            open.set(event.index, { kind: "other", block: block as unknown as Record<string, unknown>, json: "" });
-        }
+      case "content_block_start":
+      case "content_block_delta":
+      case "content_block_stop":
+        yield* blockEvent(event, open, pending, context.logger);
         break;
-      }
-      case "content_block_delta": {
-        const current = open.get(event.index);
-        if (!current) break;
-        const { delta } = event;
-        switch (delta.type) {
-          case "text_delta":
-            if (current.kind === "text") current.text += delta.text;
-            yield { type: "delta", index: event.index, kind: "text", text: delta.text };
-            break;
-          case "thinking_delta":
-            if (current.kind === "thinking") current.text += delta.thinking;
-            yield { type: "delta", index: event.index, kind: "thinking", text: delta.thinking };
-            break;
-          case "signature_delta":
-            if (current.kind === "thinking") current.signature += delta.signature;
-            break;
-          case "input_json_delta":
-            if ("json" in current) current.json += delta.partial_json;
-            if (current.kind === "tool") yield { type: "delta", index: event.index, kind: "tool_input", text: delta.partial_json };
-            break;
-          case "compaction_delta":
-            if (current.kind === "compaction") current.content += delta.content ?? "";
-            break;
-          default:
-            break;
-        }
-        break;
-      }
-      case "content_block_stop": {
-        const current = open.get(event.index);
-        open.delete(event.index);
-        if (!current) break;
-        const part = close(current, event.index, pending);
-        if (part) yield part;
-        break;
-      }
       case "message_delta": {
         usage = mergeUsage(usage, event.usage);
         if (event.delta.stop_reason) stopReason = STOP[event.delta.stop_reason] ?? "end_turn";
@@ -124,7 +76,12 @@ export async function* mapStream(events: AsyncIterable<BetaRawMessageStreamEvent
       case "message_stop": {
         yield* flush();
         ended = true;
-        yield { type: "message.end", stopReason, usage: withGateway(usage, context.gateway), ...(stopDetails !== undefined && { stopDetails }) };
+        yield {
+          type: "message.end",
+          stopReason,
+          usage: withGateway(usage, context.gateway),
+          ...(stopDetails !== undefined && { stopDetails }),
+        };
         break;
       }
       default:
@@ -133,8 +90,39 @@ export async function* mapStream(events: AsyncIterable<BetaRawMessageStreamEvent
   }
   if (!ended) {
     yield* flush();
-    yield { type: "error", error: { code: "network", message: "The stream ended before message_stop.", retryable: true } };
+    yield {
+      type: "error",
+      error: { code: "network", message: "The stream ended before message_stop.", retryable: true },
+    };
   }
+}
+
+type BlockEvent = Extract<
+  BetaRawMessageStreamEvent,
+  { type: "content_block_start" | "content_block_delta" | "content_block_stop" }
+>;
+
+/** One content-block event against the blocks still open, yielding whatever it completes or streams. */
+function* blockEvent(
+  event: BlockEvent,
+  open: Map<number, Open>,
+  pending: Pending,
+  logger: Logger | undefined,
+): Generator<ProviderEvent> {
+  if (event.type === "content_block_start") {
+    open.set(event.index, openBlock(event.content_block, logger));
+    return;
+  }
+  const current = open.get(event.index);
+  if (!current) return;
+  if (event.type === "content_block_delta") {
+    const delta = applyDelta(current, event.delta, event.index);
+    if (delta) yield delta;
+    return;
+  }
+  open.delete(event.index);
+  const part = close(current, event.index, pending);
+  if (part) yield part;
 }
 
 function close(current: Open, index: number, pending: Pending): ProviderEvent | undefined {
@@ -142,25 +130,112 @@ function close(current: Open, index: number, pending: Pending): ProviderEvent | 
     case "text":
       return { type: "part", index, block: { type: "text", text: current.text } };
     case "thinking":
-      return { type: "part", index, block: { type: "thinking", text: current.text, ...(current.signature && { signature: current.signature }) } };
+      return {
+        type: "part",
+        index,
+        block: { type: "thinking", text: current.text, ...(current.signature && { signature: current.signature }) },
+      };
     case "tool":
-      return { type: "part", index, block: { type: "tool_call", id: current.id, name: current.name, input: parseInput(current.json, current.input) } };
+      return {
+        type: "part",
+        index,
+        block: {
+          type: "tool_call",
+          id: current.id,
+          name: current.name,
+          input: parseInput(current.json, current.input),
+        },
+      };
     case "server":
-      pending.set(current.id, { index, block: { type: "server_tool", id: current.id, name: current.name, input: parseInput(current.json, current.input) } });
+      pending.set(current.id, {
+        index,
+        block: {
+          type: "server_tool",
+          id: current.id,
+          name: current.name,
+          input: parseInput(current.json, current.input),
+        },
+      });
       return undefined;
     case "compaction":
-      return { type: "part", index, block: { type: "compaction", summary: current.content, raw: { ...current.block, content: current.content } } };
-    case "other": {
-      const block = current.json ? { ...current.block, input: parseInput(current.json, current.block.input) } : current.block;
-      if (block.type === "redacted_thinking") return { type: "part", index, block: { type: "thinking", text: "", signature: String(block.data), redacted: true } };
-      const owner = typeof block.tool_use_id === "string" ? pending.get(block.tool_use_id) : undefined;
-      if (owner) {
-        pending.delete(block.tool_use_id as string);
-        return { type: "part", index: owner.index, block: { ...owner.block, result: { raw: block, summary: summarize(block) } } };
-      }
-      return { type: "part", index, block: { type: "provider", raw: block } };
-    }
+      return {
+        type: "part",
+        index,
+        block: { type: "compaction", summary: current.content, raw: { ...current.block, content: current.content } },
+      };
+    case "other":
+      return closeOther(current, index, pending);
   }
+}
+
+type StartedBlock = Extract<BetaRawMessageStreamEvent, { type: "content_block_start" }>["content_block"];
+type BlockDelta = Extract<BetaRawMessageStreamEvent, { type: "content_block_delta" }>["delta"];
+
+function openBlock(block: StartedBlock, logger: Logger | undefined): Open {
+  switch (block.type) {
+    case "text":
+      return { kind: "text", text: block.text };
+    case "thinking":
+      return { kind: "thinking", text: block.thinking, signature: block.signature };
+    case "tool_use":
+      return { kind: "tool", id: block.id, name: block.name, json: "", input: block.input };
+    case "server_tool_use":
+      return { kind: "server", id: block.id, name: block.name, json: "", input: block.input };
+    case "compaction":
+      return { kind: "compaction", block: { ...block }, content: block.content ?? "" };
+    default:
+      // The served model is on `message_start`; the hop itself is this block, logged once.
+      if (block.type === "fallback")
+        logger?.info("provider fallback", { from: block.from.model, to: block.to.model, trigger: block.trigger });
+      return { kind: "other", block: { ...block }, json: "" };
+  }
+}
+
+/** Grows the open block by one delta; returns the delta to stream, if it is one karmi streams. */
+function applyDelta(current: Open, delta: BlockDelta, index: number): ProviderEvent | undefined {
+  switch (delta.type) {
+    case "text_delta":
+      if (current.kind === "text") current.text += delta.text;
+      return { type: "delta", index, kind: "text", text: delta.text };
+    case "thinking_delta":
+      if (current.kind === "thinking") current.text += delta.thinking;
+      return { type: "delta", index, kind: "thinking", text: delta.thinking };
+    case "signature_delta":
+      if (current.kind === "thinking") current.signature += delta.signature;
+      return undefined;
+    case "input_json_delta":
+      if ("json" in current) current.json += delta.partial_json;
+      return current.kind === "tool"
+        ? { type: "delta", index, kind: "tool_input", text: delta.partial_json }
+        : undefined;
+    case "compaction_delta":
+      if (current.kind === "compaction") current.content += delta.content ?? "";
+      return undefined;
+    default:
+      return undefined;
+  }
+}
+
+/** A block karmi has no family for: redacted thinking, a server tool's result, or anything replayed verbatim. */
+function closeOther(current: Extract<Open, { kind: "other" }>, index: number, pending: Pending): ProviderEvent {
+  const block = current.json
+    ? { ...current.block, input: parseInput(current.json, current.block.input) }
+    : current.block;
+  if (block.type === "redacted_thinking")
+    return {
+      type: "part",
+      index,
+      block: { type: "thinking", text: "", signature: String(block.data), redacted: true },
+    };
+  const toolUseId = typeof block.tool_use_id === "string" ? block.tool_use_id : undefined;
+  const owner = toolUseId === undefined ? undefined : pending.get(toolUseId);
+  if (toolUseId === undefined || !owner) return { type: "part", index, block: { type: "provider", raw: block } };
+  pending.delete(toolUseId);
+  return {
+    type: "part",
+    index: owner.index,
+    block: { ...owner.block, result: { raw: block, summary: summarize(block) } },
+  };
 }
 
 function parseInput(json: string, fallback: unknown): unknown {
@@ -186,7 +261,12 @@ function summarize(block: Record<string, unknown>): string {
     });
     if (lines.length > 0) return lines.join("\n").slice(0, 4000);
   } else if (typeof content === "string") return content.slice(0, 4000);
-  else if (typeof content === "object" && content !== null && typeof (content as Record<string, unknown>).error_code === "string") return `error: ${(content as Record<string, unknown>).error_code}`;
+  else if (
+    typeof content === "object" &&
+    content !== null &&
+    typeof (content as Record<string, unknown>).error_code === "string"
+  )
+    return `error: ${(content as Record<string, unknown>).error_code}`;
   return JSON.stringify(content ?? block).slice(0, 4000);
 }
 
@@ -202,7 +282,8 @@ function mergeUsage(current: Usage, raw: BetaUsage | BetaMessageDeltaUsage | nul
     next.cacheWrite1h = raw.cache_creation.ephemeral_1h_input_tokens;
   }
   if (raw.output_tokens_details) next.reasoning = raw.output_tokens_details.thinking_tokens;
-  if (raw.server_tool_use) next.serverToolCalls = raw.server_tool_use.web_search_requests + raw.server_tool_use.web_fetch_requests;
+  if (raw.server_tool_use)
+    next.serverToolCalls = raw.server_tool_use.web_search_requests + raw.server_tool_use.web_fetch_requests;
   return next;
 }
 

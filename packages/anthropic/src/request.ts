@@ -1,5 +1,17 @@
 import type { ContentBlock, Message, ProviderRequest, ToolDefinition } from "@karmi/core";
-import type { BetaCacheControlEphemeral, BetaContentBlockParam, BetaMessageParam, BetaTextBlockParam, BetaTool, BetaToolChoice, BetaToolResultBlockParam, BetaToolUnion, MessageCountTokensParams, MessageCreateParamsBase } from "@anthropic-ai/sdk/resources/beta/messages/messages";
+import type {
+  BetaCacheControlEphemeral,
+  BetaContentBlockParam,
+  BetaMessageParam,
+  BetaServerToolUseBlockParam,
+  BetaTextBlockParam,
+  BetaTool,
+  BetaToolChoice,
+  BetaToolResultBlockParam,
+  BetaToolUnion,
+  MessageCountTokensParams,
+  MessageCreateParamsBase,
+} from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import { DEFAULT_MAX_TOKENS } from "./models.js";
 import { anthropicOptions, type AnthropicOptions } from "./options.js";
 
@@ -14,7 +26,16 @@ const BETAS = {
 } as const;
 
 /** Block param types that accept `cache_control`. */
-const CACHEABLE = new Set(["text", "image", "document", "tool_use", "tool_result", "server_tool_use", "compaction", "tool_reference"]);
+const CACHEABLE = new Set([
+  "text",
+  "image",
+  "document",
+  "tool_use",
+  "tool_result",
+  "server_tool_use",
+  "compaction",
+  "tool_reference",
+]);
 
 export function buildParams(request: ProviderRequest): MessageCreateParamsBase {
   const options = anthropicOptions(request);
@@ -26,7 +47,10 @@ export function buildParams(request: ProviderRequest): MessageCreateParamsBase {
     max_tokens: request.params?.maxOutputTokens ?? DEFAULT_MAX_TOKENS,
     messages,
   };
-  if (request.system !== undefined) params.system = [cache ? { type: "text", text: request.system, cache_control: cache } : { type: "text", text: request.system }];
+  if (request.system !== undefined)
+    params.system = [
+      cache ? { type: "text", text: request.system, cache_control: cache } : { type: "text", text: request.system },
+    ];
   if (tools.length > 0) params.tools = tools;
   const choice = toolChoice(request.toolChoice, request.parallelToolCalls);
   if (choice) params.tool_choice = choice;
@@ -34,10 +58,16 @@ export function buildParams(request: ProviderRequest): MessageCreateParamsBase {
   if (request.params?.topP !== undefined) params.top_p = request.params.topP;
 
   const reasoning = request.params?.reasoning;
-  const thinking = options.thinking ?? (reasoning === "off" ? { type: "disabled" as const } : reasoning ? { type: "adaptive" as const } : undefined);
+  const thinking =
+    options.thinking ??
+    (reasoning === "off" ? { type: "disabled" as const } : reasoning ? { type: "adaptive" as const } : undefined);
   if (thinking) params.thinking = thinking;
   const effort = options.effort ?? (reasoning && reasoning !== "off" ? reasoning : undefined);
-  if (effort || options.taskBudget) params.output_config = { ...(effort && { effort }), ...(options.taskBudget && { task_budget: options.taskBudget }) };
+  if (effort || options.taskBudget)
+    params.output_config = {
+      ...(effort && { effort }),
+      ...(options.taskBudget && { task_budget: options.taskBudget }),
+    };
   if (options.fallbacks) params.fallbacks = options.fallbacks;
   if (options.contextManagement) params.context_management = options.contextManagement;
   if (options.mcpServers) params.mcp_servers = options.mcpServers;
@@ -49,7 +79,18 @@ export function buildParams(request: ProviderRequest): MessageCreateParamsBase {
 
 /** The subset of a request `count_tokens` accepts. */
 export function countTokensParams(request: ProviderRequest): MessageCountTokensParams {
-  const { model, messages, system, tools, tool_choice, thinking, context_management, mcp_servers, betas, output_config } = buildParams(request);
+  const {
+    model,
+    messages,
+    system,
+    tools,
+    tool_choice,
+    thinking,
+    context_management,
+    mcp_servers,
+    betas,
+    output_config,
+  } = buildParams(request);
   return {
     model,
     messages,
@@ -67,11 +108,16 @@ export function countTokensParams(request: ProviderRequest): MessageCountTokensP
 function collectBetas(request: ProviderRequest, options: AnthropicOptions, messages: BetaMessageParam[]): string[] {
   const betas = new Set<string>(options.betas);
   // A profile header lists betas too; folded in here because a request-level list would replace it.
-  for (const beta of request.config.headers?.["anthropic-beta"]?.split(",") ?? []) if (beta.trim()) betas.add(beta.trim());
+  for (const beta of request.config.headers?.["anthropic-beta"]?.split(",") ?? [])
+    if (beta.trim()) betas.add(beta.trim());
   if (options.fallbacks) betas.add(BETAS.fallbacks);
   if (options.mcpServers) betas.add(BETAS.mcp);
   if (options.taskBudget) betas.add(BETAS.taskBudget);
-  const compacts = options.contextManagement?.edits?.some((edit) => edit.type === "compact_20260112") || messages.some((message) => Array.isArray(message.content) && message.content.some((block) => block.type === "compaction"));
+  const compacts =
+    options.contextManagement?.edits?.some((edit) => edit.type === "compact_20260112") ||
+    messages.some(
+      (message) => Array.isArray(message.content) && message.content.some((block) => block.type === "compaction"),
+    );
   if (compacts) betas.add(BETAS.compaction);
   return [...betas];
 }
@@ -80,7 +126,11 @@ function cacheControl(ttl?: "5m" | "1h"): BetaCacheControlEphemeral {
   return ttl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
 }
 
-function toTools(tools: ToolDefinition[] | undefined, options: AnthropicOptions, cache: BetaCacheControlEphemeral | undefined): BetaToolUnion[] {
+function toTools(
+  tools: ToolDefinition[] | undefined,
+  options: AnthropicOptions,
+  cache: BetaCacheControlEphemeral | undefined,
+): BetaToolUnion[] {
   const out: BetaToolUnion[] = (tools ?? []).map((tool) => ({
     name: tool.name,
     description: tool.description,
@@ -124,7 +174,14 @@ function toMessages(messages: Message[], cache: BetaCacheControlEphemeral | unde
         break;
       case "toolResult": {
         const content = message.content.flatMap(userBlock) as BetaToolResultBlockParam["content"];
-        push("user", [{ type: "tool_result", tool_use_id: message.toolCallId, is_error: message.isError, ...(content && content.length > 0 && { content }) }]);
+        push("user", [
+          {
+            type: "tool_result",
+            tool_use_id: message.toolCallId,
+            is_error: message.isError,
+            ...(content && content.length > 0 && { content }),
+          },
+        ]);
         break;
       }
     }
@@ -132,7 +189,8 @@ function toMessages(messages: Message[], cache: BetaCacheControlEphemeral | unde
   const last = out[out.length - 1];
   if (cache && last && Array.isArray(last.content)) {
     const block = last.content[last.content.length - 1];
-    if (block && CACHEABLE.has(block.type)) (block as { cache_control?: BetaCacheControlEphemeral }).cache_control = cache;
+    if (block && CACHEABLE.has(block.type))
+      (block as { cache_control?: BetaCacheControlEphemeral }).cache_control = cache;
   }
   return out;
 }
@@ -143,7 +201,12 @@ function userBlock(block: ContentBlock): BetaTextBlockParam[] {
       return block.text ? [{ type: "text", text: block.text }] : [];
     // Bytes are re-inlined by the media pipeline; until it lands a ref is described, never dropped silently.
     case "media":
-      return [{ type: "text", text: `[attachment omitted: ${block.media.name ?? block.media.id} (${block.media.mimeType}, ${block.media.bytes} bytes)]` }];
+      return [
+        {
+          type: "text",
+          text: `[attachment omitted: ${block.media.name ?? block.media.id} (${block.media.mimeType}, ${block.media.bytes} bytes)]`,
+        },
+      ];
     default:
       return [];
   }
@@ -160,7 +223,16 @@ function assistantBlock(block: ContentBlock): BetaContentBlockParam[] {
     case "tool_call":
       return [{ type: "tool_use", id: block.id, name: block.name, input: block.input }];
     case "server_tool":
-      return [{ type: "server_tool_use", id: block.id, name: block.name as never, input: block.input }, ...(block.result ? [block.result.raw as BetaContentBlockParam] : [])];
+      return [
+        // Replayed only to the provider that produced it, so the name is one Anthropic itself emitted.
+        {
+          type: "server_tool_use",
+          id: block.id,
+          name: block.name as BetaServerToolUseBlockParam["name"],
+          input: block.input,
+        },
+        ...(block.result ? [block.result.raw as BetaContentBlockParam] : []),
+      ];
     case "compaction":
       return block.raw ? [block.raw as BetaContentBlockParam] : [{ type: "text", text: block.summary }];
     case "provider":

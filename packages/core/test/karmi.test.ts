@@ -9,7 +9,9 @@ describe("createKarmi", () => {
     expect(response.status).toBe(200);
     const description = await response.json();
     expect(description).toMatchObject({
-      tools: expect.arrayContaining([expect.objectContaining({ name: "weather", annotations: expect.objectContaining({ readOnlyHint: true }) })]),
+      tools: expect.arrayContaining([
+        expect.objectContaining({ name: "weather", annotations: expect.objectContaining({ readOnlyHint: true }) }),
+      ]),
       agents: expect.arrayContaining([{ agentId: "concierge", name: "Concierge" }]),
     });
   });
@@ -27,7 +29,9 @@ describe("createKarmi", () => {
   it("validates the ScopeId on scope()", () => {
     const karmi = createKarmi({ catalogue: {} });
     expect(karmi.scope("tenant_1").id).toBe("tenant_1");
-    expect(() => karmi.scope("bad/id")).toThrowError(new KarmiError("scope.id.invalid", 'ScopeId "bad/id" must match [A-Za-z0-9_-]{1,64}.'));
+    expect(() => karmi.scope("bad/id")).toThrowError(
+      new KarmiError("scope.id.invalid", 'ScopeId "bad/id" must match [A-Za-z0-9_-]{1,64}.'),
+    );
   });
 });
 
@@ -47,7 +51,12 @@ describe("bindings", () => {
   });
 
   it("fails clearly when a required binding is missing", () => {
-    expect(() => resolveBindings({ KARMI_THREADS: env.KARMI_THREADS })).toThrowError(new KarmiError("bindings.missing", "Missing Durable Object binding KARMI_SCOPES; see @karmi/core/wrangler.baseline.jsonc."));
+    expect(() => resolveBindings({ KARMI_THREADS: env.KARMI_THREADS })).toThrowError(
+      new KarmiError(
+        "bindings.missing",
+        "Missing Durable Object binding KARMI_SCOPES; see @karmi/core/wrangler.baseline.jsonc.",
+      ),
+    );
   });
 });
 
@@ -58,7 +67,10 @@ describe("compatibility baseline", () => {
 
   it("fails at startup below the date floor", () => {
     expect(() => assertCompatibilityBaseline({})).toThrowError(
-      new KarmiError("compatibility.date", "karmi requires compatibility_date >= 2026-08-04 (ADR-0002); set it in wrangler.jsonc."),
+      new KarmiError(
+        "compatibility.date",
+        "karmi requires compatibility_date >= 2026-08-04 (ADR-0002); set it in wrangler.jsonc.",
+      ),
     );
   });
 });

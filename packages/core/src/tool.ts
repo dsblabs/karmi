@@ -11,7 +11,12 @@ export interface ToolAnnotations {
   openWorldHint: boolean;
 }
 
-export const DEFAULT_ANNOTATIONS: ToolAnnotations = { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
+export const DEFAULT_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false,
+};
 
 /** A resolved Connection value: user-level (Scope, User, name) wins over agent-level (Scope, Agent, name). */
 export interface Connection {
@@ -33,7 +38,9 @@ export interface ToolContext<Settings = undefined> {
   attempt: number;
   /** Stable across re-runs; pass it upstream as an idempotency key. */
   callId: string;
-  media: { put(body: ReadableStream | ArrayBuffer | string, opts?: { mimeType?: string; name?: string }): Promise<MediaRef> };
+  media: {
+    put(body: ReadableStream | ArrayBuffer | string, opts?: { mimeType?: string; name?: string }): Promise<MediaRef>;
+  };
   logger: Logger;
   signal: AbortSignal;
 }
@@ -82,7 +89,13 @@ export interface Tool<In extends Schema = Schema, Settings extends Schema | unde
   readonly execute: (input: Output<In>, ctx: ToolContext<Output<Settings>>) => ToolOutcome | Promise<ToolOutcome>;
 }
 
-export function defineTool<In extends Schema, Settings extends Schema | undefined = undefined>(input: ToolInput<In, Settings>): Tool<In, Settings> {
+export function defineTool<In extends Schema, Settings extends Schema | undefined = undefined>(
+  input: ToolInput<In, Settings>,
+): Tool<In, Settings> {
   assertName("tool", input.name);
-  return Object.freeze({ kind: "tool", ...input, annotations: Object.freeze({ ...DEFAULT_ANNOTATIONS, ...input.annotations }) });
+  return Object.freeze({
+    kind: "tool",
+    ...input,
+    annotations: Object.freeze({ ...DEFAULT_ANNOTATIONS, ...input.annotations }),
+  });
 }

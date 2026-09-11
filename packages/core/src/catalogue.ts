@@ -84,7 +84,8 @@ export interface AgentDescription {
 function byName<T extends { name: string }>(kind: CatalogueKind, items: readonly T[]): Map<string, T> {
   const map = new Map<string, T>();
   for (const item of items) {
-    if (map.has(item.name)) throw new KarmiError("name.duplicate", `Duplicate ${kind} name "${item.name}" in the Catalogue.`);
+    if (map.has(item.name))
+      throw new KarmiError("name.duplicate", `Duplicate ${kind} name "${item.name}" in the Catalogue.`);
     map.set(item.name, item);
   }
   return map;
@@ -104,7 +105,8 @@ export function assembleCatalogue(input: CatalogueInput): Catalogue {
   const hooks = byName("hook", input.hooks ?? []);
   const agents = new Map<string, Agent>();
   for (const agent of input.agents ?? []) {
-    if (agents.has(agent.agentId)) throw new KarmiError("name.duplicate", `Duplicate agent "${agent.agentId}" in the Catalogue.`);
+    if (agents.has(agent.agentId))
+      throw new KarmiError("name.duplicate", `Duplicate agent "${agent.agentId}" in the Catalogue.`);
     agents.set(agent.agentId, agent);
   }
   let fingerprint: Promise<string> | undefined;
@@ -129,7 +131,10 @@ function assertAgentsResolve(catalogue: Catalogue): void {
     const errors = validateAgentSpec(agent.spec, catalogue).issues.filter((issue) => issue.severity === "error");
     if (errors.length > 0) {
       const detail = errors.map((issue) => `${issue.path}: ${issue.message}`).join("; ");
-      throw new KarmiError("agent.spec.invalid", `Agent "${agent.agentId}" does not resolve against the Catalogue: ${detail}`);
+      throw new KarmiError(
+        "agent.spec.invalid",
+        `Agent "${agent.agentId}" does not resolve against the Catalogue: ${detail}`,
+      );
     }
   }
 }
@@ -141,7 +146,7 @@ function optional<T>(key: string, value: T | undefined): Record<string, T> {
 
 function describe(c: Omit<Catalogue, "describe">): CatalogueDescription {
   return {
-    deliverers: [...c.deliverers.values()].map(d => ({ name: d.name, granularity: d.granularity ?? "part" })),
+    deliverers: [...c.deliverers.values()].map((d) => ({ name: d.name, granularity: d.granularity ?? "part" })),
     tools: [...c.tools.values()].map((t) => ({
       name: t.name,
       description: t.description,
@@ -167,8 +172,16 @@ function describe(c: Omit<Catalogue, "describe">): CatalogueDescription {
       ...optional("description", r.description),
       ...optional("settings", r.settings && toJsonSchema(r.settings)),
     })),
-    hooks: [...c.hooks.values()].map((h) => ({ name: h.name, point: h.point, ...optional("description", h.description) })),
-    agents: [...c.agents.values()].map((a) => ({ agentId: a.agentId, name: a.spec.name, ...optional("description", a.spec.description) })),
+    hooks: [...c.hooks.values()].map((h) => ({
+      name: h.name,
+      point: h.point,
+      ...optional("description", h.description),
+    })),
+    agents: [...c.agents.values()].map((a) => ({
+      agentId: a.agentId,
+      name: a.spec.name,
+      ...optional("description", a.spec.description),
+    })),
   };
 }
 

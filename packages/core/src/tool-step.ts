@@ -3,12 +3,22 @@ import type { AgentSpec } from "./agent.js";
 import type { Catalogue } from "./catalogue.js";
 import type { Logger, MediaRef, ScopeId, UserId } from "./context.js";
 import type { HookContextBase, HookContexts, HookToolCall } from "./hook.js";
+import { errorMessage } from "./errors.js";
 import { hooksAt } from "./hooks.js";
 import { keys } from "./keys.js";
 import { isPlatformFailure } from "./platform-failure.js";
 import { renderTruncated, truncateOutput } from "./spill.js";
 import type { ApprovalAnswer, ApprovalSource, PauseReason, ThreadEvent, ThreadEventData } from "./thread-events.js";
-import { DEFAULT_ANNOTATIONS, type Connection, type Tool, type ToolContent, type ToolContext, type ToolOutcome, type ToolResult } from "./tool.js";
+import {
+  DEFAULT_ANNOTATIONS,
+  type Connection,
+  type Tool,
+  type ToolAnnotations,
+  type ToolContent,
+  type ToolContext,
+  type ToolOutcome,
+  type ToolResult,
+} from "./tool.js";
 import { outputLimits, type AvailableTool } from "./tools.js";
 
 // One tool Step: the model's tool-call batch run under the Harness gate. Read-only Tools run in
@@ -52,7 +62,8 @@ export interface CallApproval {
   answer?: ApprovalAnswer & { source: ApprovalSource };
 }
 
-export type JobOutcome = { type: "job.completed"; result: ToolResult } | { type: "job.failed"; message: string } | { type: "job.cancelled" };
+export type JobOutcome =
+  { type: "job.completed"; result: ToolResult } | { type: "job.failed"; message: string } | { type: "job.cancelled" };
 
 /** What the log already holds for this Step's calls, so a re-run neither re-fires Hooks nor re-runs finished work. */
 export interface PriorCalls {
@@ -66,10 +77,15 @@ export interface PriorCalls {
   jobs: ReadonlyMap<string, { jobId: string; outcome?: JobOutcome }>;
 }
 
-const INTERRUPTED_TEXT = "This call was interrupted before it reported a result. It may or may not have taken effect; check before repeating it.";
+const INTERRUPTED_TEXT =
+  "This call was interrupted before it reported a result. It may or may not have taken effect; check before repeating it.";
 
 /** Resolves when every call has a result, or with why the Step parks. */
-export async function runToolStep(host: ToolStepHost, batch: readonly ToolCall[], prior: PriorCalls): Promise<Extract<PauseReason, "approval" | "job"> | undefined> {
+export async function runToolStep(
+  host: ToolStepHost,
+  batch: readonly ToolCall[],
+  prior: PriorCalls,
+): Promise<Extract<PauseReason, "approval" | "job"> | undefined> {
   const pending = batch.filter((call) => !prior.finished.has(call.id));
   const waitsOn = (call: ToolCall): "approval" | "job" | undefined => {
     const job = prior.jobs.get(call.id);
@@ -86,7 +102,8 @@ export async function runToolStep(host: ToolStepHost, batch: readonly ToolCall[]
   const run = async (call: ToolCall) => {
     const leaf = new AbortController();
     try {
-      if ((await runCall(host, call, prior, AbortSignal.any([stepSignal, leaf.signal]))) === "pending") started.add(call.id);
+      if ((await runCall(host, call, prior, AbortSignal.any([stepSignal, leaf.signal]))) === "pending")
+        started.add(call.id);
     } finally {
       leaf.abort();
     }
@@ -113,37 +130,34 @@ export async function runToolStep(host: ToolStepHost, batch: readonly ToolCall[]
   // Asks are raised only once every allowed call of the batch has run.
   let reason: "approval" | "job" | undefined = started.size > 0 ? "job" : undefined;
   for (const call of waiting) {
-    const waits = waitsOn(call)!;
+    const waits = waitsOn(call);
     if (waits === "approval") {
       if (!prior.approvals.has(call.id)) host.ask(call);
       reason = "approval";
-    } else reason ??= "job";
+    } else if (waits === "job") reason ??= "job";
   }
   return reason;
 }
 
-async function runCall(host: ToolStepHost, call: ToolCall, prior: PriorCalls, signal: AbortSignal): Promise<"pending" | undefined> {
+type ResultExtra = Partial<Pick<Extract<ThreadEventData, { type: "tool.result" }>, "interrupted" | "output">>;
+type Finish = (seq: number | undefined, result: ToolResult, extra?: ResultExtra) => Promise<undefined>;
+
+async function runCall(
+  host: ToolStepHost,
+  call: ToolCall,
+  prior: PriorCalls,
+  signal: AbortSignal,
+): Promise<"pending" | undefined> {
   signal.throwIfAborted();
   const started = prior.started.get(call.id);
   const entry = host.available.get(call.name);
   const annotations = entry?.tool.annotations ?? DEFAULT_ANNOTATIONS;
-  // The result is persisted first, so an eviction during a Hook cannot lose finished work; Hooks then observe it.
-  const finish = (seq: number | undefined, result: ToolResult, extra: Partial<Pick<Extract<ThreadEventData, { type: "tool.result" }>, "interrupted" | "output">> = {}) => {
-    const logged = seq ?? host.append({ type: "tool.call", id: call.id, name: call.name, input: call.input }).seq;
-    host.append({ type: "tool.result", id: call.id, name: call.name, content: result.content, isError: result.isError === true, ...extra });
-    return afterTool(host, { id: call.id, callId: callId(host, logged), name: call.name, input: started?.input ?? call.input, annotations }, { ...result, ...(extra.interrupted && { interrupted: extra.interrupted }) }, signal).then(() => undefined);
-  };
-
+  const finish = finisher(host, call, started?.input ?? call.input, annotations, signal);
   if (!entry) return finish(started?.seq, error(`Unknown tool "${call.name}".`));
-  const { tool } = entry;
 
   // A Job's outcome is the call's result, whatever the Tool's annotations say about re-running it.
   const job = prior.jobs.get(call.id);
-  if (job?.outcome && started) {
-    if (job.outcome.type !== "job.completed") return finish(started.seq, error(job.outcome.type === "job.failed" ? `Job failed: ${job.outcome.message}` : "Job cancelled."));
-    const spilled = await spill(host, tool, started.seq, job.outcome.result);
-    return finish(started.seq, spilled.result, spilled.output ? { output: spilled.output } : {});
-  }
+  if (job?.outcome && started) return finishJob(host, entry.tool, started.seq, job.outcome, finish);
 
   // A re-run may repeat only work that is safe to repeat; anything else gets an honest "interrupted".
   if (started && !(annotations.readOnlyHint || annotations.idempotentHint)) {
@@ -153,19 +167,87 @@ async function runCall(host: ToolStepHost, call: ToolCall, prior: PriorCalls, si
   let input = started?.input ?? call.input;
   let seq = started?.seq;
   if (seq === undefined) {
-    if (entry.effect === "deny") return finish(undefined, error(`Tool "${call.name}" is denied by the Permission Policy.`));
-    const answer = prior.approvals.get(call.id)?.answer;
-    if (answer?.decision === "deny") return finish(undefined, error(`Tool "${call.name}" was denied${answer.reason ? `: ${answer.reason}` : answer.source === "timeout" ? ": the approval timed out." : "."}`));
-    const decision = await beforeTool(host, { id: call.id, name: call.name, input, annotations }, signal);
-    signal.throwIfAborted();
-    if (decision.effect === "deny") return finish(undefined, error(`Tool "${call.name}" was refused by a Hook${decision.reason ? `: ${decision.reason}` : "."}`));
-    if (decision.input !== undefined) input = decision.input;
+    const admitted = await admit(host, call, entry, prior.approvals.get(call.id)?.answer, input, signal);
+    if (!admitted.ok) return finish(undefined, admitted.result);
+    input = admitted.input;
     seq = host.append({ type: "tool.call", id: call.id, name: call.name, input }).seq;
   }
+  return execute(host, call, entry, input, seq, signal, finish);
+}
 
+// The result is persisted first, so an eviction during a Hook cannot lose finished work; Hooks then observe it.
+function finisher(
+  host: ToolStepHost,
+  call: ToolCall,
+  input: unknown,
+  annotations: ToolAnnotations,
+  signal: AbortSignal,
+): Finish {
+  return async (seq, result, extra = {}) => {
+    const logged = seq ?? host.append({ type: "tool.call", id: call.id, name: call.name, input: call.input }).seq;
+    host.append({
+      type: "tool.result",
+      id: call.id,
+      name: call.name,
+      content: result.content,
+      isError: result.isError === true,
+      ...extra,
+    });
+    await afterTool(
+      host,
+      { id: call.id, callId: callId(host, logged), name: call.name, input, annotations },
+      { ...result, ...(extra.interrupted && { interrupted: extra.interrupted }) },
+      signal,
+    );
+    return undefined;
+  };
+}
+
+async function finishJob(host: ToolStepHost, tool: Tool, seq: number, outcome: JobOutcome, finish: Finish) {
+  if (outcome.type !== "job.completed")
+    return finish(seq, error(outcome.type === "job.failed" ? `Job failed: ${outcome.message}` : "Job cancelled."));
+  const spilled = await spill(host, tool, seq, outcome.result);
+  return finish(seq, spilled.result, spilled.output ? { output: spilled.output } : {});
+}
+
+/** The gate before a call first runs: the Policy, a human's answer, then the before-tool Hooks, which may rewrite the input. */
+async function admit(
+  host: ToolStepHost,
+  call: ToolCall,
+  entry: AvailableTool,
+  answer: CallApproval["answer"],
+  input: unknown,
+  signal: AbortSignal,
+): Promise<{ ok: true; input: unknown } | { ok: false; result: ToolResult }> {
+  const refuse = (text: string) => ({ ok: false as const, result: error(text) });
+  if (entry.effect === "deny") return refuse(`Tool "${call.name}" is denied by the Permission Policy.`);
+  if (answer?.decision === "deny") {
+    const why = answer.reason ? `: ${answer.reason}` : answer.source === "timeout" ? ": the approval timed out." : ".";
+    return refuse(`Tool "${call.name}" was denied${why}`);
+  }
+  const annotations = entry.tool.annotations;
+  const decision = await beforeTool(host, { id: call.id, name: call.name, input, annotations }, signal);
+  signal.throwIfAborted();
+  if (decision.effect === "deny")
+    return refuse(`Tool "${call.name}" was refused by a Hook${decision.reason ? `: ${decision.reason}` : "."}`);
+  return { ok: true, input: decision.input !== undefined ? decision.input : input };
+}
+
+async function execute(
+  host: ToolStepHost,
+  call: ToolCall,
+  entry: AvailableTool,
+  input: unknown,
+  seq: number,
+  signal: AbortSignal,
+  finish: Finish,
+): Promise<"pending" | undefined> {
+  const { tool } = entry;
   const parsed = z.safeParse(tool.input, input);
-  if (!parsed.success) return finish(seq, error(`Invalid input for "${call.name}": ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; ")}`));
-
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`);
+    return finish(seq, error(`Invalid input for "${call.name}": ${issues.join("; ")}`));
+  }
   const connection = await resolveConnection(host, tool);
   signal.throwIfAborted();
   if (!connection.ok) return finish(seq, error(connection.message));
@@ -184,7 +266,7 @@ async function runCall(host: ToolStepHost, call: ToolCall, prior: PriorCalls, si
   };
   let result: ToolResult;
   try {
-    const outcome = normalize(await tool.execute(parsed.data, ctx as never));
+    const outcome = normalize(await tool.execute(parsed.data, ctx));
     if ("pending" in outcome) {
       host.append({ type: "job.started", id: call.id, jobId: outcome.pending });
       return "pending";
@@ -200,18 +282,30 @@ async function runCall(host: ToolStepHost, call: ToolCall, prior: PriorCalls, si
 
 const callId = (host: ToolStepHost, seq: number) => `${host.threadId}:${seq}`;
 const error = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
-const errorMessage = (caught: unknown) => (caught instanceof Error ? caught.message : String(caught));
 
 function normalize(raw: ToolOutcome): ToolResult | { pending: string } {
   return typeof raw === "string" ? { content: [{ type: "text", text: raw }] } : raw;
 }
 
 function hookContext(host: ToolStepHost, point: HookContextBase["point"], signal: AbortSignal): HookContextBase {
-  return { point, scope: host.scope, ...(host.user !== undefined && { user: host.user }), thread: { id: host.threadId }, agent: host.agent, turn: host.turn, logger: host.logger, signal };
+  return {
+    point,
+    scope: host.scope,
+    ...(host.user !== undefined && { user: host.user }),
+    thread: { id: host.threadId },
+    agent: host.agent,
+    turn: host.turn,
+    logger: host.logger,
+    signal,
+  };
 }
 
 // Hooks run in Spec order; a rewrite feeds the next Hook, the first deny wins, and a throwing Hook is a deny.
-async function beforeTool(host: ToolStepHost, call: HookToolCall, signal: AbortSignal): Promise<{ effect: "allow"; input?: unknown } | { effect: "deny"; reason?: string }> {
+async function beforeTool(
+  host: ToolStepHost,
+  call: HookToolCall,
+  signal: AbortSignal,
+): Promise<{ effect: "allow"; input?: unknown } | { effect: "deny"; reason?: string }> {
   let input = call.input;
   for (const hook of hooksAt(host.spec, host.catalogue, "before-tool")) {
     try {
@@ -227,7 +321,12 @@ async function beforeTool(host: ToolStepHost, call: HookToolCall, signal: AbortS
   return input === call.input ? { effect: "allow" } : { effect: "allow", input };
 }
 
-async function afterTool(host: ToolStepHost, call: HookToolCall, result: HookContexts["after-tool"]["result"], signal: AbortSignal): Promise<void> {
+async function afterTool(
+  host: ToolStepHost,
+  call: HookToolCall,
+  result: HookContexts["after-tool"]["result"],
+  signal: AbortSignal,
+): Promise<void> {
   for (const hook of hooksAt(host.spec, host.catalogue, "after-tool")) {
     try {
       await hook.run({ ...hookContext(host, "after-tool", signal), call, result });
@@ -240,21 +339,43 @@ async function afterTool(host: ToolStepHost, call: HookToolCall, result: HookCon
 
 // A name resolves user-level first (the User's own grant, usable across Agents), then agent-level.
 // A user-level declaration on a user-less Thread cannot resolve and never becomes a `connect` Approval.
-async function resolveConnection(host: ToolStepHost, tool: Tool): Promise<{ ok: true; value?: Connection } | { ok: false; message: string }> {
+async function resolveConnection(
+  host: ToolStepHost,
+  tool: Tool,
+): Promise<{ ok: true; value?: Connection } | { ok: false; message: string }> {
   if (tool.requires === undefined) return { ok: true };
   const name = tool.requires;
   const declared = host.spec.connections?.[name];
-  if (!declared) return { ok: false, message: `Tool "${tool.name}" requires the Connection "${name}", which the Agent does not declare.` };
-  const levels: Connection["level"][] = declared.level === "user" ? (host.user === undefined ? [] : ["user"]) : host.user === undefined ? ["agent"] : ["user", "agent"];
+  if (!declared)
+    return {
+      ok: false,
+      message: `Tool "${tool.name}" requires the Connection "${name}", which the Agent does not declare.`,
+    };
+  const levels: Connection["level"][] =
+    declared.level === "user"
+      ? host.user === undefined
+        ? []
+        : ["user"]
+      : host.user === undefined
+        ? ["agent"]
+        : ["user", "agent"];
   for (const level of levels) {
     const value = await host.connection(level, name);
     if (value !== undefined) return { ok: true, value: { name, type: declared.type, level, value } };
   }
   if (declared.required === false) return { ok: true };
-  return { ok: false, message: `Connection "${name}" is not available${declared.level === "user" && host.user === undefined ? " on a user-less Thread" : ""}.` };
+  return {
+    ok: false,
+    message: `Connection "${name}" is not available${declared.level === "user" && host.user === undefined ? " on a user-less Thread" : ""}.`,
+  };
 }
 
-async function spill(host: ToolStepHost, tool: Tool, seq: number, result: ToolResult): Promise<{ result: ToolResult; output?: MediaRef }> {
+async function spill(
+  host: ToolStepHost,
+  tool: Tool,
+  seq: number,
+  result: ToolResult,
+): Promise<{ result: ToolResult; output?: MediaRef }> {
   const text = result.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
   const cut = truncateOutput(text, outputLimits(host.spec, tool));
   if (!cut.truncated) return { result };
@@ -267,18 +388,34 @@ async function spill(host: ToolStepHost, tool: Tool, seq: number, result: ToolRe
       output = { id: String(seq), key, mimeType: "text/plain; charset=utf-8", bytes: bytes.byteLength };
     } catch (caught) {
       if (isPlatformFailure(caught)) throw caught;
-      host.logger.error("Spilling a Tool output to R2 failed; the full output is lost.", { tool: tool.name, seq, error: errorMessage(caught) });
+      host.logger.error("Spilling a Tool output to R2 failed; the full output is lost.", {
+        tool: tool.name,
+        seq,
+        error: errorMessage(caught),
+      });
     }
-  } else host.logger.warn("Tool output exceeded the limit but no KARMI_MEDIA bucket is bound; the full output is lost.", { tool: tool.name, seq });
-  const content: ToolContent[] = [{ type: "text", text: renderTruncated(cut, output) }, ...result.content.filter((block) => block.type !== "text")];
+  } else
+    host.logger.warn("Tool output exceeded the limit but no KARMI_MEDIA bucket is bound; the full output is lost.", {
+      tool: tool.name,
+      seq,
+    });
+  const content: ToolContent[] = [
+    { type: "text", text: renderTruncated(cut, output) },
+    ...result.content.filter((block) => block.type !== "text"),
+  ];
   return { result: { ...result, content }, ...(output && { output }) };
 }
 
-async function putMedia(host: ToolStepHost, body: ReadableStream | ArrayBuffer | string, opts: { mimeType?: string; name?: string } = {}): Promise<MediaRef> {
+async function putMedia(
+  host: ToolStepHost,
+  body: ReadableStream | ArrayBuffer | string,
+  opts: { mimeType?: string; name?: string } = {},
+): Promise<MediaRef> {
   if (!host.bucket) throw new Error("ctx.media.put needs the KARMI_MEDIA bucket.");
   const id = crypto.randomUUID();
   const key = keys.media(host.scope, host.threadId, id);
-  const mimeType = opts.mimeType ?? (typeof body === "string" ? "text/plain; charset=utf-8" : "application/octet-stream");
+  const mimeType =
+    opts.mimeType ?? (typeof body === "string" ? "text/plain; charset=utf-8" : "application/octet-stream");
   const object = await host.bucket.put(key, body, { httpMetadata: { contentType: mimeType } });
   return { id, key, mimeType, bytes: object.size, ...(opts.name !== undefined && { name: opts.name }) };
 }

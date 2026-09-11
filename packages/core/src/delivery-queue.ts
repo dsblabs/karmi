@@ -18,7 +18,9 @@ export function deliveryQueueHandler(bindings: KarmiBindings, catalogue: Catalog
         if (status.state !== "destroying" && status.state !== "destroyed") {
           const identity = decodeKey(body.threadKey);
           const stub = remote<ThreadDurableObject>(bindings.KARMI_THREADS, keys.thread(body.scope, identity.threadId));
-          const delivery = await unwrap(stub.delivery({ ...identity, scope: body.scope, create: false }, body.fromSeq, body.toSeq));
+          const delivery = await unwrap(
+            stub.delivery({ ...identity, scope: body.scope, create: false }, body.fromSeq, body.toSeq),
+          );
           if (delivery) {
             const deliverer = catalogue.deliverers.get(delivery.binding.name);
             if (!deliverer) throw new KarmiError("deliverer.notFound", `Unknown Deliverer "${delivery.binding.name}".`);

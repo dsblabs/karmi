@@ -24,7 +24,8 @@ export function scopedFetch(policy: EgressPolicy = {}): typeof fetch {
     const url = input instanceof Request ? input.url : String(input);
     if (isBlockedUrl(url)) return denied(policy.logger, "egress.blocked", url);
     const host = new URL(url).hostname;
-    if (hosts && !hosts.some((allowed) => matchesHost(host, allowed))) return denied(policy.logger, "egress.denied", host);
+    if (hosts && !hosts.some((allowed) => matchesHost(host, allowed)))
+      return denied(policy.logger, "egress.denied", host);
     return transport(input, { ...init, redirect: "manual" });
   }) as typeof fetch;
 }
@@ -42,7 +43,10 @@ function matchesHost(host: string, pattern: string): boolean {
 }
 
 function denied(logger: Logger | undefined, code: "egress.blocked" | "egress.denied", target: string): Response {
-  const message = code === "egress.blocked" ? `Egress to ${target} is blocked: private, reserved or malformed address.` : `Egress to ${target} is outside this Scope's allowed hosts.`;
+  const message =
+    code === "egress.blocked"
+      ? `Egress to ${target} is blocked: private, reserved or malformed address.`
+      : `Egress to ${target} is outside this Scope's allowed hosts.`;
   logger?.warn("egress denied", { code, host: target });
   return Response.json({ error: { code, message } }, { status: 403 });
 }
@@ -63,14 +67,16 @@ export function isBlockedUrl(url: string): boolean {
   const hostname = parsed.hostname;
   if (BLOCKED_HOSTNAMES.has(hostname)) return true;
   const octets = hostname.split(".");
-  if (octets.length === 4 && octets.every((part) => /^\d{1,3}$/.test(part)) && isPrivateIPv4(octets.map(Number))) return true;
-  if (hostname.startsWith("[") && hostname.endsWith("]") && isPrivateIPv6(hostname.slice(1, -1).toLowerCase())) return true;
+  if (octets.length === 4 && octets.every((part) => /^\d{1,3}$/.test(part)) && isPrivateIPv4(octets.map(Number)))
+    return true;
+  if (hostname.startsWith("[") && hostname.endsWith("]") && isPrivateIPv6(hostname.slice(1, -1).toLowerCase()))
+    return true;
   return false;
 }
 
-function isPrivateIPv4([a, b]: number[]): boolean {
+function isPrivateIPv4([a, b = -1]: number[]): boolean {
   if (a === 10) return true;
-  if (a === 172 && b! >= 16 && b! <= 31) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
   if (a === 169 && b === 254) return true;
   return a === 0;
@@ -84,9 +90,9 @@ function isPrivateIPv6(address: string): boolean {
   const mapped = address.slice(7);
   const dotted = mapped.split(".");
   if (dotted.length === 4 && dotted.every((part) => /^\d{1,3}$/.test(part))) return isPrivateIPv4(dotted.map(Number));
-  const hex = mapped.split(":");
-  if (hex.length !== 2) return false;
-  const hi = parseInt(hex[0]!, 16);
-  const lo = parseInt(hex[1]!, 16);
+  const [hiHex, loHex, ...extra] = mapped.split(":");
+  if (hiHex === undefined || loHex === undefined || extra.length > 0) return false;
+  const hi = parseInt(hiHex, 16);
+  const lo = parseInt(loHex, 16);
   return isPrivateIPv4([(hi >> 8) & 0xff, hi & 0xff, (lo >> 8) & 0xff, lo & 0xff]);
 }

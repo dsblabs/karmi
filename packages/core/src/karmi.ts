@@ -30,7 +30,12 @@ export interface Karmi {
 export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
   assertCompatibilityBaseline();
   const providers = options.providers ?? {};
-  const deployment: Deployment = { clock: options.clock ?? wallClock, catalogue: assembleCatalogue(options.catalogue), defaults: parseScopeConfig(options.defaults ?? {}, providers), providers };
+  const deployment: Deployment = {
+    clock: options.clock ?? wallClock,
+    catalogue: assembleCatalogue(options.catalogue),
+    defaults: parseScopeConfig(options.defaults ?? {}, providers),
+    providers,
+  };
   const durableObjects = makeDurableObjects(deployment);
   const bindings = resolveBindings(env as Env, options.bindings);
   return {

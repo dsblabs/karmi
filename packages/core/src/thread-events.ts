@@ -5,10 +5,14 @@ import type { ToolContent, ToolResult } from "./tool.js";
 // The Thread's outbound vocabulary: Turn inputs going in, Thread events coming out. Everything is plain
 // JSON — the event log is the only state a Thread has, and every client reads the same shape.
 
-export type Part = { type: "text"; text: string } | { type: "image" | "video" | "audio" | "file"; media: MediaRef; mimeType: string; name?: string };
+export type Part =
+  | { type: "text"; text: string }
+  | { type: "image" | "video" | "audio" | "file"; media: MediaRef; mimeType: string; name?: string };
 
 /** What drives one Turn: a User message or an Event. `channelRef` is echoed on every event of the Turn; `{ deliverer: { name, ref } }` also sets its offline route. */
-export type TurnInput = { kind: "message"; parts: Part[]; channelRef?: unknown } | { kind: "event"; type: string; payload: unknown; channelRef?: unknown };
+export type TurnInput =
+  | { kind: "message"; parts: Part[]; channelRef?: unknown }
+  | { kind: "event"; type: string; payload: unknown; channelRef?: unknown };
 
 export interface ThreadEventBase {
   seq: number;
@@ -53,7 +57,13 @@ export type ThreadEventData =
   | { type: "approval.requested"; kind: "tool"; id: string; tool: string; input: unknown; timeoutAt: number }
   | { type: "approval.requested"; kind: "continue"; budget: Budget; timeoutAt: number }
   /** `request` is the seq of the `approval.requested` it answers; `tool` names the asked Tool. */
-  | ({ type: "approval.resolved"; request: number; kind: "tool" | "continue"; tool?: string; source: ApprovalSource } & ApprovalAnswer)
+  | ({
+      type: "approval.resolved";
+      request: number;
+      kind: "tool" | "continue";
+      tool?: string;
+      source: ApprovalSource;
+    } & ApprovalAnswer)
   /** A Tool handed call `id` to a Job; the Step waits for the Job's outcome. */
   | { type: "job.started"; id: string; jobId: string }
   | { type: "job.progress"; jobId: string; content: ToolContent[] }
@@ -61,7 +71,15 @@ export type ThreadEventData =
   | { type: "job.failed"; jobId: string; message: string }
   | { type: "job.cancelled"; jobId: string }
   /** `provider` is the adapter serving `model`; replay keys provider-opaque blocks on it, not on the id's prefix. */
-  | { type: "step.started"; kind: "model"; n: number; attempt: number; model: string; provider: string; agentVersion: number }
+  | {
+      type: "step.started";
+      kind: "model";
+      n: number;
+      attempt: number;
+      model: string;
+      provider: string;
+      agentVersion: number;
+    }
   /** `attempt` counts recovery re-runs of the same tool batch. */
   | { type: "step.started"; kind: "tool"; n: number; attempt: number; agentVersion: number }
   | { type: "step.completed"; kind: "model"; n: number; stopReason: StopReason; usage: Usage }
@@ -69,7 +87,15 @@ export type ThreadEventData =
   /** `input` is what the Tool ran with, after any `before-tool` rewrite; `ctx.callId` is `{threadId}:{seq}` of this event. */
   | { type: "tool.call"; id: string; name: string; input: unknown }
   /** `output` is the whole result when it was spilled; `interrupted` marks a Harness-synthesised result after an eviction. */
-  | { type: "tool.result"; id: string; name: string; content: ToolContent[]; isError: boolean; interrupted?: { attempt: number }; output?: MediaRef }
+  | {
+      type: "tool.result";
+      id: string;
+      name: string;
+      content: ToolContent[];
+      isError: boolean;
+      interrupted?: { attempt: number };
+      output?: MediaRef;
+    }
   | { type: "message.delta"; index: number; kind: "text" | "thinking" | "tool_input"; text: string }
   | { type: "message.part"; index: number; block: ContentBlock };
 

@@ -17,7 +17,13 @@ export interface AvailableTool {
   effect: PolicyEffect;
 }
 
-export function resolveTools(spec: AgentSpec, catalogue: Catalogue, policy: readonly PolicyRule[], builtIns: readonly Tool[], remembered?: ReadonlySet<string>): Map<string, AvailableTool> {
+export function resolveTools(
+  spec: AgentSpec,
+  catalogue: Catalogue,
+  policy: readonly PolicyRule[],
+  builtIns: readonly Tool[],
+  remembered?: ReadonlySet<string>,
+): Map<string, AvailableTool> {
   const available = new Map<string, AvailableTool>();
   for (const ref of spec.tools ?? []) {
     const { name, settings } = typeof ref === "string" ? { name: ref, settings: undefined } : ref;

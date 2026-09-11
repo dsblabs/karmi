@@ -4,7 +4,10 @@ import text from "./fixtures/text.sse?raw";
 import { collect, request, serve } from "./helpers.js";
 
 const provider = anthropic({ apiKey: "sk-test" });
-const failure = (status: number, type: string, message: string) => ({ status, json: { type: "error", error: { type, message } } });
+const failure = (status: number, type: string, message: string) => ({
+  status,
+  json: { type: "error", error: { type, message } },
+});
 
 describe("error classification", () => {
   it.each([
@@ -18,17 +21,58 @@ describe("error classification", () => {
   ])("maps HTTP %s (%s) to %s, retryable %s", async (status, type, code, retryable) => {
     const server = serve(failure(status, type, "nope"));
     const events = await collect(provider, request(), server);
-    expect(events).toEqual([{ type: "error", error: { code, message: "nope", retryable, status, raw: { type: "error", error: { type, message: "nope" } } } }]);
+    expect(events).toEqual([
+      {
+        type: "error",
+        error: { code, message: "nope", retryable, status, raw: { type: "error", error: { type, message: "nope" } } },
+      },
+    ]);
   });
 
   it("recognises a context-window overflow and a billing problem in a 400", async () => {
-    expect(await collect(provider, request(), serve(failure(400, "invalid_request_error", "prompt is too long: 250000 tokens > 200000 maximum")))).toMatchObject([{ error: { code: "context_window_exceeded", retryable: false } }]);
-    expect(await collect(provider, request(), serve(failure(400, "billing_error", "Your credit balance is too low")))).toMatchObject([{ error: { code: "quota", retryable: false } }]);
+    expect(
+      await collect(
+        provider,
+        request(),
+        serve(failure(400, "invalid_request_error", "prompt is too long: 250000 tokens > 200000 maximum")),
+      ),
+    ).toMatchObject([{ error: { code: "context_window_exceeded", retryable: false } }]);
+    expect(
+      await collect(provider, request(), serve(failure(400, "billing_error", "Your credit balance is too low"))),
+    ).toMatchObject([{ error: { code: "quota", retryable: false } }]);
   });
 
   it("treats an egress denial from scopedFetch as an invalid request, not a retry", async () => {
-    const events = await collect(provider, request(), serve({ status: 403, json: { error: { code: "egress.denied", message: "Egress to api.anthropic.com is outside this Scope's allowed hosts." } } }));
-    expect(events).toEqual([{ type: "error", error: { code: "invalid_request", message: "Egress to api.anthropic.com is outside this Scope's allowed hosts.", retryable: false, status: 403, raw: { error: { code: "egress.denied", message: "Egress to api.anthropic.com is outside this Scope's allowed hosts." } } } }]);
+    const events = await collect(
+      provider,
+      request(),
+      serve({
+        status: 403,
+        json: {
+          error: {
+            code: "egress.denied",
+            message: "Egress to api.anthropic.com is outside this Scope's allowed hosts.",
+          },
+        },
+      }),
+    );
+    expect(events).toEqual([
+      {
+        type: "error",
+        error: {
+          code: "invalid_request",
+          message: "Egress to api.anthropic.com is outside this Scope's allowed hosts.",
+          retryable: false,
+          status: 403,
+          raw: {
+            error: {
+              code: "egress.denied",
+              message: "Egress to api.anthropic.com is outside this Scope's allowed hosts.",
+            },
+          },
+        },
+      },
+    ]);
   });
 
   it("classifies a transport failure as a retryable network error", async () => {
@@ -63,7 +107,23 @@ describe("retry", () => {
 
   it("leaves retrying to the gateway when the profile configures gateway retries", async () => {
     const server = serve(failure(529, "overloaded_error", "busy"));
-    await collect(anthropic({ credentials: { "deployment:aig": "t" } }), request({ config: { adapter: "anthropic", gateway: { kind: "cloudflare", accountId: "a", gatewayId: "g", credential: "deployment:aig", byok: true, retry: { maxAttempts: 3 } } } }), server);
+    await collect(
+      anthropic({ credentials: { "deployment:aig": "t" } }),
+      request({
+        config: {
+          adapter: "anthropic",
+          gateway: {
+            kind: "cloudflare",
+            accountId: "a",
+            gatewayId: "g",
+            credential: "deployment:aig",
+            byok: true,
+            retry: { maxAttempts: 3 },
+          },
+        },
+      }),
+      server,
+    );
     expect(server.calls).toHaveLength(1);
   });
 });

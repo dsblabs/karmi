@@ -31,9 +31,15 @@ export function testClock(bindings: KarmiBindings): TestClock {
 }
 
 function milliseconds(duration: number | string): number {
-  const match = typeof duration === "string" ? /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(duration) : null;
-  const units: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
-  const ms = typeof duration === "number" ? duration : match ? Number(match[1]) * units[match[2]!]! : NaN;
+  const ms = typeof duration === "number" ? duration : parseDuration(duration);
   if (!Number.isFinite(ms) || ms < 0) throw new Error(`Invalid clock duration "${duration}".`);
   return ms;
+}
+
+const UNITS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+
+/** `"1.5h"` in milliseconds, or NaN when the text is not a duration. */
+function parseDuration(text: string): number {
+  const [, amount, unit = ""] = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(text) ?? [];
+  return Number(amount) * (UNITS[unit] ?? NaN);
 }

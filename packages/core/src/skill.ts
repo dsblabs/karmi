@@ -23,7 +23,9 @@ export interface Skill<Settings extends Schema | undefined = Schema | undefined>
   readonly settings?: Settings;
 }
 
-export function defineSkill<Settings extends Schema | undefined = undefined>(input: SkillInput<Settings>): Skill<Settings> {
+export function defineSkill<Settings extends Schema | undefined = undefined>(
+  input: SkillInput<Settings>,
+): Skill<Settings> {
   assertName("skill", input.name);
   const body = typeof input.body === "function" ? defineFragment({ name: input.name, render: input.body }) : input.body;
   return Object.freeze({ kind: "skill", ...input, body, tools: Object.freeze([...(input.tools ?? [])]) });

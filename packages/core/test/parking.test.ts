@@ -40,49 +40,129 @@ afterEach(async () => {
 
 describe("tool Approvals", () => {
   it("runs the allowed calls of the batch, then parks one request per asked call until it is answered", async () => {
-    provider.script([[reply.toolCall("lookup", { id: "a" }, "c1"), reply.toolCall("book", { room: 7 }, "c2")], "Booked"]);
+    provider.script([
+      [reply.toolCall("lookup", { id: "a" }, "c1"), reply.toolCall("book", { room: 7 }, "c2")],
+      "Booked",
+    ]);
     const thread = fresh();
     const parked = await thread.send(message("Book 7"));
-    expect(parked).toHaveSequence(["step.started", "step.completed", "step.started", "tool.call", "tool.result", "approval.requested", "turn.paused"]);
+    expect(parked).toHaveSequence([
+      "step.started",
+      "step.completed",
+      "step.started",
+      "tool.call",
+      "tool.result",
+      "approval.requested",
+      "turn.paused",
+    ]);
     expect(parked).toContainEvent({ type: "tool.result", id: "c1", content: [{ type: "text", text: "Guest a" }] });
-    expect(parked).toContainEvent({ type: "approval.requested", kind: "tool", id: "c2", tool: "book", input: { room: 7 } });
+    expect(parked).toContainEvent({
+      type: "approval.requested",
+      kind: "tool",
+      id: "c2",
+      tool: "book",
+      input: { room: 7 },
+    });
     expect(parked).toContainEvent({ type: "turn.paused", reason: "approval" });
     const request = parked.find((e) => e.type === "approval.requested")!;
     expect(request.type === "approval.requested" && request.timeoutAt - request.at).toBe(60 * 60 * 1000);
-    expect(await thread.status()).toMatchObject({ state: "parked", turn: 1, step: 2, paused: "approval", pendingApprovals: [{ seq: request.seq, kind: "tool", tool: "book", timeoutAt: request.timeoutAt }] });
-    await expect.poll(() => trace.filter((entry) => entry.startsWith("after-turn"))).toEqual(["after-turn:1:turn.paused"]);
+    expect(await thread.status()).toMatchObject({
+      state: "parked",
+      turn: 1,
+      step: 2,
+      paused: "approval",
+      pendingApprovals: [{ seq: request.seq, kind: "tool", tool: "book", timeoutAt: request.timeoutAt }],
+    });
+    await expect
+      .poll(() => trace.filter((entry) => entry.startsWith("after-turn")))
+      .toEqual(["after-turn:1:turn.paused"]);
 
     await thread.approve(request.seq, { decision: "allow", by: "alice" });
     const resumed = await rest(thread, parked);
-    expect(resumed).toHaveSequence(["approval.resolved", "turn.resumed", "tool.call", "tool.result", "step.completed", "step.started", "step.completed", "turn.completed"]);
-    expect(resumed).toContainEvent({ type: "approval.resolved", request: request.seq, kind: "tool", decision: "allow", by: "alice", source: "answer" });
+    expect(resumed).toHaveSequence([
+      "approval.resolved",
+      "turn.resumed",
+      "tool.call",
+      "tool.result",
+      "step.completed",
+      "step.started",
+      "step.completed",
+      "turn.completed",
+    ]);
+    expect(resumed).toContainEvent({
+      type: "approval.resolved",
+      request: request.seq,
+      kind: "tool",
+      decision: "allow",
+      by: "alice",
+      source: "answer",
+    });
     expect(resumed).toContainEvent({ type: "turn.resumed", reason: "approval" });
-    expect(resumed).toContainEvent({ type: "tool.result", id: "c2", name: "book", content: [{ type: "text", text: "Booked 7" }], isError: false });
+    expect(resumed).toContainEvent({
+      type: "tool.result",
+      id: "c2",
+      name: "book",
+      content: [{ type: "text", text: "Booked 7" }],
+      isError: false,
+    });
     expect(lastMessage(resumed)).toBe("Booked");
-    expect(provider.requests[1]?.messages.filter((m) => m.role === "toolResult").map((m) => m.role === "toolResult" && m.toolCallId)).toEqual(["c1", "c2"]);
+    expect(
+      provider.requests[1]?.messages
+        .filter((m) => m.role === "toolResult")
+        .map((m) => m.role === "toolResult" && m.toolCallId),
+    ).toEqual(["c1", "c2"]);
     expect(await thread.status()).toMatchObject({ state: "idle" });
 
-    await expect(thread.approve(request.seq, { decision: "deny" })).rejects.toMatchObject({ code: "approval.resolved" });
+    await expect(thread.approve(request.seq, { decision: "deny" })).rejects.toMatchObject({
+      code: "approval.resolved",
+    });
     await expect(thread.approve(999, { decision: "deny" })).rejects.toMatchObject({ code: "approval.notFound" });
   });
 
   it("answers a denied call with an isError result the model sees next, and never remembers a deny", async () => {
-    provider.script([[reply.toolCall("book", { room: 1 }, "c1")], "Sorry", [reply.toolCall("book", { room: 2 }, "c2")], "Again"]);
+    provider.script([
+      [reply.toolCall("book", { room: 1 }, "c1")],
+      "Sorry",
+      [reply.toolCall("book", { room: 2 }, "c2")],
+      "Again",
+    ]);
     const thread = fresh();
     const parked = await thread.send(message("Book"));
     await thread.approve(requestSeq(parked), { decision: "deny", reason: "Not today", remember: true });
     const resumed = await rest(thread, parked);
-    expect(resumed).toContainEvent({ type: "approval.resolved", decision: "deny", reason: "Not today", source: "answer" });
-    expect(resumed).toContainEvent({ type: "tool.result", id: "c1", name: "book", isError: true, content: [{ type: "text", text: 'Tool "book" was denied: Not today' }] });
-    expect(provider.requests[1]?.messages.at(-1)).toMatchObject({ role: "toolResult", toolCallId: "c1", isError: true });
-    await expect.poll(() => trace.filter((entry) => entry.startsWith("after-turn"))).toEqual(["after-turn:1:turn.paused", "after-turn:1:turn.completed"]);
+    expect(resumed).toContainEvent({
+      type: "approval.resolved",
+      decision: "deny",
+      reason: "Not today",
+      source: "answer",
+    });
+    expect(resumed).toContainEvent({
+      type: "tool.result",
+      id: "c1",
+      name: "book",
+      isError: true,
+      content: [{ type: "text", text: 'Tool "book" was denied: Not today' }],
+    });
+    expect(provider.requests[1]?.messages.at(-1)).toMatchObject({
+      role: "toolResult",
+      toolCallId: "c1",
+      isError: true,
+    });
+    await expect
+      .poll(() => trace.filter((entry) => entry.startsWith("after-turn")))
+      .toEqual(["after-turn:1:turn.paused", "after-turn:1:turn.completed"]);
 
     const second = await thread.send(message("Book again"));
     expect(second).toContainEvent({ type: "turn.paused", reason: "approval" });
   });
 
   it("remembers an allow by Tool name for the rest of the Thread", async () => {
-    provider.script([[reply.toolCall("book", { room: 1 }, "c1")], "Done", [reply.toolCall("book", { room: 2 }, "c2")], "Done again"]);
+    provider.script([
+      [reply.toolCall("book", { room: 1 }, "c1")],
+      "Done",
+      [reply.toolCall("book", { room: 2 }, "c2")],
+      "Done again",
+    ]);
     const thread = fresh();
     const parked = await thread.send(message("Book"));
     await thread.approve(requestSeq(parked), { decision: "allow", remember: true });
@@ -102,8 +182,18 @@ describe("tool Approvals", () => {
     await clock.advance("1m");
     await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.completed")).toBe(true);
     const events = await thread.events();
-    expect(events).toContainEvent({ type: "approval.resolved", request: requestSeq(parked), decision: "deny", source: "timeout" });
-    expect(events).toContainEvent({ type: "tool.result", id: "c1", isError: true, content: [{ type: "text", text: 'Tool "book" was denied: the approval timed out.' }] });
+    expect(events).toContainEvent({
+      type: "approval.resolved",
+      request: requestSeq(parked),
+      decision: "deny",
+      source: "timeout",
+    });
+    expect(events).toContainEvent({
+      type: "tool.result",
+      id: "c1",
+      isError: true,
+      content: [{ type: "text", text: 'Tool "book" was denied: the approval timed out.' }],
+    });
     expect(lastMessage(events)).toBe("Timed out");
 
     // A Scope ceiling below the Spec's timeout wins.
@@ -131,11 +221,17 @@ describe("tool Approvals", () => {
   });
 
   it("parks until every asked call of the batch is answered", async () => {
-    provider.script([[reply.toolCall("book", { room: 1 }, "c1"), reply.toolCall("weather", { city: "Rome" }, "c2")], "Both"]);
+    provider.script([
+      [reply.toolCall("book", { room: 1 }, "c1"), reply.toolCall("weather", { city: "Rome" }, "c2")],
+      "Both",
+    ]);
     const thread = fresh();
     const parked = await thread.send(message("Two"));
     const requests = parked.filter((e) => e.type === "approval.requested");
-    expect(requests.map((e) => e.type === "approval.requested" && e.kind === "tool" && e.tool)).toEqual(["book", "weather"]);
+    expect(requests.map((e) => e.type === "approval.requested" && e.kind === "tool" && e.tool)).toEqual([
+      "book",
+      "weather",
+    ]);
     await thread.approve(requests[0]!.seq, { decision: "allow" });
     expect(await thread.status()).toMatchObject({ state: "parked", pendingApprovals: [{ seq: requests[1]!.seq }] });
     await thread.approve(requests[1]!.seq, { decision: "deny" });
@@ -148,7 +244,12 @@ describe("tool Approvals", () => {
 });
 
 describe("longRunning budget", () => {
-  const loop = () => provider.script(({ index }) => (index < 5 ? [reply.toolCall("lookup", { id: String(index) }, `c${index}`), reply.usage({ input: 10, output: 5 })] : "Finished"));
+  const loop = () =>
+    provider.script(({ index }) =>
+      index < 5
+        ? [reply.toolCall("lookup", { id: String(index) }, `c${index}`), reply.usage({ input: 10, output: 5 })]
+        : "Finished",
+    );
 
   it("parks for a continue Approval when the Step budget is spent and continues on allow with a fresh window", async () => {
     loop();
@@ -157,7 +258,11 @@ describe("longRunning budget", () => {
     expect(parked.filter((e) => e.type === "step.completed")).toHaveLength(3);
     expect(parked).toContainEvent({ type: "approval.requested", kind: "continue", budget: { steps: 3, tokens: 30 } });
     expect(parked).toContainEvent({ type: "turn.paused", reason: "budget" });
-    expect(await thread.status()).toMatchObject({ state: "parked", paused: "budget", budget: { steps: 3, tokens: 30, max: { steps: 3, tokens: 100 } } });
+    expect(await thread.status()).toMatchObject({
+      state: "parked",
+      paused: "budget",
+      budget: { steps: 3, tokens: 30, max: { steps: 3, tokens: 100 } },
+    });
 
     await thread.approve(requestSeq(parked), { decision: "allow" });
     const resumed = await rest(thread, parked);
@@ -182,18 +287,29 @@ describe("longRunning budget", () => {
     await expired.send(message("Loop"));
     await clock.advance("24h");
     await expect.poll(async () => (await expired.events()).some((e) => e.type === "turn.completed")).toBe(true);
-    expect(await expired.events()).toContainEvent({ type: "approval.resolved", kind: "continue", decision: "deny", source: "timeout" });
+    expect(await expired.events()).toContainEvent({
+      type: "approval.resolved",
+      kind: "continue",
+      decision: "deny",
+      source: "timeout",
+    });
     expect(await expired.events()).toContainEvent({ type: "turn.completed", stopReason: "budget" });
   });
 
   it("counts tokens against the budget", async () => {
-    provider.script(({ index }) => (index < 5 ? [reply.toolCall("lookup", { id: String(index) }, `c${index}`), reply.usage({ input: 50, output: 10 })] : "Finished"));
+    provider.script(({ index }) =>
+      index < 5
+        ? [reply.toolCall("lookup", { id: String(index) }, `c${index}`), reply.usage({ input: 50, output: 10 })]
+        : "Finished",
+    );
     const parked = await fresh("budgeted").send(message("Loop"));
     expect(parked).toContainEvent({ type: "approval.requested", kind: "continue", budget: { steps: 3, tokens: 120 } });
   });
 
   it("bounds an Agent without the grant to the small defaults", async () => {
-    provider.script(({ index }) => (index < 20 ? [reply.toolCall("lookup", { id: String(index) }, `c${index}`)] : "Finished"));
+    provider.script(({ index }) =>
+      index < 20 ? [reply.toolCall("lookup", { id: String(index) }, `c${index}`)] : "Finished",
+    );
     const parked = await fresh("concierge").send(message("Loop"));
     expect(parked).toContainEvent({ type: "approval.requested", kind: "continue", budget: { steps: 25 } });
   });
@@ -213,16 +329,38 @@ describe("Job seam", () => {
     expect(await thread.status()).toMatchObject({ state: "parked" });
     await thread.jobs.complete("ingest-1", { content: [{ type: "text", text: "12 documents" }] });
     const resumed = await rest(thread, parked);
-    expect(resumed).toHaveSequence(["job.progress", "job.completed", "turn.resumed", "tool.result", "step.completed", "step.started", "step.completed", "turn.completed"]);
-    expect(resumed).toContainEvent({ type: "job.progress", jobId: "ingest-1", content: [{ type: "text", text: "half way" }] });
+    expect(resumed).toHaveSequence([
+      "job.progress",
+      "job.completed",
+      "turn.resumed",
+      "tool.result",
+      "step.completed",
+      "step.started",
+      "step.completed",
+      "turn.completed",
+    ]);
+    expect(resumed).toContainEvent({
+      type: "job.progress",
+      jobId: "ingest-1",
+      content: [{ type: "text", text: "half way" }],
+    });
     expect(resumed).toContainEvent({ type: "turn.resumed", reason: "job" });
-    expect(resumed).toContainEvent({ type: "tool.result", id: "c1", name: "start_job", content: [{ type: "text", text: "12 documents" }], isError: false });
+    expect(resumed).toContainEvent({
+      type: "tool.result",
+      id: "c1",
+      name: "start_job",
+      content: [{ type: "text", text: "12 documents" }],
+      isError: false,
+    });
     expect(lastMessage(resumed)).toBe("Ingested");
     await expect(thread.jobs.complete("ingest-1", { content: [] })).rejects.toMatchObject({ code: "job.notFound" });
   });
 
   it("turns a failed or cancelled Job into an isError result", async () => {
-    provider.script([[reply.toolCall("start_job", { job: "j1" }, "c1"), reply.toolCall("start_job", { job: "j2" }, "c2")], "Both back"]);
+    provider.script([
+      [reply.toolCall("start_job", { job: "j1" }, "c1"), reply.toolCall("start_job", { job: "j2" }, "c2")],
+      "Both back",
+    ]);
     const thread = fresh();
     const parked = await thread.send(message("Two jobs"));
     await thread.jobs.fail("j1", "disk full");
@@ -231,8 +369,18 @@ describe("Job seam", () => {
     const resumed = await rest(thread, parked);
     expect(resumed).toContainEvent({ type: "job.failed", jobId: "j1", message: "disk full" });
     expect(resumed).toContainEvent({ type: "job.cancelled", jobId: "j2" });
-    expect(resumed).toContainEvent({ type: "tool.result", id: "c1", isError: true, content: [{ type: "text", text: "Job failed: disk full" }] });
-    expect(resumed).toContainEvent({ type: "tool.result", id: "c2", isError: true, content: [{ type: "text", text: "Job cancelled." }] });
+    expect(resumed).toContainEvent({
+      type: "tool.result",
+      id: "c1",
+      isError: true,
+      content: [{ type: "text", text: "Job failed: disk full" }],
+    });
+    expect(resumed).toContainEvent({
+      type: "tool.result",
+      id: "c2",
+      isError: true,
+      content: [{ type: "text", text: "Job cancelled." }],
+    });
     expect(lastMessage(resumed)).toBe("Both back");
   });
 });
@@ -247,11 +395,23 @@ describe("cancel, steer and coalescing", () => {
     // A cancel that lands while the park's Hooks still run is carried out as soon as they return.
     await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.failed")).toBe(true);
     const events = await thread.events();
-    expect(events.filter((e) => e.turn === 1).slice(parked.length).map((e) => e.type)).toEqual(["approval.resolved", "turn.failed"]);
-    expect(events).toContainEvent({ type: "approval.resolved", request: requestSeq(parked), decision: "deny", source: "cancel" });
+    expect(
+      events
+        .filter((e) => e.turn === 1)
+        .slice(parked.length)
+        .map((e) => e.type),
+    ).toEqual(["approval.resolved", "turn.failed"]);
+    expect(events).toContainEvent({
+      type: "approval.resolved",
+      request: requestSeq(parked),
+      decision: "deny",
+      source: "cancel",
+    });
     expect(events).toContainEvent({ type: "turn.failed", turn: 1, reason: "cancelled" });
     expect(lastMessage(await queued)).toBe("Next");
-    await expect.poll(() => trace.filter((entry) => entry.startsWith("after-turn"))).toEqual(["after-turn:1:turn.paused", "after-turn:1:turn.failed:aborted", "after-turn:2:turn.completed"]);
+    await expect
+      .poll(() => trace.filter((entry) => entry.startsWith("after-turn")))
+      .toEqual(["after-turn:1:turn.paused", "after-turn:1:turn.failed:aborted", "after-turn:2:turn.completed"]);
   });
 
   it("cancels a running Turn promptly even while the model call hangs", async () => {
@@ -276,10 +436,29 @@ describe("cancel, steer and coalescing", () => {
     expect(steered.turn).toBe(started.turn);
     gate.open = true;
     const events = await rest(thread, [{ seq: started.seq } as ThreadEvent]);
-    expect(events.map((e) => e.type)).toEqual(["turn.started", "step.started", "message.delta", "message.part", "step.completed", "step.started", "tool.call", "tool.result", "step.completed", "turn.input", "step.started", "message.delta", "message.part", "step.completed", "turn.completed"]);
+    expect(events.map((e) => e.type)).toEqual([
+      "turn.started",
+      "step.started",
+      "message.delta",
+      "message.part",
+      "step.completed",
+      "step.started",
+      "tool.call",
+      "tool.result",
+      "step.completed",
+      "turn.input",
+      "step.started",
+      "message.delta",
+      "message.part",
+      "step.completed",
+      "turn.completed",
+    ]);
     expect(events).toContainEvent({ type: "turn.input", steer: true, input: message("Actually, stop") });
     expect(provider.requests[1]?.messages.map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "user"]);
-    expect(provider.requests[1]?.messages.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: "Actually, stop" }] });
+    expect(provider.requests[1]?.messages.at(-1)).toEqual({
+      role: "user",
+      content: [{ type: "text", text: "Actually, stop" }],
+    });
   });
 
   it("runs a steer that arrives during the last model Step as one more model Step", async () => {

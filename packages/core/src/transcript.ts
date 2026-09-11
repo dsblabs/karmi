@@ -18,7 +18,8 @@ export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] 
         messages.push({ role: "user", content: inputContent(event.input) });
         break;
       case "step.started":
-        if (event.kind === "model") step = { provider: event.provider, model: splitModelId(event.model)[1], content: [] };
+        if (event.kind === "model")
+          step = { provider: event.provider, model: splitModelId(event.model)[1], content: [] };
         break;
       case "message.part":
         step?.content.push(event.block);
@@ -29,15 +30,30 @@ export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] 
       case "step.completed":
         if (event.kind === "model") {
           if (step) {
-            messages.push({ role: "assistant", content: step.content, provider: step.provider, model: step.model, stopReason: event.stopReason });
-            calls = step.content.flatMap((block) => (block.type === "tool_call" ? [{ id: block.id, name: block.name }] : []));
+            messages.push({
+              role: "assistant",
+              content: step.content,
+              provider: step.provider,
+              model: step.model,
+              stopReason: event.stopReason,
+            });
+            calls = step.content.flatMap((block) =>
+              block.type === "tool_call" ? [{ id: block.id, name: block.name }] : [],
+            );
             results.clear();
           }
           step = undefined;
         } else {
           for (const call of calls) {
             const result = results.get(call.id);
-            if (result) messages.push({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: result.content, isError: result.isError });
+            if (result)
+              messages.push({
+                role: "toolResult",
+                toolCallId: call.id,
+                toolName: call.name,
+                content: result.content,
+                isError: result.isError,
+              });
           }
         }
         break;
@@ -48,7 +64,9 @@ export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] 
 
 export function inputContent(input: TurnInput): ContentBlock[] {
   if (input.kind === "event") return [{ type: "text", text: renderEvent(input) }];
-  return input.parts.map((part) => (part.type === "text" ? { type: "text", text: part.text } : { type: "media", media: part.media }));
+  return input.parts.map((part) =>
+    part.type === "text" ? { type: "text", text: part.text } : { type: "media", media: part.media },
+  );
 }
 
 /** The Event Fragment: how a non-chat Turn input is shown to the Agent. */
