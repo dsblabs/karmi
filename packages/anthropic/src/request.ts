@@ -3,6 +3,7 @@ import type {
   BetaCacheControlEphemeral,
   BetaContentBlockParam,
   BetaMessageParam,
+  BetaServerToolUseBlockParam,
   BetaTextBlockParam,
   BetaTool,
   BetaToolChoice,
@@ -223,7 +224,13 @@ function assistantBlock(block: ContentBlock): BetaContentBlockParam[] {
       return [{ type: "tool_use", id: block.id, name: block.name, input: block.input }];
     case "server_tool":
       return [
-        { type: "server_tool_use", id: block.id, name: block.name as never, input: block.input },
+        // Replayed only to the provider that produced it, so the name is one Anthropic itself emitted.
+        {
+          type: "server_tool_use",
+          id: block.id,
+          name: block.name as BetaServerToolUseBlockParam["name"],
+          input: block.input,
+        },
         ...(block.result ? [block.result.raw as BetaContentBlockParam] : []),
       ];
     case "compaction":

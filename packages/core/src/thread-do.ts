@@ -5,7 +5,7 @@ import { readOutputTool } from "./builtins.js";
 import type { Logger } from "./context.js";
 import { deliveryBinding, type DeliveryBinding } from "./deliverer.js";
 import type { Deployment } from "./deployment.js";
-import { KarmiError } from "./errors.js";
+import { errorMessage, KarmiError } from "./errors.js";
 import type { HookContextBase, HookContexts, TurnEnd } from "./hook.js";
 import { hooksAt } from "./hooks.js";
 import { keys } from "./keys.js";
@@ -13,7 +13,7 @@ import { consoleLogger } from "./logger.js";
 import { fail, ok, remote, type Outcome } from "./outcome.js";
 import { isPlatformFailure } from "./platform-failure.js";
 import { evaluatePrompt } from "./prompt.js";
-import type { ContentBlock, ProviderError, StopReason, Usage } from "./provider.js";
+import type { ContentBlock, ProviderError, ProviderEvent, ProviderRequest, StopReason, Usage } from "./provider.js";
 import { prepareMessages } from "./replay.js";
 import { ScheduledDurableObject, type ScheduledJob } from "./scheduler.js";
 import { providerHosts, scopedFetch } from "./scoped-fetch.js";
@@ -32,7 +32,8 @@ import type {
   TurnInput,
 } from "./thread-events.js";
 import { encodeKey, titleOf, type PendingApproval, type ThreadAddress, type ThreadStatus } from "./thread.js";
-import { runToolStep, type CallApproval, type JobOutcome, type PriorCalls, type ToolCall } from "./tool-step.js";
+import { runToolStep, type PriorCalls, type ToolCall } from "./tool-step.js";
+import { foldTurn, type Plan, type Request, type TurnState } from "./turn-state.js";
 import { resolveTools, toolDefinitions, type AvailableTool } from "./tools.js";
 import { splitModelId, transcriptFromEvents } from "./transcript.js";
 
@@ -94,19 +95,9 @@ type ThreadRow = {
 };
 
 type EventRow = { seq: number; turn: number; at: number; type: ThreadEventType; json: string };
-type InputRow = { id: number; json: string; steer: number };
 
 /** A model Step outcome: the Provider finished, or it failed and the next fallback should try. */
 type StepResult = { ok: true; stopReason: StopReason; message: ContentBlock[] } | { ok: false; error: ProviderError };
-
-/**
- * What the log says the Turn should do next: re-run or start a model Step, run the tool batch of the
- * last model Step (re-runs carry what already happened), or end with the last model Step's message.
- */
-type Plan =
-  | { kind: "model"; n: number; fresh: boolean }
-  | { kind: "tool"; n: number; fresh: boolean; batch: ToolCall[]; prior: PriorCalls }
-  | { kind: "finish"; stopReason: StopReason; message: ContentBlock[] };
 
 /** An `approval.requested` before its `timeoutAt` is stamped; distributive so each kind keeps its own fields. */
 type ApprovalRequest =
@@ -116,25 +107,18 @@ type ApprovalRequest =
       : never
     : never;
 
-type Request =
-  | { kind: "tool"; id: string; tool: string; timeoutAt: number; answered: boolean }
-  | { kind: "continue"; timeoutAt: number; answered: boolean };
+type ModelPlan = Extract<Plan, { kind: "model" }>;
+type ToolPlan = Extract<Plan, { kind: "tool" }>;
+/** Whether the Turn loop goes on after a helper, or the helper already ended or parked the Turn. */
+type Next = "continue" | "stop";
 
-/** The Turn as the log tells it: the next Step, what it waits on, and what it has spent. */
-interface TurnState {
-  plan: Plan;
-  budget: Budget;
-  /** Set while the Turn is parked. */
-  paused?: PauseReason;
-  /** Every `approval.requested` of the current Step, by its seq. */
-  requests: Map<number, Request>;
-  /** The current tool Step's asks by tool-call id. */
-  approvals: Map<string, CallApproval>;
-  /** The current tool Step's Jobs by tool-call id. */
-  jobs: Map<string, { jobId: string; outcome?: JobOutcome }>;
-  /** The last completed model Step's content, for a Turn that ends without another one. */
-  lastMessage: ContentBlock[];
-}
+// The one decode point for each JSON column this Durable Object writes. The rows are its own, so the
+// shapes are trusted; a shape change handles old rows here.
+const decodeUsage = (json: string): Usage => JSON.parse(json);
+const decodeSnapshot = (json: string): TurnSnapshot => JSON.parse(json);
+const decodeBinding = (json: string): DeliveryBinding => JSON.parse(json);
+const decodeEvent = (json: string): ThreadEventData => JSON.parse(json);
+const decodeInput = (json: string): TurnInput => JSON.parse(json);
 
 export abstract class ThreadDurableObject extends ScheduledDurableObject {
   abstract readonly deployment: Deployment;
@@ -270,7 +254,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const status: ThreadStatus = {
       state: row.state,
       ...(row.agent_version !== null && { agentVersion: row.agent_version }),
-      usage: JSON.parse(row.usage_json) as Usage,
+      usage: decodeUsage(row.usage_json),
       seq: this.head,
     };
     if (row.state === "idle") return ok(status);
@@ -278,8 +262,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     status.turn = row.turn;
     status.step = row.step;
     if (turn.paused) status.paused = turn.paused;
-    if (row.snapshot_json !== null)
-      status.budget = { ...turn.budget, max: (JSON.parse(row.snapshot_json) as TurnSnapshot).budget };
+    if (row.snapshot_json !== null) status.budget = { ...turn.budget, max: decodeSnapshot(row.snapshot_json).budget };
     const pending: PendingApproval[] = [];
     for (const [seq, request] of turn.requests)
       if (!request.answered)
@@ -327,7 +310,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       )
       .toArray()[0];
     if (!delivery) return ok(null);
-    const binding = JSON.parse(delivery.binding_json) as DeliveryBinding;
+    const binding = decodeBinding(delivery.binding_json);
     const deliverer = this.deployment.catalogue.deliverers.get(binding.name);
     if (!deliverer) return fail(new KarmiError("deliverer.notFound", `Unknown Deliverer "${binding.name}".`));
     const events = this.read(fromSeq - 1, deliverer.granularity ?? "part", toSeq - fromSeq + 1, toSeq);
@@ -439,9 +422,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
             ...excluded,
             limit,
           );
-    return rows
-      .toArray()
-      .map((row) => ({ seq: row.seq, turn: row.turn, at: row.at, ...(JSON.parse(row.json) as ThreadEventData) }));
+    return rows.toArray().map((row) => ({ seq: row.seq, turn: row.turn, at: row.at, ...decodeEvent(row.json) }));
   }
 
   private append(
@@ -583,44 +564,15 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           this.wake(row, "input", false);
           row = this.row();
         } else if (row.state === "idle") {
-          // Nothing may yield between taking the inputs and logging them, or an eviction would lose them.
-          const queued = this.sql.exec<InputRow>("SELECT id, json, steer FROM inputs ORDER BY id").toArray();
-          if (queued.length === 0) {
+          if (!this.startTurn(row, toolsVersion)) {
             this.scheduler.cancel("watchdog");
             return;
           }
-          const inputs = queued.map((next) => JSON.parse(next.json) as TurnInput);
-          const turn = row.turn + 1;
-          this.sql.exec("DELETE FROM inputs");
-          this.update({
-            state: "running",
-            turn,
-            step: 0,
-            attempt: 0,
-            recoveries: 0,
-            platform_failure: 0,
-            cancelled: 0,
-            snapshot_json: null,
-          });
-          const [first, ...rest] = inputs as [TurnInput, ...TurnInput[]];
-          this.append(turn, { type: "turn.started", input: first, toolsVersion }, first.channelRef);
-          for (const input of rest) this.append(turn, { type: "turn.input", input }, first.channelRef);
           row = this.row();
         }
         if (recovering) {
           recovering = false;
-          const plan = this.readTurn(row).plan;
-          if (plan.kind !== "finish" && !plan.fresh) {
-            if (!row.platform_failure && row.recoveries + 1 >= MAX_STEP_ATTEMPTS) {
-              await this.finish(
-                row,
-                failure("recovery", `Step ${row.step} of Turn ${row.turn} exhausted its three attempts.`),
-              );
-              continue;
-            }
-            this.update({ recoveries: row.recoveries + (row.platform_failure ? 0 : 1), platform_failure: 0 });
-          }
-          this.append(row.turn, { type: "turn.resumed", reason: "recovered" }, this.turnInput(row.turn)?.channelRef);
+          if ((await this.recover(row)) === "stop") continue;
           row = this.row();
         }
         this.armWatchdog();
@@ -635,11 +587,49 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     }
   }
 
+  /** Starts the next Turn from the queued inputs; false when nothing is queued. */
+  private startTurn(row: ThreadRow, toolsVersion: string): boolean {
+    // Nothing may yield between taking the inputs and logging them, or an eviction would lose them.
+    const queued = this.sql.exec<{ json: string }>("SELECT json FROM inputs ORDER BY id").toArray();
+    const [first, ...rest] = queued.map((next) => decodeInput(next.json));
+    if (!first) return false;
+    const turn = row.turn + 1;
+    this.sql.exec("DELETE FROM inputs");
+    this.update({
+      state: "running",
+      turn,
+      step: 0,
+      attempt: 0,
+      recoveries: 0,
+      platform_failure: 0,
+      cancelled: 0,
+      snapshot_json: null,
+    });
+    this.append(turn, { type: "turn.started", input: first, toolsVersion }, first.channelRef);
+    for (const input of rest) this.append(turn, { type: "turn.input", input }, first.channelRef);
+    return true;
+  }
+
+  /** Counts an interrupted Step's recovery; stops when the Step has no attempts left and the Turn failed. */
+  private async recover(row: ThreadRow): Promise<Next> {
+    const plan = this.readTurn(row).plan;
+    if (plan.kind !== "finish" && !plan.fresh) {
+      if (!row.platform_failure && row.recoveries + 1 >= MAX_STEP_ATTEMPTS) {
+        const message = `Step ${row.step} of Turn ${row.turn} exhausted its three attempts.`;
+        return stop(this.finish(row, failure("recovery", message)));
+      }
+      this.update({ recoveries: row.recoveries + (row.platform_failure ? 0 : 1), platform_failure: 0 });
+    }
+    this.append(row.turn, { type: "turn.resumed", reason: "recovered" }, this.turnInput(row.turn)?.channelRef);
+    return "continue";
+  }
+
   private turnInput(turn: number): TurnInput | undefined {
     const row = this.sql
       .exec<{ json: string }>("SELECT json FROM events WHERE turn = ? AND type = 'turn.started' LIMIT 1", turn)
       .toArray()[0];
-    return row ? (JSON.parse(row.json) as { input: TurnInput }).input : undefined;
+    const event = row && decodeEvent(row.json);
+    return event?.type === "turn.started" ? event.input : undefined;
   }
 
   /** Brings a parked Turn back to running; the loop is kicked unless the caller is the loop. */
@@ -665,7 +655,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (end.type !== "turn.paused" && this.hasInputs()) this.armWatchdog();
     else this.scheduler.cancel("watchdog");
     // The snapshot is gone from the row by now; a Turn that never took one has no Hooks to run.
-    const snapshot = row.snapshot_json === null ? undefined : (JSON.parse(row.snapshot_json) as TurnSnapshot);
+    const snapshot = row.snapshot_json === null ? undefined : decodeSnapshot(row.snapshot_json);
     if (snapshot) {
       if (end.type === "turn.failed")
         await this.turnHooks(row, snapshot, "on-error", { error: { code: end.reason, message: end.message } });
@@ -755,134 +745,141 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         return;
       }
       // A bug, not an eviction: end the Turn honestly rather than leave it to the watchdog.
-      await this.finish(this.row(), failure("internal", caught instanceof Error ? caught.message : String(caught)));
+      await this.finish(this.row(), failure("internal", errorMessage(caught)));
     }
   }
 
   private async steps(row: ThreadRow): Promise<void> {
     const channelRef = this.turnInput(row.turn)?.channelRef;
-    // The Tool set is a function of the snapshot and the Thread's remembered allows, which only grow.
-    let tools: { remembered: number; available: ReturnType<typeof resolveTools> } | undefined;
-    const available = (snapshot: TurnSnapshot) => {
-      const remembered = this.remembered();
-      if (tools?.remembered !== remembered.size)
-        tools = {
-          remembered: remembered.size,
-          available: resolveTools(
-            snapshot.spec,
-            this.deployment.catalogue,
-            snapshot.policy,
-            [readOutputTool(this.env.KARMI_MEDIA, row.scope_id, row.thread_id)],
-            remembered,
-          ),
-        };
-      return tools.available;
-    };
+    const available = this.toolSet(row);
     for (;;) {
       const boundary = await this.snapshot(row);
       if (this.row().cancelled) return this.cancelTurn(this.row());
       if (!boundary.ok) return this.finish(this.row(), boundary.failure);
-      const snapshot = boundary.snapshot;
-      if (row.step === 0) {
-        const input = this.turnInput(row.turn);
-        const before = input && (await this.turnHooks(row, snapshot, "before-turn", { input }));
-        if (this.row().cancelled) return this.cancelTurn(this.row());
-        if (before && !before.ok) return this.finish(this.row(), before.failure);
-      }
-      let turn = this.readTurn(row);
-      if (turn.plan.kind === "finish" || turn.plan.fresh) {
-        // A batch boundary: steer inputs join the conversation before the next model Step.
-        const steers = this.sql
-          .exec<InputRow>("SELECT id, json, steer FROM inputs WHERE steer = 1 ORDER BY id")
-          .toArray();
-        if (steers.length > 0) {
-          this.sql.exec("DELETE FROM inputs WHERE steer = 1");
-          for (const next of steers)
-            this.append(
-              row.turn,
-              { type: "turn.input", input: JSON.parse(next.json) as TurnInput, steer: true },
-              channelRef,
-            );
-          turn = this.readTurn(row);
-        }
-      }
+      const { snapshot } = boundary;
+      if (row.step === 0 && (await this.beforeTurn(row, snapshot)) === "stop") return;
+      const turn = this.joinSteers(row, this.readTurn(row), channelRef);
       const { plan } = turn;
       if (plan.kind === "finish")
         return this.finish(this.row(), { type: "turn.completed", stopReason: plan.stopReason, message: plan.message });
-
-      if (plan.fresh && exhausted(turn.budget, snapshot.budget)) {
-        for (const request of turn.requests.values())
-          if (request.kind === "continue" && !request.answered)
-            return this.finish(this.row(), { type: "turn.paused", reason: "budget" });
-        this.request(row, snapshot, { type: "approval.requested", kind: "continue", budget: turn.budget }, channelRef);
-        return this.finish(this.row(), { type: "turn.paused", reason: "budget" });
-      }
-
-      if (plan.kind === "model") {
-        const modelAttempt = plan.fresh ? 1 : Math.max(row.attempt, 1);
-        const attempt = modelAttempt + (plan.fresh ? 0 : row.recoveries);
-        const models = [snapshot.spec.model.id, ...(snapshot.spec.model.fallbacks ?? [])];
-        const model = models[modelAttempt - 1];
-        if (model === undefined)
-          return this.finish(this.row(), failure("provider", `Every model of Agent "${row.agent_id}" failed.`));
-        if (attempt > MAX_STEP_ATTEMPTS)
-          return this.finish(
-            this.row(),
-            failure("recovery", `Step ${plan.n} of Turn ${row.turn} exhausted its three attempts.`),
-          );
-        this.update({ step: plan.n, attempt: modelAttempt, ...(plan.fresh && { recoveries: 0, platform_failure: 0 }) });
-        this.append(
-          row.turn,
-          {
-            type: "step.started",
-            kind: "model",
-            n: plan.n,
-            attempt,
-            model,
-            provider: snapshot.profile.adapter,
-            agentVersion: snapshot.agentVersion,
-          },
-          channelRef,
-        );
-        this.armWatchdog();
-        const result = await this.untilCancelled(
-          this.modelStep({ ...row, step: plan.n }, snapshot, available(snapshot), model, channelRef),
-        );
-        if (result === CANCELLED) return this.cancelTurn(this.row());
-        // The failed attempt stays in the log; the transcript ignores Steps that never completed.
-        if (!result.ok) this.update({ attempt: modelAttempt + 1 });
-      } else {
-        const attempt = (plan.fresh ? 0 : row.recoveries) + 1;
-        this.update({ step: plan.n, attempt, ...(plan.fresh && { recoveries: 0, platform_failure: 0 }) });
-        this.append(
-          row.turn,
-          { type: "step.started", kind: "tool", n: plan.n, attempt, agentVersion: snapshot.agentVersion },
-          channelRef,
-        );
-        this.armWatchdog();
-        const waits = await this.untilCancelled(
-          this.toolStep(
-            { ...row, step: plan.n },
-            snapshot,
-            available(snapshot),
-            attempt,
-            plan.batch,
-            plan.prior,
-            channelRef,
-          ),
-        );
-        if (waits === CANCELLED) return this.cancelTurn(this.row());
-        if (waits !== undefined) {
-          // An answer may have landed while the batch was still running; only a real wait parks.
-          const waitsOn = this.waiting(this.readTurn(row));
-          if (waitsOn !== undefined) return this.finish(this.row(), { type: "turn.paused", reason: waitsOn });
-          row = this.row();
-          continue;
-        }
-        this.append(row.turn, { type: "step.completed", kind: "tool", n: plan.n }, channelRef);
-      }
+      if (plan.fresh && exhausted(turn.budget, snapshot.budget))
+        return this.parkOnBudget(row, snapshot, turn, channelRef);
+      const next =
+        plan.kind === "model"
+          ? await this.startModelStep(row, snapshot, plan, available(snapshot), channelRef)
+          : await this.startToolStep(row, snapshot, plan, available(snapshot), channelRef);
+      if (next === "stop") return;
       row = this.row();
     }
+  }
+
+  /** The Tool set is a function of the snapshot and the Thread's remembered allows, which only grow. */
+  private toolSet(row: ThreadRow): (snapshot: TurnSnapshot) => Map<string, AvailableTool> {
+    let cached: { remembered: number; available: Map<string, AvailableTool> } | undefined;
+    return (snapshot) => {
+      const remembered = this.remembered();
+      if (cached?.remembered !== remembered.size) {
+        const builtIns = [readOutputTool(this.env.KARMI_MEDIA, row.scope_id, row.thread_id)];
+        const available = resolveTools(snapshot.spec, this.deployment.catalogue, snapshot.policy, builtIns, remembered);
+        cached = { remembered: remembered.size, available };
+      }
+      return cached.available;
+    };
+  }
+
+  private async beforeTurn(row: ThreadRow, snapshot: TurnSnapshot): Promise<Next> {
+    const input = this.turnInput(row.turn);
+    const before = input && (await this.turnHooks(row, snapshot, "before-turn", { input }));
+    if (this.row().cancelled) return stop(this.cancelTurn(this.row()));
+    if (before && !before.ok) return stop(this.finish(this.row(), before.failure));
+    return "continue";
+  }
+
+  /** At a batch boundary, steer inputs join the conversation before the next model Step. */
+  private joinSteers(row: ThreadRow, turn: TurnState, channelRef: unknown): TurnState {
+    if (turn.plan.kind !== "finish" && !turn.plan.fresh) return turn;
+    const steers = this.sql.exec<{ json: string }>("SELECT json FROM inputs WHERE steer = 1 ORDER BY id").toArray();
+    if (steers.length === 0) return turn;
+    this.sql.exec("DELETE FROM inputs WHERE steer = 1");
+    for (const next of steers)
+      this.append(row.turn, { type: "turn.input", input: decodeInput(next.json), steer: true }, channelRef);
+    return this.readTurn(row);
+  }
+
+  /** Parks the Turn on its spent budget, asking to continue unless an unanswered ask already exists. */
+  private parkOnBudget(row: ThreadRow, snapshot: TurnSnapshot, turn: TurnState, channelRef: unknown): Promise<void> {
+    const asked = [...turn.requests.values()].some((request) => request.kind === "continue" && !request.answered);
+    if (!asked)
+      this.request(row, snapshot, { type: "approval.requested", kind: "continue", budget: turn.budget }, channelRef);
+    return this.finish(this.row(), { type: "turn.paused", reason: "budget" });
+  }
+
+  private async startModelStep(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    plan: ModelPlan,
+    available: ReadonlyMap<string, AvailableTool>,
+    channelRef: unknown,
+  ): Promise<Next> {
+    const modelAttempt = plan.fresh ? 1 : Math.max(row.attempt, 1);
+    const attempt = modelAttempt + (plan.fresh ? 0 : row.recoveries);
+    const model = [snapshot.spec.model.id, ...(snapshot.spec.model.fallbacks ?? [])][modelAttempt - 1];
+    if (model === undefined)
+      return stop(this.finish(this.row(), failure("provider", `Every model of Agent "${row.agent_id}" failed.`)));
+    if (attempt > MAX_STEP_ATTEMPTS) {
+      const message = `Step ${plan.n} of Turn ${row.turn} exhausted its three attempts.`;
+      return stop(this.finish(this.row(), failure("recovery", message)));
+    }
+    this.update({ step: plan.n, attempt: modelAttempt, ...(plan.fresh && { recoveries: 0, platform_failure: 0 }) });
+    this.append(
+      row.turn,
+      {
+        type: "step.started",
+        kind: "model",
+        n: plan.n,
+        attempt,
+        model,
+        provider: snapshot.profile.adapter,
+        agentVersion: snapshot.agentVersion,
+      },
+      channelRef,
+    );
+    this.armWatchdog();
+    const step = this.modelStep({ ...row, step: plan.n }, snapshot, available, model, channelRef);
+    const result = await this.untilCancelled(step);
+    if (result === CANCELLED) return stop(this.cancelTurn(this.row()));
+    // The failed attempt stays in the log; the transcript ignores Steps that never completed.
+    if (!result.ok) this.update({ attempt: modelAttempt + 1 });
+    return "continue";
+  }
+
+  private async startToolStep(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    plan: ToolPlan,
+    available: ReadonlyMap<string, AvailableTool>,
+    channelRef: unknown,
+  ): Promise<Next> {
+    const attempt = (plan.fresh ? 0 : row.recoveries) + 1;
+    this.update({ step: plan.n, attempt, ...(plan.fresh && { recoveries: 0, platform_failure: 0 }) });
+    this.append(
+      row.turn,
+      { type: "step.started", kind: "tool", n: plan.n, attempt, agentVersion: snapshot.agentVersion },
+      channelRef,
+    );
+    this.armWatchdog();
+    const { batch, prior } = plan;
+    const step = this.toolStep({ ...row, step: plan.n }, snapshot, available, attempt, batch, prior, channelRef);
+    const waits = await this.untilCancelled(step);
+    if (waits === CANCELLED) return stop(this.cancelTurn(this.row()));
+    if (waits === undefined) {
+      this.append(row.turn, { type: "step.completed", kind: "tool", n: plan.n }, channelRef);
+      return "continue";
+    }
+    // An answer may have landed while the batch was still running; only a real wait parks.
+    const waitsOn = this.waiting(this.readTurn(row));
+    if (waitsOn !== undefined) return stop(this.finish(this.row(), { type: "turn.paused", reason: waitsOn }));
+    return "continue";
   }
 
   /** What the current Step still waits on, if anything. */
@@ -909,159 +906,24 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     for (const { json } of this.sql.exec<{ json: string }>(
       "SELECT json FROM events WHERE type = 'approval.resolved'",
     )) {
-      const event = JSON.parse(json) as Extract<ThreadEventData, { type: "approval.resolved" }>;
-      if (event.remember && event.decision === "allow" && event.tool !== undefined) names.add(event.tool);
+      const event = decodeEvent(json);
+      if (
+        event.type === "approval.resolved" &&
+        event.remember &&
+        event.decision === "allow" &&
+        event.tool !== undefined
+      )
+        names.add(event.tool);
     }
     return names;
   }
 
-  // Reads the Turn back from the log. Results, started calls, asks and Jobs are kept across re-runs of
-  // the same tool Step and dropped only when a new model Step starts a new batch; the budget window
-  // reopens at an allowed `continue`.
   private readTurn(row: ThreadRow): TurnState {
-    const events = this.sql
+    const rows = this.sql
       .exec<EventRow>("SELECT * FROM events WHERE turn = ? AND type NOT IN ('message.delta') ORDER BY seq", row.turn)
       .toArray();
-    let started: { kind: "model" | "tool"; n: number } | undefined;
-    let completed = true;
-    let steered = false;
-    let parts: ContentBlock[] = [];
-    let last: { stopReason: StopReason; message: ContentBlock[] } | undefined;
-    const calls = new Map<string, { seq: number; input: unknown }>();
-    const results = new Set<string>();
-    const requests = new Map<number, Request>();
-    const approvals = new Map<string, CallApproval>();
-    const jobs = new Map<string, { jobId: string; outcome?: JobOutcome }>();
-    const byJob = new Map<string, string>();
-    const budget: Budget = { steps: 0, wallMs: 0, tokens: 0 };
-    let countedStep = 0;
-    /** When the current stretch of active wall time began; unset while parked. */
-    let activeSince: number | undefined;
-    let paused: PauseReason | undefined;
-    for (const { seq, at, json } of events) {
-      const event = JSON.parse(json) as ThreadEventData;
-      switch (event.type) {
-        case "turn.started":
-        case "turn.resumed":
-          // A recovery resumes without a pause before it, so its stretch keeps counting from where it began.
-          activeSince ??= at;
-          paused = undefined;
-          break;
-        case "turn.paused":
-          if (activeSince !== undefined) budget.wallMs += at - activeSince;
-          activeSince = undefined;
-          paused = event.reason;
-          break;
-        case "turn.input":
-          steered = true;
-          break;
-        case "step.started":
-          started = { kind: event.kind, n: event.n };
-          completed = false;
-          steered = false;
-          requests.clear();
-          if (event.n > countedStep) {
-            countedStep = event.n;
-            budget.steps++;
-          }
-          if (event.kind === "model") {
-            parts = [];
-            calls.clear();
-            results.clear();
-            approvals.clear();
-            jobs.clear();
-            byJob.clear();
-          }
-          break;
-        case "message.part":
-          parts[event.index] = event.block;
-          break;
-        case "tool.call":
-          calls.set(event.id, { seq, input: event.input });
-          break;
-        case "tool.result":
-          results.add(event.id);
-          break;
-        case "step.completed":
-          completed = true;
-          if (event.kind === "model") {
-            last = { stopReason: event.stopReason, message: parts.filter((part) => part !== undefined) };
-            budget.tokens += event.usage.input + event.usage.output;
-          }
-          break;
-        case "approval.requested":
-          if (event.kind === "tool") {
-            requests.set(seq, {
-              kind: "tool",
-              id: event.id,
-              tool: event.tool,
-              timeoutAt: event.timeoutAt,
-              answered: false,
-            });
-            approvals.set(event.id, { request: seq });
-          } else requests.set(seq, { kind: "continue", timeoutAt: event.timeoutAt, answered: false });
-          break;
-        case "approval.resolved": {
-          const request = requests.get(event.request);
-          if (!request) break;
-          request.answered = true;
-          if (request.kind === "tool")
-            approvals.set(request.id, {
-              request: event.request,
-              answer: {
-                decision: event.decision,
-                ...(event.reason !== undefined && { reason: event.reason }),
-                source: event.source,
-              },
-            });
-          else if (event.decision === "allow") {
-            requests.delete(event.request);
-            budget.steps = 0;
-            budget.tokens = 0;
-            budget.wallMs = 0;
-          }
-          break;
-        }
-        case "job.started":
-          jobs.set(event.id, { jobId: event.jobId });
-          byJob.set(event.jobId, event.id);
-          break;
-        case "job.completed":
-        case "job.failed":
-        case "job.cancelled": {
-          const id = byJob.get(event.jobId);
-          const job = id === undefined ? undefined : jobs.get(id);
-          if (job) job.outcome = event;
-          break;
-        }
-        default:
-          break;
-      }
-    }
-    if (activeSince !== undefined) budget.wallMs += this.deployment.clock.now() - activeSince;
-    const prior: PriorCalls = { started: calls, finished: results, approvals, jobs };
-    const batch = (): ToolCall[] =>
-      (last?.message ?? []).flatMap((block) =>
-        block.type === "tool_call" ? [{ id: block.id, name: block.name, input: block.input }] : [],
-      );
-    const state = {
-      budget,
-      requests,
-      approvals,
-      jobs,
-      lastMessage: last?.message ?? [],
-      ...(paused !== undefined && { paused }),
-    };
-    if (started && !completed) {
-      if (started.kind === "model") return { ...state, plan: { kind: "model", n: started.n, fresh: false } };
-      return { ...state, plan: { kind: "tool", n: started.n, fresh: false, batch: batch(), prior } };
-    }
-    if (!started || !last) return { ...state, plan: { kind: "model", n: 1, fresh: true } };
-    if (started.kind === "tool" || steered) return { ...state, plan: { kind: "model", n: started.n + 1, fresh: true } };
-    const pending = batch();
-    if (pending.length > 0)
-      return { ...state, plan: { kind: "tool", n: started.n + 1, fresh: true, batch: pending, prior } };
-    return { ...state, plan: { kind: "finish", stopReason: last.stopReason, message: last.message } };
+    const events = rows.map(({ seq, at, json }) => ({ seq, at, event: decodeEvent(json) }));
+    return foldTurn(events, this.deployment.clock.now());
   }
 
   // The Step boundary: the first Step takes the Turn snapshot from the Scope and persists it; every
@@ -1075,7 +937,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (row.snapshot_json !== null) {
       const status = await stub.status(row.scope_id);
       if (!status.ok) return { ok: false, failure: failure(status.code, status.message) };
-      snapshot = JSON.parse(row.snapshot_json) as TurnSnapshot;
+      snapshot = decodeSnapshot(row.snapshot_json);
       state = status.value.state;
     } else {
       const input = this.turnInput(row.turn);
@@ -1155,7 +1017,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         await hook.run({ ...base, ...extra } as HookContexts[P]);
       } catch (caught) {
         if (isPlatformFailure(caught)) throw caught;
-        const message = caught instanceof Error ? caught.message : String(caught);
+        const message = errorMessage(caught);
         if (point === "before-turn")
           return { ok: false, failure: failure("hook", `Hook "${hook.name}" refused the Turn: ${message}`) };
         base.logger.warn(`${point} Hook "${hook.name}" failed`, { error: message });
@@ -1171,83 +1033,105 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     model: string,
     channelRef: unknown,
   ): Promise<StepResult> {
-    const { spec, profile } = snapshot;
+    const { profile } = snapshot;
     const provider = this.deployment.providers[profile.adapter];
     if (!provider) return stepError(`Provider adapter "${profile.adapter}" is not registered.`);
-    const [, native] = splitModelId(model);
-    const parts: ContentBlock[] = [];
     const signal = this.turnAbort.signal;
     const logger = this.logger(row);
     try {
-      const tools = toolDefinitions(available);
-      const offered = tools.map((tool) => available.get(tool.name)!.tool);
-      const system = await evaluatePrompt(
-        spec,
-        this.deployment.catalogue,
-        {
-          model,
-          scope: row.scope_id,
-          ...(row.user_id !== null && { user: row.user_id }),
-          thread: { id: row.thread_id },
-          tools: tools.map((tool) => tool.name),
-          now: new Date(this.deployment.clock.now()),
-        },
-        offered,
-      );
-      const { messages } = prepareMessages(transcriptFromEvents(this.read(0, "part", Number.MAX_SAFE_INTEGER)), {
-        provider: profile.adapter,
-        model: native,
-      });
-      const request = {
-        model: native,
-        config: profile,
-        ...(system !== undefined && { system }),
-        messages,
-        ...(tools.length > 0 && { tools }),
-        ...(spec.model.params && { params: spec.model.params }),
-        ...((profile.providerOptions || spec.model.providerOptions) && {
-          providerOptions: { ...profile.providerOptions, ...spec.model.providerOptions },
-        }),
-      };
+      const request = await this.modelRequest(row, snapshot, available, model);
       const hosts = providerHosts(profile);
       const egress = scopedFetch({ ...(hosts && { hosts }), logger });
       const attribution = { scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn };
-      for await (const event of provider.stream(request, { fetch: egress, signal, attribution, logger })) {
-        // A cancelled Turn has ended; nothing of this stream belongs in the log any more.
-        if (signal.aborted) return stepError("The Turn was cancelled.");
-        switch (event.type) {
-          case "delta":
-            this.append(
-              row.turn,
-              { type: "message.delta", index: event.index, kind: event.kind, text: event.text },
-              channelRef,
-            );
-            break;
-          case "part":
-            parts[event.index] = event.block;
-            this.append(row.turn, { type: "message.part", index: event.index, block: event.block }, channelRef);
-            break;
-          case "message.end": {
-            const usage = addUsage(JSON.parse(this.row().usage_json) as Usage, event.usage);
-            this.update({ usage_json: JSON.stringify(usage) });
-            this.append(
-              row.turn,
-              { type: "step.completed", kind: "model", n: row.step, stopReason: event.stopReason, usage: event.usage },
-              channelRef,
-            );
-            return { ok: true, stopReason: event.stopReason, message: parts.filter((part) => part !== undefined) };
-          }
-          case "error":
-            return { ok: false, error: event.error };
-          default:
-            break;
-        }
-      }
-      return stepError("The Provider stream ended without a terminal event.");
+      const stream = provider.stream(request, { fetch: egress, signal, attribution, logger });
+      return await this.recordStream(row, stream, signal, channelRef);
     } catch (error) {
       if (isPlatformFailure(error)) throw error;
-      return stepError(error instanceof Error ? error.message : String(error));
+      return stepError(errorMessage(error));
     }
+  }
+
+  /** The Provider request for one model Step: the Prompt, the replayed transcript and the offered Tools. */
+  private async modelRequest(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    available: ReadonlyMap<string, AvailableTool>,
+    model: string,
+  ): Promise<ProviderRequest> {
+    const { spec, profile } = snapshot;
+    const [, native] = splitModelId(model);
+    const tools = toolDefinitions(available);
+    const offered = [...available.values()].flatMap(({ tool, effect }) => (effect === "deny" ? [] : [tool]));
+    const system = await evaluatePrompt(
+      spec,
+      this.deployment.catalogue,
+      {
+        model,
+        scope: row.scope_id,
+        ...(row.user_id !== null && { user: row.user_id }),
+        thread: { id: row.thread_id },
+        tools: tools.map((tool) => tool.name),
+        now: new Date(this.deployment.clock.now()),
+      },
+      offered,
+    );
+    const { messages } = prepareMessages(transcriptFromEvents(this.read(0, "part", Number.MAX_SAFE_INTEGER)), {
+      provider: profile.adapter,
+      model: native,
+    });
+    return {
+      model: native,
+      config: profile,
+      ...(system !== undefined && { system }),
+      messages,
+      ...(tools.length > 0 && { tools }),
+      ...(spec.model.params && { params: spec.model.params }),
+      ...((profile.providerOptions || spec.model.providerOptions) && {
+        providerOptions: { ...profile.providerOptions, ...spec.model.providerOptions },
+      }),
+    };
+  }
+
+  /** Logs a Provider stream as it arrives and ends the model Step on its terminal event. */
+  private async recordStream(
+    row: ThreadRow,
+    stream: AsyncIterable<ProviderEvent>,
+    signal: AbortSignal,
+    channelRef: unknown,
+  ): Promise<StepResult> {
+    const parts: ContentBlock[] = [];
+    for await (const event of stream) {
+      // A cancelled Turn has ended; nothing of this stream belongs in the log any more.
+      if (signal.aborted) return stepError("The Turn was cancelled.");
+      switch (event.type) {
+        case "delta":
+          this.append(
+            row.turn,
+            { type: "message.delta", index: event.index, kind: event.kind, text: event.text },
+            channelRef,
+          );
+          break;
+        case "part":
+          parts[event.index] = event.block;
+          this.append(row.turn, { type: "message.part", index: event.index, block: event.block }, channelRef);
+          break;
+        case "message.end": {
+          const usage = addUsage(decodeUsage(this.row().usage_json), event.usage);
+          this.update({ usage_json: JSON.stringify(usage) });
+          this.append(
+            row.turn,
+            { type: "step.completed", kind: "model", n: row.step, stopReason: event.stopReason, usage: event.usage },
+            channelRef,
+          );
+          return { ok: true, stopReason: event.stopReason, message: parts.filter((part) => part !== undefined) };
+        }
+        case "error":
+          return { ok: false, error: event.error };
+        default:
+          break;
+      }
+    }
+    return stepError("The Provider stream ended without a terminal event.");
   }
 
   private toolStep(
@@ -1308,6 +1192,10 @@ export function isTurnEnd(event: ThreadEventData): event is TurnEnd {
 }
 
 const failure = (reason: string, message: string): TurnEnd => ({ type: "turn.failed", reason, message });
+const stop = async (work: Promise<void>): Promise<"stop"> => {
+  await work;
+  return "stop";
+};
 const stepError = (message: string): StepResult => ({
   ok: false,
   error: { code: "unknown", message, retryable: false },

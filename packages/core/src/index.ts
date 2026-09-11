@@ -78,6 +78,7 @@ export {
 export { evaluatePolicy, type PolicyEffect } from "./policy.js";
 export { truncateOutput, type OutputLimits, type Truncation } from "./spill.js";
 export { KarmiError, SpecInvalidError } from "./errors.js";
+export type { KarmiErrorCode } from "./errors.js";
 export { BUILT_IN_TOOL_NAMES, type CatalogueKind } from "./names.js";
 export type { Logger, MediaRef, ScopeId, ThreadRef, UserId } from "./context.js";
 export type { Schema, JsonSchema } from "./schema.js";

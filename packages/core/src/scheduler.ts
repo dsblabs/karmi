@@ -62,7 +62,7 @@ class Scheduler {
             id: job.id,
             kind: job.kind,
             dueAt: job.dueAt,
-            payload: JSON.parse(job.payload) as unknown,
+            payload: JSON.parse(job.payload),
             attempt: current.attempt,
           });
         } catch (error) {

@@ -44,45 +44,8 @@ const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 export function anthropic(options: AnthropicProviderOptions = {}): Provider {
   const resolve = toResolver(options.credentials);
 
-  async function client(config: ProviderConfig, call: ProviderCallOptions): Promise<Client> {
-    const byok = config.gateway?.byok === true;
-    const apiKey = byok ? undefined : config.credential ? await resolve(config.credential) : options.apiKey;
-    if (!byok && !apiKey)
-      throw new ProviderFailure({
-        code: "auth",
-        message: config.credential
-          ? `Credential "${config.credential}" did not resolve.`
-          : "The Provider profile names no credential and the adapter has no apiKey.",
-        retryable: false,
-      });
-    const headers: Record<string, string | null> = {};
-    for (const [name, value] of Object.entries(config.headers ?? {}))
-      if (name.toLowerCase() !== "anthropic-beta") headers[name] = value;
-    let baseURL = config.baseUrl;
-    if (config.gateway) {
-      const token = config.gateway.credential ? await resolve(config.gateway.credential) : undefined;
-      if (config.gateway.credential && !token)
-        throw new ProviderFailure({
-          code: "auth",
-          message: `Gateway credential "${config.gateway.credential}" did not resolve.`,
-          retryable: false,
-        });
-      const gateway = gatewaySettings(config.gateway, token, call.attribution);
-      baseURL = gateway.baseURL;
-      Object.assign(headers, gateway.headers);
-    }
-    // With the key held by the gateway, no provider auth header may leave the Worker at all.
-    if (byok) Object.assign(headers, { "x-api-key": null, authorization: null });
-    return new Client({
-      apiKey: apiKey ?? null,
-      authToken: null,
-      baseURL: baseURL ?? null,
-      defaultHeaders: headers,
-      fetch: call.fetch,
-      maxRetries: 0,
-      timeout: config.gateway?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    });
-  }
+  const client = (config: ProviderConfig, call: ProviderCallOptions) =>
+    createClient(config, call, resolve, options.apiKey);
 
   return {
     async *stream(request, call): AsyncIterable<ProviderEvent> {
@@ -124,6 +87,51 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
     },
     capabilities,
   };
+}
+
+async function createClient(
+  config: ProviderConfig,
+  call: ProviderCallOptions,
+  resolve: CredentialResolver,
+  defaultKey: string | undefined,
+): Promise<Client> {
+  const byok = config.gateway?.byok === true;
+  const apiKey = byok ? undefined : config.credential ? await resolve(config.credential) : defaultKey;
+  if (!byok && !apiKey)
+    throw new ProviderFailure({
+      code: "auth",
+      message: config.credential
+        ? `Credential "${config.credential}" did not resolve.`
+        : "The Provider profile names no credential and the adapter has no apiKey.",
+      retryable: false,
+    });
+  const headers: Record<string, string | null> = {};
+  for (const [name, value] of Object.entries(config.headers ?? {}))
+    if (name.toLowerCase() !== "anthropic-beta") headers[name] = value;
+  let baseURL = config.baseUrl;
+  if (config.gateway) {
+    const token = config.gateway.credential ? await resolve(config.gateway.credential) : undefined;
+    if (config.gateway.credential && !token)
+      throw new ProviderFailure({
+        code: "auth",
+        message: `Gateway credential "${config.gateway.credential}" did not resolve.`,
+        retryable: false,
+      });
+    const gateway = gatewaySettings(config.gateway, token, call.attribution);
+    baseURL = gateway.baseURL;
+    Object.assign(headers, gateway.headers);
+  }
+  // With the key held by the gateway, no provider auth header may leave the Worker at all.
+  if (byok) Object.assign(headers, { "x-api-key": null, authorization: null });
+  return new Client({
+    apiKey: apiKey ?? null,
+    authToken: null,
+    baseURL: baseURL ?? null,
+    defaultHeaders: headers,
+    fetch: call.fetch,
+    maxRetries: 0,
+    timeout: config.gateway?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  });
 }
 
 function failure(error: unknown): ProviderError {

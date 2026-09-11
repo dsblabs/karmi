@@ -85,6 +85,11 @@ export interface TurnSnapshotSource {
 
 export type { Outcome } from "./outcome.js";
 
+// The one decode point for each JSON column this Durable Object writes; both are validated before they are stored.
+const decodeConfig = (json: string): ScopeConfigDocument => JSON.parse(json);
+/** JSON carries no explicit `undefined`, so a stored normalized Spec is also a plain `AgentSpec`. */
+const decodeSpec = (json: string): NormalizedAgentSpec & AgentSpec => JSON.parse(json);
+
 const notFound = (agentId: string) =>
   fail(new KarmiError("agent.notFound", `Agent "${agentId}" does not exist in this Scope.`));
 
@@ -153,7 +158,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const row = this.sql
       .exec<{ config_json: string }>("SELECT config_json FROM scope_revisions WHERE revision = ?", revision)
       .one();
-    return JSON.parse(row.config_json) as ScopeConfigDocument;
+    return decodeConfig(row.config_json);
   }
 
   configGet(scope: ScopeId): Outcome<ConfigRecord> {
@@ -199,7 +204,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         "SELECT h.agent_id, s.spec_json FROM agent_heads h JOIN agent_specs s ON s.agent_id = h.agent_id AND s.version = h.current_version WHERE h.deleted_at IS NULL",
       )
       .toArray()
-      .map((row) => ({ agentId: row.agent_id, spec: JSON.parse(row.spec_json) as AgentSpec }));
+      .map((row) => ({ agentId: row.agent_id, spec: decodeSpec(row.spec_json) }));
     const config = resolveScopeConfig(this.deployment.defaults, this.document(head.current_revision));
     return validateAgentSpec(spec, this.deployment.catalogue, { config, agents });
   }
@@ -280,7 +285,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok({
       agentId,
       version: wanted,
-      spec: JSON.parse(row.spec_json) as NormalizedAgentSpec,
+      spec: decodeSpec(row.spec_json),
       createdAt: row.created_at,
       catalogueChanged: row.catalogue_fingerprint !== fingerprint,
     });
@@ -296,7 +301,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       .toArray();
     return ok(
       rows.map((row) => {
-        const spec = JSON.parse(row.spec_json) as NormalizedAgentSpec;
+        const spec = decodeSpec(row.spec_json);
         return {
           agentId: row.agent_id,
           version: row.version,

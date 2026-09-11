@@ -79,13 +79,20 @@ interface McpReference {
 }
 
 function parseMcpReference(name: string): McpReference | undefined {
-  const [server, tool, ...rest] = name.slice("mcp:".length).split("/");
-  if (rest.length > 0 || !IDENTIFIER.test(server!) || (tool !== undefined && !IDENTIFIER.test(tool))) return undefined;
-  return tool === undefined ? { server: server! } : { server: server!, tool };
+  const [server = "", tool, ...rest] = name.slice("mcp:".length).split("/");
+  if (rest.length > 0 || !IDENTIFIER.test(server) || (tool !== undefined && !IDENTIFIER.test(tool))) return undefined;
+  return tool === undefined ? { server } : { server, tool };
 }
 
 function toList<T>(value: T | T[]): T[] {
   return Array.isArray(value) ? value : [value];
+}
+
+/** The first issue of a failed parse; zod never fails without one. */
+export function firstIssue(error: z.core.$ZodError): z.core.$ZodIssue {
+  const [issue] = error.issues;
+  if (!issue) throw new Error("A failed zod parse reported no issue.");
+  return issue;
 }
 
 export function pointer(path: readonly PropertyKey[]): string {
@@ -422,7 +429,7 @@ class ReferenceChecker {
           toList(rule.match.tool ?? []).some((glob) => matchGlob(glob, providerTool))
         );
       });
-      if (index !== -1 && rules[index]!.effect === "ask") {
+      if (rules[index]?.effect === "ask") {
         this.issues.error(
           "policy.ask-on-provider-tool",
           `/policy/${index}/effect`,

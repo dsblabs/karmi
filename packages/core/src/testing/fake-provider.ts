@@ -110,12 +110,13 @@ export function fakeProvider(script: ReplyScript | Reply[], options: FakeProvide
 function toScript(script: ReplyScript | Reply[]): ReplyScript {
   if (typeof script === "function") return script;
   return ({ index }) => {
-    if (index >= script.length)
+    const reply = script[index];
+    if (reply === undefined)
       throw new KarmiError(
         "test.script-exhausted",
         `fakeProvider has ${script.length} scripted replies but received call #${index + 1}.`,
       );
-    return script[index]!;
+    return reply;
   };
 }
 

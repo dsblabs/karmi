@@ -33,7 +33,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
     const abort = () => {
       clearTimeout(timer);
-      reject(signal!.reason ?? new DOMException("Aborted", "AbortError"));
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
     };
     signal?.addEventListener("abort", abort, { once: true });
   });

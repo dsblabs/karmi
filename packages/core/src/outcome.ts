@@ -1,4 +1,4 @@
-import { KarmiError, SpecInvalidError } from "./errors.js";
+import { KarmiError, SpecInvalidError, type KarmiErrorCode } from "./errors.js";
 import type { ValidationResult } from "./validate.js";
 
 /**
@@ -6,7 +6,7 @@ import type { ValidationResult } from "./validate.js";
  * the handle rethrows it as a `KarmiError` (or `SpecInvalidError` when `result` is present).
  */
 export type Outcome<T> =
-  { ok: true; value: T } | { ok: false; code: string; message: string; result?: ValidationResult };
+  { ok: true; value: T } | { ok: false; code: KarmiErrorCode; message: string; result?: ValidationResult };
 
 export const ok = <T>(value: T): Outcome<T> => ({ ok: true, value });
 export const fail = (error: KarmiError): Outcome<never> => ({ ok: false, code: error.code, message: error.message });
@@ -28,5 +28,6 @@ export type Remote<T> = {
 };
 
 export function remote<T>(namespace: DurableObjectNamespace, name: string): Remote<T> {
+  // eslint-disable-next-line no-restricted-syntax -- the one boundary cast to the stub type the comment above explains.
   return namespace.get(namespace.idFromName(name)) as unknown as Remote<T>;
 }

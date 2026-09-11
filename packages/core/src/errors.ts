@@ -1,11 +1,50 @@
 import type { ValidationResult } from "./validate.js";
 
+/** Every code karmi throws; a new failure adds its code here first, as `area.camelCase`. */
+export type KarmiErrorCode =
+  | "agent.conflict"
+  | "agent.deleted"
+  | "agent.id.invalid"
+  | "agent.notFound"
+  | "agent.spec.invalid"
+  | "approval.invalid"
+  | "approval.notFound"
+  | "approval.resolved"
+  | "bindings.missing"
+  | "compatibility.date"
+  | "config.conflict"
+  | "config.invalid"
+  | "config.secret-value"
+  | "deliverer.invalid"
+  | "deliverer.notFound"
+  | "destroy.notFound"
+  | "job.notFound"
+  | "media.id.invalid"
+  | "name.duplicate"
+  | "name.invalid"
+  | "name.reserved"
+  | "queue.unhandled"
+  | "ref.fragment.unknown"
+  | "scope.destroyed"
+  | "scope.id.invalid"
+  | "scope.suspended"
+  | "test.recording-exhausted"
+  | "test.recording-miss"
+  | "test.script-exhausted"
+  | "thread.id.invalid"
+  | "thread.key.invalid"
+  | "thread.mismatch"
+  | "thread.notFound"
+  | "thread.notParked"
+  | "thread.seq.invalid"
+  | "user.id.invalid";
+
 /** Every error karmi throws carries a stable, dotted code a caller can switch on. */
 export class KarmiError extends Error {
   override readonly name: string = "KarmiError";
 
   constructor(
-    readonly code: string,
+    readonly code: KarmiErrorCode,
     message: string,
   ) {
     super(message);
@@ -23,4 +62,10 @@ export class SpecInvalidError extends KarmiError {
       `Agent Spec is invalid: ${errors.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`,
     );
   }
+}
+
+/** The one way to turn a caught value into a message. */
+export function errorMessage(caught: unknown): string {
+  // eslint-disable-next-line no-restricted-syntax -- the one place this idiom lives.
+  return caught instanceof Error ? caught.message : String(caught);
 }

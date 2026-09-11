@@ -35,16 +35,7 @@ export function prepareMessages(messages: Message[], target: ReplayTarget): Repl
   let deferredSystem: string[] = [];
 
   const closeBatch = (): void => {
-    for (const call of pending) {
-      if (!answered.has(call.id))
-        out.push({
-          role: "toolResult",
-          toolCallId: call.id,
-          toolName: call.name,
-          content: ORPHAN_RESULT,
-          isError: true,
-        });
-    }
+    out.push(...orphanResults(pending, answered));
     pending = [];
     answered = new Set();
     if (deferredSystem.length > 0) {
@@ -58,12 +49,7 @@ export function prepareMessages(messages: Message[], target: ReplayTarget): Repl
       case "system": {
         if (out.length === 0) leadingSystem.push(message.content);
         else if (pending.length > 0) deferredSystem.push(message.content);
-        else {
-          const last = out[out.length - 1];
-          if (last?.role === "system")
-            out[out.length - 1] = { role: "system", content: `${last.content}\n\n${message.content}` };
-          else out.push(message);
-        }
+        else pushSystem(out, message.content);
         break;
       }
       case "user": {
@@ -96,6 +82,26 @@ export function prepareMessages(messages: Message[], target: ReplayTarget): Repl
   const result: ReplayResult = { messages: out };
   if (leadingSystem.length > 0) result.system = leadingSystem.join("\n\n");
   return result;
+}
+
+/** A result for every call of the batch that never got one, so no provider sees a dangling call. */
+function orphanResults(pending: { id: string; name: string }[], answered: ReadonlySet<string>): Message[] {
+  return pending
+    .filter((call) => !answered.has(call.id))
+    .map((call) => ({
+      role: "toolResult",
+      toolCallId: call.id,
+      toolName: call.name,
+      content: ORPHAN_RESULT,
+      isError: true,
+    }));
+}
+
+/** Merges into a directly preceding system message, since some providers reject two in a row. */
+function pushSystem(out: Message[], content: string): void {
+  const last = out[out.length - 1];
+  if (last?.role === "system") out[out.length - 1] = { role: "system", content: `${last.content}\n\n${content}` };
+  else out.push({ role: "system", content });
 }
 
 function replayBlock(

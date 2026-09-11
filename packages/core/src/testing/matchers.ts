@@ -38,8 +38,7 @@ export const matchers = {
 
 /** The assistant's final text of a Turn: from `turn.completed`, else the last text part seen. */
 export function lastMessage(events: ThreadEvent[]): string | undefined {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i]!;
+  for (const event of events.toReversed()) {
     if (event.type === "turn.completed")
       return event.message.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
     if (event.type === "message.part" && event.block.type === "text") return event.block.text;

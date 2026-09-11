@@ -163,11 +163,9 @@ export function encodeKey(identity: ThreadIdentity): string {
 
 export function decodeKey(key: string): ThreadIdentity {
   try {
-    const [agent, user, threadId] = JSON.parse(atob(key.replaceAll("-", "+").replaceAll("_", "/"))) as [
-      string,
-      string | null,
-      string,
-    ];
+    const parts: unknown = JSON.parse(atob(key.replaceAll("-", "+").replaceAll("_", "/")));
+    if (!Array.isArray(parts)) throw new Error();
+    const [agent, user, threadId]: unknown[] = parts;
     if (typeof agent !== "string" || typeof threadId !== "string" || (user !== null && typeof user !== "string"))
       throw new Error();
     return user === null ? { agent, threadId } : { agent, user, threadId };

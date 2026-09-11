@@ -39,7 +39,7 @@ export function recordingProvider(real: Provider, options: RecordingOptions = {}
     },
     capabilities: (modelId) => real.capabilities(modelId),
   };
-  if (real.countTokens) recorder.countTokens = (request, callOptions) => real.countTokens!(request, callOptions);
+  if (real.countTokens) recorder.countTokens = real.countTokens.bind(real);
   return recorder;
 }
 
@@ -66,10 +66,11 @@ export function fromRecording(
     }
     const wanted = key(request);
     const at = entries.findIndex((entry, i) => !used.has(i) && entry.key === wanted);
-    if (at < 0)
+    const entry = entries[at];
+    if (!entry)
       throw new KarmiError("test.recording-miss", `No unused recording entry with key ${JSON.stringify(wanted)}.`);
     used.add(at);
-    return entries[at]!.events;
+    return entry.events;
   }, fakeOptions);
 }
 
@@ -77,5 +78,8 @@ function parseJSONL(text: string): RecordingEntry[] {
   return text
     .split("\n")
     .filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line) as RecordingEntry);
+    .map(decodeEntry);
 }
+
+/** A line written by `toJSONL`, so its shape is the recorder's own. */
+const decodeEntry = (line: string): RecordingEntry => JSON.parse(line);

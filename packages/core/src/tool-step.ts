@@ -3,6 +3,7 @@ import type { AgentSpec } from "./agent.js";
 import type { Catalogue } from "./catalogue.js";
 import type { Logger, MediaRef, ScopeId, UserId } from "./context.js";
 import type { HookContextBase, HookContexts, HookToolCall } from "./hook.js";
+import { errorMessage } from "./errors.js";
 import { hooksAt } from "./hooks.js";
 import { keys } from "./keys.js";
 import { isPlatformFailure } from "./platform-failure.js";
@@ -12,6 +13,7 @@ import {
   DEFAULT_ANNOTATIONS,
   type Connection,
   type Tool,
+  type ToolAnnotations,
   type ToolContent,
   type ToolContext,
   type ToolOutcome,
@@ -128,14 +130,17 @@ export async function runToolStep(
   // Asks are raised only once every allowed call of the batch has run.
   let reason: "approval" | "job" | undefined = started.size > 0 ? "job" : undefined;
   for (const call of waiting) {
-    const waits = waitsOn(call)!;
+    const waits = waitsOn(call);
     if (waits === "approval") {
       if (!prior.approvals.has(call.id)) host.ask(call);
       reason = "approval";
-    } else reason ??= "job";
+    } else if (waits === "job") reason ??= "job";
   }
   return reason;
 }
+
+type ResultExtra = Partial<Pick<Extract<ThreadEventData, { type: "tool.result" }>, "interrupted" | "output">>;
+type Finish = (seq: number | undefined, result: ToolResult, extra?: ResultExtra) => Promise<undefined>;
 
 async function runCall(
   host: ToolStepHost,
@@ -147,43 +152,12 @@ async function runCall(
   const started = prior.started.get(call.id);
   const entry = host.available.get(call.name);
   const annotations = entry?.tool.annotations ?? DEFAULT_ANNOTATIONS;
-  // The result is persisted first, so an eviction during a Hook cannot lose finished work; Hooks then observe it.
-  const finish = (
-    seq: number | undefined,
-    result: ToolResult,
-    extra: Partial<Pick<Extract<ThreadEventData, { type: "tool.result" }>, "interrupted" | "output">> = {},
-  ) => {
-    const logged = seq ?? host.append({ type: "tool.call", id: call.id, name: call.name, input: call.input }).seq;
-    host.append({
-      type: "tool.result",
-      id: call.id,
-      name: call.name,
-      content: result.content,
-      isError: result.isError === true,
-      ...extra,
-    });
-    return afterTool(
-      host,
-      { id: call.id, callId: callId(host, logged), name: call.name, input: started?.input ?? call.input, annotations },
-      { ...result, ...(extra.interrupted && { interrupted: extra.interrupted }) },
-      signal,
-    ).then(() => undefined);
-  };
-
+  const finish = finisher(host, call, started?.input ?? call.input, annotations, signal);
   if (!entry) return finish(started?.seq, error(`Unknown tool "${call.name}".`));
-  const { tool } = entry;
 
   // A Job's outcome is the call's result, whatever the Tool's annotations say about re-running it.
   const job = prior.jobs.get(call.id);
-  if (job?.outcome && started) {
-    if (job.outcome.type !== "job.completed")
-      return finish(
-        started.seq,
-        error(job.outcome.type === "job.failed" ? `Job failed: ${job.outcome.message}` : "Job cancelled."),
-      );
-    const spilled = await spill(host, tool, started.seq, job.outcome.result);
-    return finish(started.seq, spilled.result, spilled.output ? { output: spilled.output } : {});
-  }
+  if (job?.outcome && started) return finishJob(host, entry.tool, started.seq, job.outcome, finish);
 
   // A re-run may repeat only work that is safe to repeat; anything else gets an honest "interrupted".
   if (started && !(annotations.readOnlyHint || annotations.idempotentHint)) {
@@ -193,36 +167,87 @@ async function runCall(
   let input = started?.input ?? call.input;
   let seq = started?.seq;
   if (seq === undefined) {
-    if (entry.effect === "deny")
-      return finish(undefined, error(`Tool "${call.name}" is denied by the Permission Policy.`));
-    const answer = prior.approvals.get(call.id)?.answer;
-    if (answer?.decision === "deny")
-      return finish(
-        undefined,
-        error(
-          `Tool "${call.name}" was denied${answer.reason ? `: ${answer.reason}` : answer.source === "timeout" ? ": the approval timed out." : "."}`,
-        ),
-      );
-    const decision = await beforeTool(host, { id: call.id, name: call.name, input, annotations }, signal);
-    signal.throwIfAborted();
-    if (decision.effect === "deny")
-      return finish(
-        undefined,
-        error(`Tool "${call.name}" was refused by a Hook${decision.reason ? `: ${decision.reason}` : "."}`),
-      );
-    if (decision.input !== undefined) input = decision.input;
+    const admitted = await admit(host, call, entry, prior.approvals.get(call.id)?.answer, input, signal);
+    if (!admitted.ok) return finish(undefined, admitted.result);
+    input = admitted.input;
     seq = host.append({ type: "tool.call", id: call.id, name: call.name, input }).seq;
   }
+  return execute(host, call, entry, input, seq, signal, finish);
+}
 
-  const parsed = z.safeParse(tool.input, input);
-  if (!parsed.success)
-    return finish(
-      seq,
-      error(
-        `Invalid input for "${call.name}": ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`).join("; ")}`,
-      ),
+// The result is persisted first, so an eviction during a Hook cannot lose finished work; Hooks then observe it.
+function finisher(
+  host: ToolStepHost,
+  call: ToolCall,
+  input: unknown,
+  annotations: ToolAnnotations,
+  signal: AbortSignal,
+): Finish {
+  return async (seq, result, extra = {}) => {
+    const logged = seq ?? host.append({ type: "tool.call", id: call.id, name: call.name, input: call.input }).seq;
+    host.append({
+      type: "tool.result",
+      id: call.id,
+      name: call.name,
+      content: result.content,
+      isError: result.isError === true,
+      ...extra,
+    });
+    await afterTool(
+      host,
+      { id: call.id, callId: callId(host, logged), name: call.name, input, annotations },
+      { ...result, ...(extra.interrupted && { interrupted: extra.interrupted }) },
+      signal,
     );
+    return undefined;
+  };
+}
 
+async function finishJob(host: ToolStepHost, tool: Tool, seq: number, outcome: JobOutcome, finish: Finish) {
+  if (outcome.type !== "job.completed")
+    return finish(seq, error(outcome.type === "job.failed" ? `Job failed: ${outcome.message}` : "Job cancelled."));
+  const spilled = await spill(host, tool, seq, outcome.result);
+  return finish(seq, spilled.result, spilled.output ? { output: spilled.output } : {});
+}
+
+/** The gate before a call first runs: the Policy, a human's answer, then the before-tool Hooks, which may rewrite the input. */
+async function admit(
+  host: ToolStepHost,
+  call: ToolCall,
+  entry: AvailableTool,
+  answer: CallApproval["answer"],
+  input: unknown,
+  signal: AbortSignal,
+): Promise<{ ok: true; input: unknown } | { ok: false; result: ToolResult }> {
+  const refuse = (text: string) => ({ ok: false as const, result: error(text) });
+  if (entry.effect === "deny") return refuse(`Tool "${call.name}" is denied by the Permission Policy.`);
+  if (answer?.decision === "deny") {
+    const why = answer.reason ? `: ${answer.reason}` : answer.source === "timeout" ? ": the approval timed out." : ".";
+    return refuse(`Tool "${call.name}" was denied${why}`);
+  }
+  const annotations = entry.tool.annotations;
+  const decision = await beforeTool(host, { id: call.id, name: call.name, input, annotations }, signal);
+  signal.throwIfAborted();
+  if (decision.effect === "deny")
+    return refuse(`Tool "${call.name}" was refused by a Hook${decision.reason ? `: ${decision.reason}` : "."}`);
+  return { ok: true, input: decision.input !== undefined ? decision.input : input };
+}
+
+async function execute(
+  host: ToolStepHost,
+  call: ToolCall,
+  entry: AvailableTool,
+  input: unknown,
+  seq: number,
+  signal: AbortSignal,
+  finish: Finish,
+): Promise<"pending" | undefined> {
+  const { tool } = entry;
+  const parsed = z.safeParse(tool.input, input);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`);
+    return finish(seq, error(`Invalid input for "${call.name}": ${issues.join("; ")}`));
+  }
   const connection = await resolveConnection(host, tool);
   signal.throwIfAborted();
   if (!connection.ok) return finish(seq, error(connection.message));
@@ -241,7 +266,7 @@ async function runCall(
   };
   let result: ToolResult;
   try {
-    const outcome = normalize(await tool.execute(parsed.data, ctx as never));
+    const outcome = normalize(await tool.execute(parsed.data, ctx));
     if ("pending" in outcome) {
       host.append({ type: "job.started", id: call.id, jobId: outcome.pending });
       return "pending";
@@ -257,7 +282,6 @@ async function runCall(
 
 const callId = (host: ToolStepHost, seq: number) => `${host.threadId}:${seq}`;
 const error = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
-const errorMessage = (caught: unknown) => (caught instanceof Error ? caught.message : String(caught));
 
 function normalize(raw: ToolOutcome): ToolResult | { pending: string } {
   return typeof raw === "string" ? { content: [{ type: "text", text: raw }] } : raw;

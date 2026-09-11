@@ -10,7 +10,7 @@ import {
 import type { PolicyRule, ProviderToolName } from "./agent.js";
 import { KarmiError } from "./errors.js";
 import { toJsonSchema, type JsonSchema } from "./schema.js";
-import { pointer } from "./validate.js";
+import { firstIssue, pointer } from "./validate.js";
 
 // The secret-free Scope document: what `scope.config.set` stores as one immutable revision, and what
 // `createKarmi({ defaults })` supplies as the Deployment layer every Scope inherits and may only tighten.
@@ -156,7 +156,7 @@ export const scopeConfigJsonSchema: JsonSchema = toJsonSchema(ScopeConfigSchema)
 export function parseScopeConfig(document: unknown, providers?: Record<string, unknown>): ScopeConfigDocument {
   const result = z.safeParse(ScopeConfigSchema, document);
   if (!result.success) {
-    const issue = result.error.issues[0]!;
+    const issue = firstIssue(result.error);
     const path = pointer(issue.path);
     if (issue.code === "unrecognized_keys" && issue.keys.some((key) => SECRET_LOOKING_KEY.test(key)))
       throw secretValue(path);
@@ -187,6 +187,7 @@ function invalid(path: string, message: string): KarmiError {
 }
 
 const TIER_ORDER = ["isolate", "container"] as const;
+const tierRank = (tier: unknown) => TIER_ORDER.findIndex((known) => known === tier);
 
 /**
  * Deployment defaults under the Scope document: Provider profiles override by name, numeric ceilings
@@ -221,8 +222,7 @@ function tighten(a: Record<string, unknown>, b: Record<string, unknown>): Record
     else if (typeof x === "number" && typeof y === "number") out[key] = Math.min(x, y);
     else if (typeof x === "boolean" && typeof y === "boolean") out[key] = x && y;
     else if (Array.isArray(x) && Array.isArray(y)) out[key] = x.filter((item) => y.includes(item));
-    else if (key === "tier")
-      out[key] = TIER_ORDER[Math.min(TIER_ORDER.indexOf(x as never), TIER_ORDER.indexOf(y as never))];
+    else if (key === "tier") out[key] = TIER_ORDER[Math.min(tierRank(x), tierRank(y))];
     else out[key] = tighten(x as Record<string, unknown>, y as Record<string, unknown>);
   }
   return out;
