@@ -161,8 +161,12 @@ One entry in a Thread's ordered, persisted event log (`seq`-numbered): turn star
 _Avoid_: message (for the log entry), stream chunk, notification
 
 **Compaction**:
-A Harness Step that shrinks a Thread's model context when `contextTokens > window - reserveTokens`: walk back to a Turn boundary keeping `keepRecentTokens`, summarise everything before it, and append a `thread.compacted { firstKeptSeq, summary }` event. The log is never rewritten; the next context is Prompt + summary + events after `firstKeptSeq`. Summarising is client-side by default or delegated to the provider (Anthropic's `compaction` block) by config; `before-compact` / `after-compact` Hooks wrap it either way.
+A Harness Step that shrinks a Thread's model context when `contextTokens > window - reserveTokens` (the last usage plus a cheap estimate, never re-tokenised), checked before every fresh model Step and after a `context_window_exceeded` stop: walk back to a Turn boundary keeping `keepRecentTokens` (a tool Step boundary when that Turn still overflows), summarise everything before it, and append a `thread.compacted { trigger, firstKeptSeq, tokensBefore, tokensAfter, strategy, summary, attachments }` event. The log is never rewritten; the next context is Prompt + summary + events from `firstKeptSeq`. Summarising is client-side by default or delegated to the provider (Anthropic's `compaction` block) by Provider profile; `before-compact` / `after-compact` Hooks wrap it either way, and `thread.compact()` asks for one.
 _Avoid_: summarisation (for the Step), truncation, pruning, context reset
+
+**Fork**:
+A new Thread for the same Agent and User seeded with another Thread's log up to a `seq` by row copy (`thread.fork(seq)`); no tree is kept, and media stays with the original Thread, read by reference.
+_Avoid_: branch (for the Thread), clone, copy (for the operation)
 
 **Spill**:
 The Harness rule that every tool result over the Agent's `context.toolOutput` limit is stored whole in R2 under the Thread as a `MediaRef` and shown to the model as head + tail + a truncation marker; the built-in `read_output` Tool re-reads it by ref. Always on, not a Capability.

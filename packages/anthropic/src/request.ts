@@ -24,6 +24,8 @@ const BETAS = {
   mcp: "mcp-client-2025-11-20",
   taskBudget: "task-budgets-2026-03-13",
 } as const;
+/** The lowest `input_tokens` trigger the API accepts; a `compact` request asks for the earliest possible one. */
+const COMPACT_TRIGGER_MIN = 50_000;
 
 /** Block param types that accept `cache_control`. */
 const CACHEABLE = new Set([
@@ -70,6 +72,18 @@ export function buildParams(request: ProviderRequest): MessageCreateParamsBase {
     };
   if (options.fallbacks) params.fallbacks = options.fallbacks;
   if (options.contextManagement) params.context_management = options.contextManagement;
+  // A Harness `compact` wins over any configured edits: it wants the block back now, and nothing else.
+  if (request.compact)
+    params.context_management = {
+      edits: [
+        {
+          type: "compact_20260112",
+          trigger: { type: "input_tokens", value: COMPACT_TRIGGER_MIN },
+          pause_after_compaction: true,
+          ...(request.compact.instructions !== undefined && { instructions: request.compact.instructions }),
+        },
+      ],
+    };
   if (options.mcpServers) params.mcp_servers = options.mcpServers;
 
   const betas = collectBetas(request, options, messages);
@@ -114,6 +128,7 @@ function collectBetas(request: ProviderRequest, options: AnthropicOptions, messa
   if (options.mcpServers) betas.add(BETAS.mcp);
   if (options.taskBudget) betas.add(BETAS.taskBudget);
   const compacts =
+    request.compact !== undefined ||
     options.contextManagement?.edits?.some((edit) => edit.type === "compact_20260112") ||
     messages.some(
       (message) => Array.isArray(message.content) && message.content.some((block) => block.type === "compaction"),

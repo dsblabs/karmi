@@ -1,7 +1,7 @@
 import type { Logger, ScopeId, ThreadRef, UserId } from "./context.js";
 import { assertName } from "./names.js";
 import type { ToolAnnotations, ToolResult } from "./tool.js";
-import type { ThreadEventData, TurnInput } from "./thread-events.js";
+import type { CompactionTrigger, ThreadEventData, TurnInput } from "./thread-events.js";
 
 export const HOOK_POINTS = [
   "before-turn",
@@ -40,14 +40,19 @@ export interface HookToolCall {
 export type BeforeToolDecision = { effect: "allow"; input?: unknown } | { effect: "deny"; reason?: string };
 
 export type TurnEnd = Extract<ThreadEventData, { type: "turn.completed" | "turn.failed" | "turn.paused" }>;
+export type Compacted = Extract<ThreadEventData, { type: "thread.compacted" }>;
+
+/** A `before-compact` Hook may let the Compaction run, call it off, or write the summary itself. */
+export type BeforeCompactDecision = { skip: true } | { summary: string };
 
 export interface HookContexts {
   "before-turn": HookContextBase & { input: TurnInput };
   "after-turn": HookContextBase & { end: TurnEnd };
   "before-tool": HookContextBase & { call: HookToolCall };
   "after-tool": HookContextBase & { call: HookToolCall; result: ToolResult & { interrupted?: { attempt: number } } };
-  "before-compact": HookContextBase;
-  "after-compact": HookContextBase;
+  /** `instructions` come from `thread.compact({ instructions })`; `tokensBefore` is the context the trigger saw. */
+  "before-compact": HookContextBase & { trigger: CompactionTrigger; instructions?: string; tokensBefore: number };
+  "after-compact": HookContextBase & { compacted: Compacted };
   "on-error": HookContextBase & { error: { code: string; message: string } };
 }
 
@@ -56,7 +61,7 @@ export interface HookResults {
   "after-turn": void;
   "before-tool": void | BeforeToolDecision;
   "after-tool": void;
-  "before-compact": void;
+  "before-compact": void | BeforeCompactDecision;
   "after-compact": void;
   "on-error": void;
 }

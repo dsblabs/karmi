@@ -1,10 +1,13 @@
+import { summaryMessages } from "./compaction.js";
 import type { ContentBlock, Message } from "./provider.js";
 import type { ThreadEvent, TurnInput } from "./thread-events.js";
 
 // The transcript is derived from the event log, never stored: every Turn input is a user message,
 // every completed model Step an assistant message, every completed tool Step its results in the
 // order the model asked for them. Blocks of a Step whose attempt never completed (a failed fallback,
-// an evicted run, the Step in flight) are not part of the conversation.
+// an evicted run, the Step in flight) are not part of the conversation. A `thread.compacted` stands
+// for everything before its `firstKeptSeq`: the caller passes the log from that seq on, and the
+// summary opens the transcript wherever the event sits in it.
 
 export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] {
   const messages: Message[] = [];
@@ -13,6 +16,9 @@ export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] 
   const results = new Map<string, Extract<ThreadEvent, { type: "tool.result" }>>();
   for (const event of events) {
     switch (event.type) {
+      case "thread.compacted":
+        messages.unshift(...summaryMessages(event));
+        break;
       case "turn.started":
       case "turn.input":
         messages.push({ role: "user", content: inputContent(event.input) });

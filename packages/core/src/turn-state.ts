@@ -1,5 +1,5 @@
 import type { ContentBlock, StopReason } from "./provider.js";
-import type { Budget, PauseReason, ThreadEventData } from "./thread-events.js";
+import type { Budget, CompactionTrigger, PauseReason, ThreadEventData } from "./thread-events.js";
 import type { CallApproval, JobOutcome, PriorCalls, ToolCall } from "./tool-step.js";
 
 // The Turn as its event log tells it, folded without any I/O so the Thread DO only reads rows and a test
@@ -9,11 +9,13 @@ import type { CallApproval, JobOutcome, PriorCalls, ToolCall } from "./tool-step
 
 /**
  * What the log says the Turn should do next: re-run or start a model Step, run the tool batch of the
- * last model Step (re-runs carry what already happened), or end with the last model Step's message.
+ * last model Step (re-runs carry what already happened), finish an interrupted compact Step, or end
+ * with the last model Step's message. A fresh compact Step is the Thread DO's decision, never the log's.
  */
 export type Plan =
   | { kind: "model"; n: number; fresh: boolean }
   | { kind: "tool"; n: number; fresh: boolean; batch: ToolCall[]; prior: PriorCalls }
+  | { kind: "compact"; n: number; trigger: CompactionTrigger }
   | { kind: "finish"; stopReason: StopReason; message: ContentBlock[] };
 
 export type Request =
@@ -36,6 +38,10 @@ export interface TurnState {
   jobs: Map<string, Job>;
   /** The last completed model Step's content, for a Turn that ends without another one. */
   lastMessage: ContentBlock[];
+  /** The highest Step number started. */
+  lastStep: number;
+  /** Set when the last completed Step was a compact Step: whether it compacted or was called off. */
+  compaction?: "done" | "skipped";
 }
 
 export interface LoggedEvent {
@@ -54,7 +60,8 @@ export function foldTurn(events: Iterable<LoggedEvent>, now: number): TurnState 
 type EventOf<T extends ThreadEventData["type"]> = Extract<ThreadEventData, { type: T }>;
 
 class TurnFold {
-  private started: { kind: "model" | "tool"; n: number } | undefined;
+  private started:
+    { kind: "model" | "tool"; n: number } | { kind: "compact"; n: number; trigger: CompactionTrigger } | undefined;
   private completed = true;
   private steered = false;
   private parts: ContentBlock[] = [];
@@ -67,6 +74,10 @@ class TurnFold {
   private readonly byJob = new Map<string, string>();
   private readonly budget: Budget = { steps: 0, wallMs: 0, tokens: 0 };
   private countedStep = 0;
+  private compacted = false;
+  private compaction: "done" | "skipped" | undefined;
+  /** The Step an overflow compact Step interrupted; a skipped Compaction hands the Turn back to it. */
+  private previous: { started: TurnFold["started"]; completed: boolean } | undefined;
   /** When the current stretch of active wall time began; unset while parked. */
   private activeSince: number | undefined;
   private paused: PauseReason | undefined;
@@ -102,6 +113,9 @@ class TurnFold {
       case "step.completed":
         this.stepCompleted(event);
         break;
+      case "thread.compacted":
+        this.compacted = true;
+        break;
       case "approval.requested":
         this.approvalRequested(seq, event);
         break;
@@ -123,7 +137,10 @@ class TurnFold {
   }
 
   state(now: number): TurnState {
-    const { budget, requests, approvals, jobs, started, last } = this;
+    const { budget, requests, approvals, jobs, last } = this;
+    let { started, completed } = this;
+    if (started?.kind === "compact" && started.trigger === "overflow" && this.compaction === "skipped" && this.previous)
+      ({ started, completed } = this.previous);
     if (this.activeSince !== undefined) budget.wallMs += now - this.activeSince;
     const prior: PriorCalls = { started: this.calls, finished: this.results, approvals, jobs };
     const batch = (): ToolCall[] =>
@@ -136,13 +153,18 @@ class TurnFold {
       approvals,
       jobs,
       lastMessage: last?.message ?? [],
+      lastStep: this.countedStep,
       ...(this.paused !== undefined && { paused: this.paused }),
+      ...(this.compaction !== undefined && { compaction: this.compaction }),
     };
     const plan = (p: Plan): TurnState => ({ ...base, plan: p });
-    if (started && !this.completed) {
+    if (started && !completed) {
       if (started.kind === "model") return plan({ kind: "model", n: started.n, fresh: false });
+      if (started.kind === "compact") return plan({ kind: "compact", n: started.n, trigger: started.trigger });
       return plan({ kind: "tool", n: started.n, fresh: false, batch: batch(), prior });
     }
+    // A Compaction is always followed by a fresh model Step, whatever stood before it.
+    if (started?.kind === "compact") return plan({ kind: "model", n: started.n + 1, fresh: true });
     if (!started || !last) return plan({ kind: "model", n: 1, fresh: true });
     if (started.kind === "tool" || this.steered) return plan({ kind: "model", n: started.n + 1, fresh: true });
     const pending = batch();
@@ -151,8 +173,16 @@ class TurnFold {
   }
 
   private stepStarted(event: EventOf<"step.started">): void {
-    this.started = { kind: event.kind, n: event.n };
+    // A re-run of the compact Step keeps pointing at the Step it interrupted.
+    if (event.kind === "compact" && this.started?.kind !== "compact")
+      this.previous = { started: this.started, completed: this.completed };
+    this.started =
+      event.kind === "compact"
+        ? { kind: "compact", n: event.n, trigger: event.trigger }
+        : { kind: event.kind, n: event.n };
     this.completed = false;
+    this.compacted = false;
+    this.compaction = undefined;
     this.steered = false;
     this.requests.clear();
     if (event.n > this.countedStep) {
@@ -170,6 +200,7 @@ class TurnFold {
 
   private stepCompleted(event: EventOf<"step.completed">): void {
     this.completed = true;
+    if (event.kind === "compact") this.compaction = this.compacted ? "done" : "skipped";
     if (event.kind !== "model") return;
     this.last = { stopReason: event.stopReason, message: this.parts.filter((part) => part !== undefined) };
     this.budget.tokens += event.usage.input + event.usage.output;

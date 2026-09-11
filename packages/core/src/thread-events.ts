@@ -32,6 +32,11 @@ export interface Budget {
   tokens: number;
 }
 
+/** What asked for a Compaction: the boundary check, a `context_window_exceeded` stop, or `thread.compact()`. */
+export type CompactionTrigger = "auto" | "overflow" | "manual";
+/** Who wrote the summary: the Harness's own model call, the provider's mechanism, or a `before-compact` Hook. */
+export type CompactionStrategy = "harness" | "provider" | "hook";
+
 /** Who ended an Approval: a human, the clock, or the cancel of its Turn. */
 export type ApprovalSource = "answer" | "timeout" | "cancel";
 
@@ -82,8 +87,38 @@ export type ThreadEventData =
     }
   /** `attempt` counts recovery re-runs of the same tool batch. */
   | { type: "step.started"; kind: "tool"; n: number; attempt: number; agentVersion: number }
+  /** A compact Step: one summarising call by `model`, ending in `thread.compacted`. */
+  | {
+      type: "step.started";
+      kind: "compact";
+      n: number;
+      attempt: number;
+      model: string;
+      provider: string;
+      agentVersion: number;
+      trigger: CompactionTrigger;
+    }
   | { type: "step.completed"; kind: "model"; n: number; stopReason: StopReason; usage: Usage }
-  | { type: "step.completed"; kind: "tool"; n: number }
+  | { type: "step.completed"; kind: "tool" | "compact"; n: number }
+  /**
+   * The context is now the Prompt, `summary` and the events from `firstKeptSeq` on; the log before it
+   * stays as it was. `raw` is the provider's own block, replayed byte-exact to the provider named here.
+   */
+  | {
+      type: "thread.compacted";
+      trigger: CompactionTrigger;
+      strategy: CompactionStrategy;
+      firstKeptSeq: number;
+      tokensBefore: number;
+      tokensAfter: number;
+      summary: string;
+      raw?: unknown;
+      provider: string;
+      model: string;
+      /** Media the summarised events carried, kept in view of the model. */
+      attachments: MediaRef[];
+      usage: Usage;
+    }
   /** `input` is what the Tool ran with, after any `before-tool` rewrite; `ctx.callId` is `{threadId}:{seq}` of this event. */
   | { type: "tool.call"; id: string; name: string; input: unknown }
   /** `output` is the whole result when it was spilled; `interrupted` marks a Harness-synthesised result after an eviction. */

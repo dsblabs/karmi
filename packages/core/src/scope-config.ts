@@ -85,6 +85,8 @@ const CeilingsSchema = z.strictObject({
     }),
   ),
   approvals: z.optional(z.strictObject({ timeout: z.optional(positiveInt) })),
+  /** The largest context window an Agent here may assume; a Spec's `context.window` is capped to it. */
+  context: z.optional(z.strictObject({ window: z.optional(positiveInt) })),
 });
 
 export const ScopeConfigSchema = z.strictObject({
@@ -139,6 +141,7 @@ export interface Ceilings {
   providerTools?:
     false | { tools?: ProviderToolName[]; limits?: { maxCallsPerTurn?: number; maxCallsPerThread?: number } };
   approvals?: { timeout?: number };
+  context?: { window?: number };
 }
 
 /** One Scope's configuration, or the Deployment defaults: the same shape at both layers. */

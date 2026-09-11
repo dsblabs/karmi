@@ -2,11 +2,22 @@ import { AGENT_SPEC_DEFAULTS } from "./agent-spec.js";
 import type { AgentSpec, Capabilities, PolicyRule } from "./agent.js";
 import type { KarmiBindings } from "./bindings.js";
 import { readOutputTool } from "./builtins.js";
+import {
+  attachmentsOf,
+  chooseCut,
+  contextTokens,
+  estimateTokens,
+  overLimit,
+  resolveWindow,
+  SUMMARY_SYSTEM,
+  summaryInstruction,
+  type ContextLimits,
+} from "./compaction.js";
 import type { Logger } from "./context.js";
 import { deliveryBinding, type DeliveryBinding } from "./deliverer.js";
 import type { Deployment } from "./deployment.js";
 import { errorMessage, KarmiError } from "./errors.js";
-import type { HookContextBase, HookContexts, TurnEnd } from "./hook.js";
+import type { Compacted, HookContextBase, HookContexts, HookResults, TurnEnd } from "./hook.js";
 import { hooksAt } from "./hooks.js";
 import { keys } from "./keys.js";
 import { consoleLogger } from "./logger.js";
@@ -23,6 +34,7 @@ import type {
   ApprovalAnswer,
   ApprovalSource,
   Budget,
+  CompactionTrigger,
   Granularity,
   PauseReason,
   ResumeReason,
@@ -31,7 +43,14 @@ import type {
   ThreadEventType,
   TurnInput,
 } from "./thread-events.js";
-import { encodeKey, titleOf, type PendingApproval, type ThreadAddress, type ThreadStatus } from "./thread.js";
+import {
+  encodeKey,
+  titleOf,
+  type CompactOptions,
+  type PendingApproval,
+  type ThreadAddress,
+  type ThreadStatus,
+} from "./thread.js";
 import { runToolStep, type PriorCalls, type ToolCall } from "./tool-step.js";
 import { foldTurn, type Plan, type Request, type TurnState } from "./turn-state.js";
 import { resolveTools, toolDefinitions, type AvailableTool } from "./tools.js";
@@ -74,6 +93,8 @@ export interface TurnSnapshot {
   approvalTimeout: number;
   /** The `longRunning` grant under the Scope ceiling, or the small defaults without one. */
   budget: Budget;
+  /** The Spec's `context` with the Framework defaults filled in; `window` stays open for the model's own. */
+  context: { window?: number; windowCeiling?: number; reserveTokens: number; keepRecentTokens: number };
 }
 
 type ThreadRow = {
@@ -109,13 +130,19 @@ type ApprovalRequest =
 
 type ModelPlan = Extract<Plan, { kind: "model" }>;
 type ToolPlan = Extract<Plan, { kind: "tool" }>;
+/** How a compact Step ended: with a `thread.compacted`, or called off (nothing to drop, or a Hook's `skip`). */
+type CompactResult = "compacted" | "skipped";
+type Summary = Pick<Compacted, "strategy" | "summary" | "raw" | "usage">;
+/** The events the next model call is built from, and the seq a new cut must pass. */
+type ContextLog = { events: ThreadEvent[]; floor: number };
 /** Whether the Turn loop goes on after a helper, or the helper already ended or parked the Turn. */
 type Next = "continue" | "stop";
 
 // The one decode point for each JSON column this Durable Object writes. The rows are its own, so the
 // shapes are trusted; a shape change handles old rows here.
 const decodeUsage = (json: string): Usage => JSON.parse(json);
-const decodeSnapshot = (json: string): TurnSnapshot => JSON.parse(json);
+// Snapshots taken before Compaction landed carry no `context`; they run under the defaults.
+const decodeSnapshot = (json: string): TurnSnapshot => ({ context: resolveContext({}, {}), ...JSON.parse(json) });
 const decodeBinding = (json: string): DeliveryBinding => JSON.parse(json);
 const decodeEvent = (json: string): ThreadEventData => JSON.parse(json);
 const decodeInput = (json: string): TurnInput => JSON.parse(json);
@@ -385,6 +412,79 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return ok(undefined);
   }
 
+  /** A Compaction outside any Turn: the Thread must be idle, and stays busy to a `send` until it is done. */
+  async compact(address: ThreadAddress, options: CompactOptions): Promise<Outcome<void>> {
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    const row = entered.value;
+    if (row.state !== "idle" || this.active)
+      return fail(new KarmiError("thread.busy", `Thread "${row.thread_id}" has a Turn running or parked.`));
+    if (this.head === 0) return ok(undefined);
+    this.active = true;
+    this.turnAbort = new AbortController();
+    try {
+      const boundary = await this.snapshot(row);
+      if (!boundary.ok)
+        return fail(
+          boundary.failure.type === "turn.failed"
+            ? new KarmiError("compaction.failed", boundary.failure.message)
+            : new KarmiError("scope.suspended", `Scope "${row.scope_id}" is suspended.`),
+        );
+      const n = this.readTurn(row).lastStep + 1;
+      const context = this.contextLog();
+      const result = await this.compactStep(
+        row,
+        boundary.snapshot,
+        n,
+        "manual",
+        options.instructions,
+        context,
+        undefined,
+      );
+      return result.ok ? ok(undefined) : result;
+    } finally {
+      this.update({ snapshot_json: null });
+      this.active = false;
+      this.kickIfQueued();
+    }
+  }
+
+  /** Copies the log up to `seq` into the Thread at `target`, which must not exist yet. */
+  async fork(address: ThreadAddress, seq: number, target: ThreadAddress): Promise<Outcome<void>> {
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    if (!Number.isInteger(seq) || seq < 1 || seq > this.head)
+      return fail(new KarmiError("thread.seq.invalid", `The log ends at seq ${this.head}; cannot fork at ${seq}.`));
+    const rows = this.sql
+      .exec<EventRow>("SELECT seq, turn, at, type, json FROM events WHERE seq <= ? ORDER BY seq", seq)
+      .toArray();
+    const stub = remote<ThreadDurableObject>(this.env.KARMI_THREADS, keys.thread(target.scope, target.threadId));
+    return stub.seed(target, rows);
+  }
+
+  /** The receiving side of a fork: a fresh Durable Object takes the copied rows as its own log. */
+  seed(address: ThreadAddress, rows: EventRow[]): Outcome<void> {
+    if (this.sql.exec("SELECT thread_id FROM thread").toArray().length > 0)
+      return fail(new KarmiError("thread.exists", `Thread "${address.threadId}" already exists.`));
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    const last = rows.at(-1);
+    for (const row of rows)
+      this.sql.exec(
+        "INSERT INTO events (seq, turn, at, type, json) VALUES (?, ?, ?, ?, ?)",
+        row.seq,
+        row.turn,
+        row.at,
+        row.type,
+        row.json,
+      );
+    if (last) {
+      this.head = last.seq;
+      this.update({ turn: last.turn });
+    }
+    return ok(undefined);
+  }
+
   private nextAppend(): Promise<void> {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -613,7 +713,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   /** Counts an interrupted Step's recovery; stops when the Step has no attempts left and the Turn failed. */
   private async recover(row: ThreadRow): Promise<Next> {
     const plan = this.readTurn(row).plan;
-    if (plan.kind !== "finish" && !plan.fresh) {
+    if (isRerun(plan)) {
       if (!row.platform_failure && row.recoveries + 1 >= MAX_STEP_ATTEMPTS) {
         const message = `Step ${row.step} of Turn ${row.turn} exhausted its three attempts.`;
         return stop(this.finish(row, failure("recovery", message)));
@@ -762,12 +862,19 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       const { plan } = turn;
       if (plan.kind === "finish")
         return this.finish(this.row(), { type: "turn.completed", stopReason: plan.stopReason, message: plan.message });
-      if (plan.fresh && exhausted(turn.budget, snapshot.budget))
+      if (plan.kind !== "compact" && plan.fresh && exhausted(turn.budget, snapshot.budget))
         return this.parkOnBudget(row, snapshot, turn, channelRef);
-      const next =
-        plan.kind === "model"
-          ? await this.startModelStep(row, snapshot, plan, available(snapshot), channelRef)
-          : await this.startToolStep(row, snapshot, plan, available(snapshot), channelRef);
+      let next: Next;
+      // The context log is read once here and handed down: the boundary check and the Step both use it.
+      const context = plan.kind === "model" && plan.fresh ? this.contextLog() : undefined;
+      const limits = this.limits(snapshot);
+      if (plan.kind === "compact")
+        next = await this.runCompactStep(row, snapshot, plan.n, plan.trigger, this.contextLog(), channelRef);
+      else if (context && turn.compaction === undefined && overLimit(contextTokens(context.events), limits))
+        next = await this.runCompactStep(row, snapshot, plan.n, "auto", context, channelRef);
+      else if (plan.kind === "model")
+        next = await this.startModelStep(row, snapshot, plan, available(snapshot), channelRef, turn, context);
+      else next = await this.startToolStep(row, snapshot, plan, available(snapshot), channelRef);
       if (next === "stop") return;
       row = this.row();
     }
@@ -797,7 +904,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   /** At a batch boundary, steer inputs join the conversation before the next model Step. */
   private joinSteers(row: ThreadRow, turn: TurnState, channelRef: unknown): TurnState {
-    if (turn.plan.kind !== "finish" && !turn.plan.fresh) return turn;
+    if (isRerun(turn.plan)) return turn;
     const steers = this.sql.exec<{ json: string }>("SELECT json FROM inputs WHERE steer = 1 ORDER BY id").toArray();
     if (steers.length === 0) return turn;
     this.sql.exec("DELETE FROM inputs WHERE steer = 1");
@@ -820,6 +927,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     plan: ModelPlan,
     available: ReadonlyMap<string, AvailableTool>,
     channelRef: unknown,
+    turn: TurnState,
+    context = this.contextLog(),
   ): Promise<Next> {
     const modelAttempt = plan.fresh ? 1 : Math.max(row.attempt, 1);
     const attempt = modelAttempt + (plan.fresh ? 0 : row.recoveries);
@@ -845,9 +954,27 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       channelRef,
     );
     this.armWatchdog();
-    const step = this.modelStep({ ...row, step: plan.n }, snapshot, available, model, channelRef);
+    const step = this.modelStep({ ...row, step: plan.n }, snapshot, available, model, context.events, channelRef);
     const result = await this.untilCancelled(step);
     if (result === CANCELLED) return stop(this.cancelTurn(this.row()));
+    // An overflow asks for a Compaction before anything else is tried; one that drops nothing (or a
+    // Compaction this Step already followed) leaves the failure to take its ordinary course.
+    const overflow = result.ok
+      ? result.stopReason === "context_window_exceeded"
+      : result.error.code === "context_window_exceeded";
+    if (overflow && turn.compaction !== "skipped") {
+      const compacted = await this.compactStep(
+        this.row(),
+        snapshot,
+        plan.n + 1,
+        "overflow",
+        undefined,
+        context,
+        channelRef,
+      );
+      if (!compacted.ok) return stop(this.finish(this.row(), failure("compaction", compacted.message)));
+      if (compacted.value === "compacted") return "continue";
+    }
     // The failed attempt stays in the log; the transcript ignores Steps that never completed.
     if (!result.ok) this.update({ attempt: modelAttempt + 1 });
     return "continue";
@@ -969,6 +1096,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           ceilings.approvals?.timeout ?? UNBOUNDED,
         ),
         budget: resolveBudget(spec.capabilities?.longRunning, ceilings.longRunning),
+        context: resolveContext(spec, ceilings),
       };
       const json = JSON.stringify(snapshot);
       const bytes = new TextEncoder().encode(json).byteLength;
@@ -994,14 +1122,15 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return consoleLogger({ scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn });
   }
 
-  // Turn-level Hooks, dispatched by name with the Turn's context. `before-turn` may refuse the Turn by
-  // throwing; the observing points only log a failure.
-  private async turnHooks<P extends "before-turn" | "after-turn" | "on-error">(
+  // Turn-level Hooks, dispatched by name with the Turn's context. `before-turn` and `before-compact`
+  // may refuse by throwing, and the first `before-compact` decision wins; the observing points only
+  // log a failure.
+  private async turnHooks<P extends "before-turn" | "after-turn" | "on-error" | "before-compact" | "after-compact">(
     row: ThreadRow,
     snapshot: TurnSnapshot,
     point: P,
     extra: Omit<HookContexts[P], keyof HookContextBase>,
-  ): Promise<{ ok: true } | { ok: false; failure: TurnEnd }> {
+  ): Promise<{ ok: true; result?: Exclude<HookResults[P], void> } | { ok: false; failure: TurnEnd }> {
     const base: HookContextBase = {
       point,
       scope: row.scope_id,
@@ -1014,16 +1143,195 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     };
     for (const hook of hooksAt(snapshot.spec, this.deployment.catalogue, point)) {
       try {
-        await hook.run({ ...base, ...extra } as HookContexts[P]);
+        const result = await hook.run({ ...base, ...extra } as HookContexts[P]);
+        if (result !== undefined && point === "before-compact")
+          return { ok: true, result: result as Exclude<HookResults[P], void> };
       } catch (caught) {
         if (isPlatformFailure(caught)) throw caught;
         const message = errorMessage(caught);
         if (point === "before-turn")
           return { ok: false, failure: failure("hook", `Hook "${hook.name}" refused the Turn: ${message}`) };
+        if (point === "before-compact")
+          return { ok: false, failure: failure("hook", `Hook "${hook.name}" refused the Compaction: ${message}`) };
         base.logger.warn(`${point} Hook "${hook.name}" failed`, { error: message });
       }
     }
     return { ok: true };
+  }
+
+  // Compaction: a Step of its own, run before a fresh model Step when the context is over its limit,
+  // after a `context_window_exceeded` stop, or on `thread.compact()`. Its only lasting trace is
+  // `thread.compacted`; the log before the cut is never touched.
+  /** The events the next model call is built from: from the last Compaction's `firstKeptSeq` on. */
+  private contextLog(): ContextLog {
+    const last = this.sql
+      .exec<{ seq: number; json: string }>(
+        "SELECT seq, json FROM events WHERE type = 'thread.compacted' ORDER BY seq DESC LIMIT 1",
+      )
+      .toArray()[0];
+    const compacted = last && decodeEvent(last.json);
+    const firstKeptSeq = compacted?.type === "thread.compacted" ? compacted.firstKeptSeq : 1;
+    return { events: this.read(firstKeptSeq - 1, "part", Number.MAX_SAFE_INTEGER), floor: last?.seq ?? 0 };
+  }
+
+  private limits(snapshot: TurnSnapshot): ContextLimits {
+    const { context, profile, spec } = snapshot;
+    const [, native] = splitModelId(spec.model.id);
+    const model = this.deployment.providers[profile.adapter]?.capabilities(native).contextWindow;
+    return {
+      window: resolveWindow({
+        ...(context.window !== undefined && { spec: context.window }),
+        ...(context.windowCeiling !== undefined && { ceiling: context.windowCeiling }),
+        ...(model !== undefined && { model }),
+      }),
+      reserveTokens: context.reserveTokens,
+      keepRecentTokens: context.keepRecentTokens,
+    };
+  }
+
+  /** A compact Step inside a Turn: a failure ends the Turn. An interrupted one re-runs whole, as only its start was logged. */
+  private async runCompactStep(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    n: number,
+    trigger: CompactionTrigger,
+    context: ContextLog,
+    channelRef: unknown,
+  ): Promise<Next> {
+    const result = await this.compactStep(row, snapshot, n, trigger, undefined, context, channelRef);
+    return result.ok ? "continue" : stop(this.finish(this.row(), failure("compaction", result.message)));
+  }
+
+  private async compactStep(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    n: number,
+    trigger: CompactionTrigger,
+    instructions: string | undefined,
+    { events, floor }: ContextLog,
+    channelRef: unknown,
+  ): Promise<Outcome<CompactResult>> {
+    const { spec, profile } = snapshot;
+    this.update({ step: n, attempt: 1 });
+    const started: ThreadEventData = {
+      type: "step.started",
+      kind: "compact",
+      n,
+      attempt: row.recoveries + 1,
+      model: spec.model.id,
+      provider: profile.adapter,
+      agentVersion: snapshot.agentVersion,
+      trigger,
+    };
+    this.append(row.turn, started, channelRef);
+    this.armWatchdog();
+    const completed = () => this.append(row.turn, { type: "step.completed", kind: "compact", n }, channelRef);
+    const tokensBefore = contextTokens(events);
+    const cut = chooseCut(events, this.limits(snapshot), floor);
+    if (!cut) return skipped(completed);
+    const before = await this.turnHooks(row, snapshot, "before-compact", {
+      trigger,
+      ...(instructions !== undefined && { instructions }),
+      tokensBefore,
+    });
+    if (!before.ok) return compactionFailed(turnEndMessage(before.failure));
+    if (before.result && "skip" in before.result) return skipped(completed);
+    const dropped = events.filter((event) => event.seq < cut.firstKeptSeq);
+    const [, native] = splitModelId(spec.model.id);
+    // A Hook's summary stands in for the Harness's call; the provider strategy cannot take one (documented).
+    const hookSummary = before.result && profile.compaction !== "provider" ? before.result.summary : undefined;
+    let summary: Summary;
+    if (hookSummary !== undefined) summary = { strategy: "hook", summary: hookSummary, usage: ZERO_USAGE };
+    else {
+      const written = await this.untilCancelled(this.summarise(row, snapshot, dropped, native, instructions));
+      if (written === CANCELLED) return compactionFailed("The Turn was cancelled.");
+      if (!written.ok) return written;
+      summary = written.value;
+    }
+    const compacted: Compacted = {
+      type: "thread.compacted",
+      trigger,
+      ...summary,
+      firstKeptSeq: cut.firstKeptSeq,
+      tokensBefore,
+      tokensAfter: estimateTokens(summary.summary) + cut.tokensKept,
+      provider: profile.adapter,
+      model: native,
+      attachments: attachmentsOf(dropped),
+    };
+    return this.recordCompaction(row, snapshot, compacted, completed, channelRef);
+  }
+
+  /** The summary lands in one breath: its usage, the event and the Step's end, then the observing Hooks. */
+  private async recordCompaction(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    compacted: Compacted,
+    completed: () => unknown,
+    channelRef: unknown,
+  ): Promise<Outcome<CompactResult>> {
+    this.update({ usage_json: JSON.stringify(addUsage(decodeUsage(this.row().usage_json), compacted.usage)) });
+    this.append(row.turn, compacted, channelRef);
+    completed();
+    await this.turnHooks(row, snapshot, "after-compact", { compacted });
+    return ok("compacted");
+  }
+
+  /**
+   * One summarising call. The Harness asks for prose; under the provider strategy it asks for the
+   * provider's own block, and takes the prose reply instead when the provider sends none (a context
+   * under the provider's compaction minimum), so a small window never fails a Turn.
+   */
+  private async summarise(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    dropped: ThreadEvent[],
+    native: string,
+    instructions: string | undefined,
+  ): Promise<Outcome<Summary>> {
+    const { profile, spec } = snapshot;
+    const provider = this.deployment.providers[profile.adapter];
+    if (!provider) return compactionFailed(`Provider adapter "${profile.adapter}" is not registered.`);
+    const { messages } = prepareMessages(transcriptFromEvents(dropped), { provider: profile.adapter, model: native });
+    const request: ProviderRequest = {
+      model: native,
+      config: profile,
+      system: SUMMARY_SYSTEM,
+      messages: [...messages, { role: "user", content: [{ type: "text", text: summaryInstruction(instructions) }] }],
+      ...(profile.compaction === "provider" && { compact: { ...(instructions !== undefined && { instructions }) } }),
+      ...(spec.model.params?.maxOutputTokens && { params: { maxOutputTokens: spec.model.params.maxOutputTokens } }),
+      ...((profile.providerOptions || spec.model.providerOptions) && {
+        providerOptions: { ...profile.providerOptions, ...spec.model.providerOptions },
+      }),
+    };
+    const logger = this.logger(row);
+    const hosts = providerHosts(profile);
+    const egress = scopedFetch({ ...(hosts && { hosts }), logger });
+    const attribution = { scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn };
+    const parts: ContentBlock[] = [];
+    let usage = ZERO_USAGE;
+    try {
+      const stream = provider.stream(request, { fetch: egress, signal: this.turnAbort.signal, attribution, logger });
+      for await (const event of stream) {
+        if (event.type === "part") parts.push(event.block);
+        else if (event.type === "error") return compactionFailed(event.error.message);
+        else if (event.type === "message.end") usage = event.usage;
+      }
+    } catch (error) {
+      if (isPlatformFailure(error)) throw error;
+      return compactionFailed(errorMessage(error));
+    }
+    const block = parts.find((part) => part.type === "compaction");
+    if (block)
+      return ok({
+        strategy: "provider",
+        summary: block.summary,
+        ...(block.raw !== undefined && { raw: block.raw }),
+        usage,
+      });
+    const summary = parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+    if (!summary.trim()) return compactionFailed("The summarising call returned no text.");
+    return ok({ strategy: "harness", summary, usage });
   }
 
   private async modelStep(
@@ -1031,6 +1339,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     snapshot: TurnSnapshot,
     available: ReadonlyMap<string, AvailableTool>,
     model: string,
+    events: ThreadEvent[],
     channelRef: unknown,
   ): Promise<StepResult> {
     const { profile } = snapshot;
@@ -1039,7 +1348,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const signal = this.turnAbort.signal;
     const logger = this.logger(row);
     try {
-      const request = await this.modelRequest(row, snapshot, available, model);
+      const request = await this.modelRequest(row, snapshot, available, model, events);
       const hosts = providerHosts(profile);
       const egress = scopedFetch({ ...(hosts && { hosts }), logger });
       const attribution = { scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn };
@@ -1057,6 +1366,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     snapshot: TurnSnapshot,
     available: ReadonlyMap<string, AvailableTool>,
     model: string,
+    events: ThreadEvent[],
   ): Promise<ProviderRequest> {
     const { spec, profile } = snapshot;
     const [, native] = splitModelId(model);
@@ -1075,7 +1385,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       },
       offered,
     );
-    const { messages } = prepareMessages(transcriptFromEvents(this.read(0, "part", Number.MAX_SAFE_INTEGER)), {
+    const { messages } = prepareMessages(transcriptFromEvents(events), {
       provider: profile.adapter,
       model: native,
     });
@@ -1196,6 +1506,16 @@ const stop = async (work: Promise<void>): Promise<"stop"> => {
   await work;
   return "stop";
 };
+/** A compact Step called off still closes: the fold must see it completed. */
+const skipped = (completed: () => unknown): Outcome<CompactResult> => {
+  completed();
+  return ok("skipped");
+};
+const compactionFailed = (message: string) => fail(new KarmiError("compaction.failed", message));
+/** A Step the log left unfinished: the loop picks it up rather than starting a new one. */
+const isRerun = (plan: Plan): boolean => plan.kind === "compact" || (plan.kind !== "finish" && !plan.fresh);
+const turnEndMessage = (end: TurnEnd): string =>
+  end.type === "turn.failed" ? end.message : `The Turn ${end.type === "turn.paused" ? "was parked" : "ended"}.`;
 const stepError = (message: string): StepResult => ({
   ok: false,
   error: { code: "unknown", message, retryable: false },
@@ -1221,6 +1541,16 @@ function resolveBudget(grant: Capabilities["longRunning"], ceiling: Ceilings["lo
     steps: Math.min(budget.steps, cap.steps),
     wallMs: Math.min(budget.wallMs, cap.wallMs),
     tokens: Math.min(budget.tokens, cap.tokens),
+  };
+}
+
+/** The Spec's context knobs with the defaults filled in; the window itself waits for the model's own. */
+function resolveContext(spec: Pick<AgentSpec, "context">, ceilings: Ceilings): TurnSnapshot["context"] {
+  return {
+    ...(spec.context?.window !== undefined && { window: spec.context.window }),
+    ...(ceilings.context?.window !== undefined && { windowCeiling: ceilings.context.window }),
+    reserveTokens: spec.context?.reserveTokens ?? AGENT_SPEC_DEFAULTS.context.reserveTokens,
+    keepRecentTokens: spec.context?.keepRecentTokens ?? AGENT_SPEC_DEFAULTS.context.keepRecentTokens,
   };
 }
 

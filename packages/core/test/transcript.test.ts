@@ -128,4 +128,90 @@ describe("transcriptFromEvents", () => {
       },
     ]);
   });
+
+  it("opens with the summary of a compaction and keeps the events from firstKeptSeq on", () => {
+    const events = [
+      ev(2, {
+        type: "turn.started",
+        input: { kind: "message", parts: [{ type: "text", text: "kept" }] },
+        toolsVersion: "v",
+      }),
+      ev(2, {
+        type: "thread.compacted",
+        trigger: "auto",
+        strategy: "harness",
+        firstKeptSeq: 1,
+        tokensBefore: 900,
+        tokensAfter: 100,
+        summary: "We discussed x.",
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        attachments: [{ id: "m1", key: "k", mimeType: "image/png", bytes: 1 }],
+        usage,
+      }),
+      ev(2, {
+        type: "step.started",
+        kind: "model",
+        n: 2,
+        attempt: 1,
+        model: "anthropic/claude-sonnet-5",
+        provider: "anthropic",
+        agentVersion: 1,
+      }),
+      ev(2, { type: "message.part", index: 0, block: { type: "text", text: "Hello" } }),
+      ev(2, { type: "step.completed", kind: "model", n: 2, stopReason: "end_turn", usage }),
+    ];
+    expect(transcriptFromEvents(events)).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Summary of the conversation so far:\n\nWe discussed x." },
+          { type: "media", media: { id: "m1", key: "k", mimeType: "image/png", bytes: 1 } },
+        ],
+      },
+      { role: "user", content: [{ type: "text", text: "kept" }] },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Hello" }],
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        stopReason: "end_turn",
+      },
+    ]);
+  });
+
+  it("replays a provider compaction as an assistant block the same provider gets byte-exact", () => {
+    const events = [
+      ev(1, {
+        type: "thread.compacted",
+        trigger: "manual",
+        strategy: "provider",
+        firstKeptSeq: 2,
+        tokensBefore: 900,
+        tokensAfter: 100,
+        summary: "We discussed x.",
+        raw: { type: "compaction", content: "We discussed x.", encrypted_content: "ENC" },
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        attachments: [],
+        usage,
+      }),
+    ];
+    expect(transcriptFromEvents(events)).toEqual([
+      { role: "user", content: [{ type: "text", text: "The conversation so far was compacted." }] },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "compaction",
+            summary: "We discussed x.",
+            raw: { type: "compaction", content: "We discussed x.", encrypted_content: "ENC" },
+          },
+        ],
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        stopReason: "end_turn",
+      },
+    ]);
+  });
 });

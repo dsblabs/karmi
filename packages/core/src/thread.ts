@@ -66,6 +66,11 @@ export interface SendOptions {
   steer?: boolean;
 }
 
+export interface CompactOptions {
+  /** Guidance for the summary, handed to the `before-compact` Hooks and the summarising model. */
+  instructions?: string;
+}
+
 /** How a Job started by a Tool's `{ pending: jobId }` reports back into the Thread. */
 export interface ThreadJobs {
   progress(jobId: string, content: string | ToolContent[]): Promise<void>;
@@ -90,6 +95,13 @@ export interface Thread {
   /** Continues a Turn parked by Scope suspension, under a fresh snapshot of the Scope and Agent Spec. */
   resume(): Promise<void>;
   readonly jobs: ThreadJobs;
+  /** Compacts the context of an idle Thread now; a `before-compact` Hook may still skip it. Rejected while a Turn runs or is parked. */
+  compact(options?: CompactOptions): Promise<void>;
+  /**
+   * A new Thread for the same Agent and User whose log is this one's up to `seq` (a Turn boundary
+   * keeps it clean). Media stays with this Thread; the fork reads it by reference.
+   */
+  fork(seq: number, target?: { threadId?: string }): Promise<Thread>;
   /** Replays from `after` (exclusive, default the whole log), then streams live until the consumer stops. */
   subscribe(options?: { after?: number; granularity?: Granularity }): AsyncIterable<ThreadEvent>;
   events(options?: { after?: number }): Promise<ThreadEvent[]>;
@@ -129,6 +141,12 @@ export function openThread(bindings: KarmiBindings, scope: ScopeId, target: Thre
       complete: (jobId, result) => unwrap(stub.job(address, { type: "job.completed", jobId, result })),
       fail: (jobId, message) => unwrap(stub.job(address, { type: "job.failed", jobId, message })),
       cancel: (jobId) => unwrap(stub.job(address, { type: "job.cancelled", jobId })),
+    },
+    compact: (options) => unwrap(stub.compact(address, options ?? {})),
+    fork: async (seq, target) => {
+      const forked: ThreadIdentity = { ...identity, threadId: target?.threadId ?? crypto.randomUUID() };
+      await unwrap(stub.fork(address, seq, { ...address, threadId: forked.threadId, create: true }));
+      return openThread(bindings, scope, forked);
     },
     events: (options) => unwrap(stub.events(address, options?.after ?? 0)),
     status: () => unwrap(stub.status(address)),
