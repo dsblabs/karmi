@@ -110,6 +110,11 @@ function replayBlock(
   sameProvider: boolean,
   idMap: Map<string, string>,
 ): ContentBlock[] {
+  const providerScoped = block.type === "compaction" || block.type === "server_tool" || block.type === "provider";
+  if (!(providerScoped ? sameProvider : sameModel) && block.providerMetadata) {
+    const { providerMetadata, ...rest } = block;
+    block = rest;
+  }
   switch (block.type) {
     case "thinking": {
       if (sameModel) return block.redacted || block.signature || block.text.trim() ? [block] : [];

@@ -1,0 +1,6 @@
+data: {"response": "Hello"}
+
+data: {"response": "", "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}}
+
+data: [DONE]
+

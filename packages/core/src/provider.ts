@@ -6,7 +6,7 @@ import type { ProviderConfig } from "./scope-config.js";
 // the Thread DO persists it and rebuilds requests from it after eviction — so nothing may depend on a
 // vendor SDK's types (docs/research/provider-seam.md §4).
 
-export type ContentBlock =
+export type ContentBlock = (
   | { type: "text"; text: string }
   /** Binary content by reference; an adapter re-inlines the bytes at request-build. */
   | { type: "media"; media: MediaRef }
@@ -19,7 +19,11 @@ export type ContentBlock =
   /** Provider-side Compaction; `raw` replays to the same provider, `summary` stands in elsewhere. */
   | { type: "compaction"; summary: string; raw?: unknown }
   /** Anything else a provider emits that it needs back verbatim; never crosses providers. */
-  | { type: "provider"; raw: unknown };
+  | { type: "provider"; raw: unknown }
+) & {
+  /** Replay metadata follows its block: model-scoped for text/thinking/calls, provider-scoped for opaque blocks. */
+  providerMetadata?: Record<string, Record<string, unknown>>;
+};
 
 export type StopReason =
   "end_turn" | "max_tokens" | "tool_use" | "pause_turn" | "refusal" | "context_window_exceeded" | "error" | "aborted";
