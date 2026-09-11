@@ -3,6 +3,7 @@ import type { AgentSpec, Capabilities, PolicyRule } from "./agent.js";
 import type { KarmiBindings } from "./bindings.js";
 import { readOutputTool } from "./builtins.js";
 import type { Logger } from "./context.js";
+import { deliveryBinding, type DeliveryBinding } from "./deliverer.js";
 import type { Deployment } from "./deployment.js";
 import { KarmiError } from "./errors.js";
 import type { HookContextBase, HookContexts, TurnEnd } from "./hook.js";
@@ -19,7 +20,7 @@ import { providerHosts, scopedFetch } from "./scoped-fetch.js";
 import type { ScopeConfigDurableObject } from "./scope-config-do.js";
 import type { Ceilings, ProviderConfig } from "./scope-config.js";
 import type { ApprovalAnswer, ApprovalSource, Budget, Granularity, PauseReason, ResumeReason, ThreadEvent, ThreadEventData, ThreadEventType, TurnInput } from "./thread-events.js";
-import { titleOf, type PendingApproval, type ThreadAddress, type ThreadStatus } from "./thread.js";
+import { encodeKey, titleOf, type PendingApproval, type ThreadAddress, type ThreadStatus } from "./thread.js";
 import { runToolStep, type CallApproval, type JobOutcome, type PriorCalls, type ToolCall } from "./tool-step.js";
 import { resolveTools, toolDefinitions, type AvailableTool } from "./tools.js";
 import { splitModelId, transcriptFromEvents } from "./transcript.js";
@@ -27,6 +28,10 @@ import { splitModelId, transcriptFromEvents } from "./transcript.js";
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS thread (scope_id TEXT NOT NULL, agent_id TEXT NOT NULL, user_id TEXT, thread_id TEXT NOT NULL, created_at INTEGER NOT NULL, state TEXT NOT NULL, turn INTEGER NOT NULL, step INTEGER NOT NULL, attempt INTEGER NOT NULL, recoveries INTEGER NOT NULL, agent_version INTEGER, snapshot_json TEXT, usage_json TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, turn INTEGER NOT NULL, at INTEGER NOT NULL, type TEXT NOT NULL, json TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS events_turn_seq ON events (turn, seq);
+  CREATE TABLE IF NOT EXISTS delivery_route (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS deliveries (to_seq INTEGER PRIMARY KEY, from_seq INTEGER NOT NULL, turn INTEGER NOT NULL, binding_json TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
+  CREATE INDEX IF NOT EXISTS deliveries_turn ON deliveries (turn, to_seq);
   CREATE TABLE IF NOT EXISTS inputs (id INTEGER PRIMARY KEY AUTOINCREMENT, turn INTEGER NOT NULL, json TEXT NOT NULL);
 `;
 
@@ -155,9 +160,19 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   send(address: ThreadAddress, input: TurnInput, steer = false): Outcome<{ turn: number; seq: number }> {
+    let binding: DeliveryBinding | undefined;
+    try {
+      binding = deliveryBinding(input.channelRef);
+      if (binding && !this.deployment.catalogue.deliverers.has(binding.name)) throw new KarmiError("deliverer.notFound", `Unknown Deliverer "${binding.name}".`);
+      if (binding && !this.env.KARMI_QUEUE) throw new KarmiError("bindings.missing", "Offline delivery requires KARMI_QUEUE.");
+    } catch (error) {
+      if (error instanceof KarmiError) return fail(error);
+      throw error;
+    }
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     const row = entered.value;
+    if (binding) this.sql.exec("INSERT INTO delivery_route (id, json) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json", JSON.stringify(binding));
     // A steer joins the Turn in flight; anything else coalesces into the one next Turn.
     const joins = steer && row.state !== "idle";
     this.sql.exec("INSERT INTO inputs (turn, json, steer) VALUES (?, ?, ?)", joins ? row.turn : row.turn + 1, JSON.stringify(input), joins ? 1 : 0);
@@ -197,6 +212,25 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (after > this.head) return fail(new KarmiError("thread.seq.invalid", `The log ends at seq ${this.head}; cannot subscribe after ${after}.`));
     if (after === this.head) await this.nextAppend();
     return ok(this.read(after, granularity, POLL_LIMIT));
+  }
+
+  consumed(address: ThreadAddress, seq: number): Outcome<void> {
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    this.sql.exec("UPDATE deliveries SET consumed = 1 WHERE to_seq = ?", seq);
+    return ok(undefined);
+  }
+
+  delivery(address: ThreadAddress, fromSeq: number, toSeq: number): Outcome<{ binding: DeliveryBinding; events: ThreadEvent[] } | null> {
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    const delivery = this.sql.exec<{ binding_json: string }>("SELECT binding_json FROM deliveries WHERE from_seq = ? AND to_seq = ? AND consumed = 0", fromSeq, toSeq).toArray()[0];
+    if (!delivery) return ok(null);
+    const binding = JSON.parse(delivery.binding_json) as DeliveryBinding;
+    const deliverer = this.deployment.catalogue.deliverers.get(binding.name);
+    if (!deliverer) return fail(new KarmiError("deliverer.notFound", `Unknown Deliverer "${binding.name}".`));
+    const events = this.read(fromSeq - 1, deliverer.granularity ?? "part", toSeq - fromSeq + 1, toSeq);
+    return ok({ binding, events });
   }
 
   async approve(address: ThreadAddress, seq: number, answer: ApprovalAnswer): Promise<Outcome<void>> {
@@ -270,12 +304,12 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     });
   }
 
-  private read(after: number, granularity: Granularity, limit: number): ThreadEvent[] {
+  private read(after: number, granularity: Granularity, limit: number, through = Number.MAX_SAFE_INTEGER): ThreadEvent[] {
     const excluded: ThreadEventType[] = granularity === "delta" ? [] : granularity === "part" ? ["message.delta"] : ["message.delta", "message.part"];
     const rows =
       excluded.length === 0
-        ? this.sql.exec<EventRow>("SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?", after, limit)
-        : this.sql.exec<EventRow>(`SELECT * FROM events WHERE seq > ? AND type NOT IN (${excluded.map(() => "?").join(", ")}) ORDER BY seq LIMIT ?`, after, ...excluded, limit);
+        ? this.sql.exec<EventRow>("SELECT * FROM events WHERE seq > ? AND seq <= ? ORDER BY seq LIMIT ?", after, through, limit)
+        : this.sql.exec<EventRow>(`SELECT * FROM events WHERE seq > ? AND seq <= ? AND type NOT IN (${excluded.map(() => "?").join(", ")}) ORDER BY seq LIMIT ?`, after, through, ...excluded, limit);
     return rows.toArray().map((row) => ({ seq: row.seq, turn: row.turn, at: row.at, ...(JSON.parse(row.json) as ThreadEventData) }));
   }
 
@@ -284,6 +318,16 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const body = channelRef === undefined ? data : { ...data, channelRef };
     const event: ThreadEvent = { seq, turn, at, ...body };
     this.sql.exec("INSERT INTO events (seq, turn, at, type, json) VALUES (?, ?, ?, ?, ?)", seq, turn, at, data.type, JSON.stringify(body));
+    if (data.type === "turn.completed" || data.type === "approval.requested") {
+      const route = this.sql.exec<{ json: string }>("SELECT json FROM delivery_route WHERE id = 1").toArray()[0];
+      if (route) {
+        const previous = this.sql.exec<{ seq: number | null }>("SELECT MAX(to_seq) AS seq FROM deliveries WHERE turn = ?", turn).one().seq;
+        const first = previous === null ? this.sql.exec<{ seq: number }>("SELECT MIN(seq) AS seq FROM events WHERE turn = ?", turn).one().seq : previous + 1;
+        this.sql.exec("INSERT INTO deliveries (to_seq, from_seq, turn, binding_json) VALUES (?, ?, ?, ?)", seq, first, turn, route.json);
+        // Give a live subscriber time to acknowledge the trigger; the Queue checks again before delivery.
+        this.scheduler.set({ id: `delivery:${seq}`, kind: "delivery", dueAt: at + 1000, payload: { toSeq: seq } });
+      }
+    }
     const waiters = this.waiters;
     this.waiters = [];
     for (const wake of waiters) wake();
@@ -320,6 +364,18 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   protected override async runJob(job: ScheduledJob): Promise<void> {
+    if (job.kind === "delivery") {
+      const row = this.row();
+      const { toSeq } = job.payload as { toSeq: number };
+      const delivery = this.sql.exec<{ from_seq: number; consumed: number }>("SELECT from_seq, consumed FROM deliveries WHERE to_seq = ?", toSeq).toArray()[0];
+      if (!delivery || delivery.consumed) return;
+      const status = await this.scopeStub(row).status(row.scope_id);
+      if (!status.ok) throw new KarmiError(status.code, status.message);
+      if (status.value.state === "destroying" || status.value.state === "destroyed") return;
+      if (!this.env.KARMI_QUEUE) throw new KarmiError("bindings.missing", "Offline delivery requires KARMI_QUEUE.");
+      await this.env.KARMI_QUEUE.send({ kind: "delivery", scope: row.scope_id, threadKey: encodeKey({ agent: row.agent_id, threadId: row.thread_id, ...(row.user_id !== null && { user: row.user_id }) }), fromSeq: delivery.from_seq, toSeq });
+      return;
+    }
     if (job.kind === "park-timeout") return this.expire(job.payload as { seq: number });
     if (job.kind !== "watchdog") return super.runJob(job);
     const row = this.sql.exec<ThreadRow>("SELECT * FROM thread").toArray()[0];

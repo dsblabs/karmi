@@ -3,7 +3,7 @@ import type { KarmiBindings } from "./bindings.js";
 import type { Clock } from "./clock.js";
 import type { Deployment } from "./deployment.js";
 
-export type JobKind = "watchdog" | "park-timeout" | "schedule" | "scope-maintenance";
+export type JobKind = "watchdog" | "park-timeout" | "schedule" | "scope-maintenance" | "delivery";
 export interface ScheduledJob {
   id: string;
   kind: JobKind;

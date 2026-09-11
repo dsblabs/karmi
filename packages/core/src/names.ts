@@ -1,6 +1,6 @@
 import { KarmiError } from "./errors.js";
 
-export type CatalogueKind = "tool" | "fragment" | "skill" | "retriever" | "hook";
+export type CatalogueKind = "tool" | "fragment" | "skill" | "retriever" | "hook" | "deliverer";
 
 const NAME = /^[a-z0-9_-]{1,64}$/;
 

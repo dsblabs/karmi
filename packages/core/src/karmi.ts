@@ -5,7 +5,7 @@ import { wallClock, type Clock } from "./clock.js";
 import { assertCompatibilityBaseline } from "./compat.js";
 import type { Deployment } from "./deployment.js";
 import { makeDurableObjects, type DurableObjects } from "./durable-objects.js";
-import { KarmiError } from "./errors.js";
+import { deliveryQueueHandler } from "./delivery-queue.js";
 import type { Provider } from "./provider.js";
 import { parseScopeConfig, type ScopeConfigDocument } from "./scope-config.js";
 import { openScope, type Scope } from "./scope.js";
@@ -36,9 +36,7 @@ export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
   return {
     durableObjects,
     catalogue: deployment.catalogue,
-    queueHandler: () => {
-      throw new KarmiError("queue.unhandled", "karmi's Queue consumer lands with the Deliverer and Usage tickets.");
-    },
+    queueHandler: deliveryQueueHandler(bindings, deployment.catalogue),
     scope: (id) => openScope(bindings, id),
   };
 }

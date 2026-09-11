@@ -7,7 +7,7 @@ import type { ToolContent, ToolResult } from "./tool.js";
 
 export type Part = { type: "text"; text: string } | { type: "image" | "video" | "audio" | "file"; media: MediaRef; mimeType: string; name?: string };
 
-/** What drives one Turn: a User message or an Event. `channelRef` is opaque and echoed on every event of the Turn. */
+/** What drives one Turn: a User message or an Event. `channelRef` is echoed on every event of the Turn; `{ deliverer: { name, ref } }` also sets its offline route. */
 export type TurnInput = { kind: "message"; parts: Part[]; channelRef?: unknown } | { kind: "event"; type: string; payload: unknown; channelRef?: unknown };
 
 export interface ThreadEventBase {

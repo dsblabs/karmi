@@ -130,6 +130,7 @@ async function* subscribe(stub: Remote<ThreadDurableObject>, address: ThreadAddr
     const batch = await unwrap(stub.poll(address, after, granularity));
     for (const event of batch) {
       after = event.seq;
+      if (event.type === "turn.completed" || event.type === "approval.requested") await unwrap(stub.consumed(address, event.seq));
       yield event;
     }
   }
@@ -139,7 +140,7 @@ export function encodeKey(identity: ThreadIdentity): string {
   return btoa(JSON.stringify([identity.agent, identity.user ?? null, identity.threadId])).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-function decodeKey(key: string): ThreadIdentity {
+export function decodeKey(key: string): ThreadIdentity {
   try {
     const [agent, user, threadId] = JSON.parse(atob(key.replaceAll("-", "+").replaceAll("_", "/"))) as [string, string | null, string];
     if (typeof agent !== "string" || typeof threadId !== "string" || (user !== null && typeof user !== "string")) throw new Error();

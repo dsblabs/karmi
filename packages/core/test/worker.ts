@@ -1,9 +1,12 @@
 import { z } from "zod";
-import { defineAgent, defineFragment, defineHook, defineTool, type ToolContext, type ToolResult } from "../src/index.js";
+import { defineDeliverer, type ThreadEvent, defineAgent, defineFragment, defineHook, defineTool, type ToolContext, type ToolResult } from "../src/index.js";
 import { createTestKarmi } from "../src/testing/index.js";
 
 /** What the Tools and Hooks below saw, in order; tests read and reset it. */
 export const trace: string[] = [];
+export const deliveries: { key: string; events: ThreadEvent[]; ref: unknown }[] = [];
+export const deliveryFailure = { remaining: 0 };
+const receipt = defineDeliverer({ name: "receipt", granularity: "turn", deliver: (key, events, ref) => { if (deliveryFailure.remaining > 0) { deliveryFailure.remaining--; throw new Error("Delivery unavailable"); } deliveries.push({ key, events, ref }); } });
 
 const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -161,6 +164,7 @@ const recoveryAfter = defineHook({ name: "recovery-after", point: "after-tool", 
 const recoveryAgent = defineAgent({ agentId: "recovery", name: "Recovery", instructions: [{ text: "Recover." }], model: { id: "anthropic/claude-sonnet-5" }, tools: recoveryTools.map(t => t.name), policy: [{ match: { tool: "*" }, effect: "allow" }], hooks: { "before-tool": ["recovery-before"], "after-tool": ["recovery-after"] } });
 
 export const { karmi, clock, provider, scope } = createTestKarmi({
+  deliverers: [receipt, defineDeliverer({ name: "receipt-parts", deliver: receipt.deliver }), defineDeliverer({ name: "receipt-deltas", granularity: "delta", deliver: receipt.deliver })],
   tools: [weather, lookup, book, bigOutput, whoami, failing, startJob, waitGate, ...recoveryTools],
   fragments: [guest],
   hooks: [recoveryBefore, recoveryAfter, rewriteCity, denyBooking, denyLookup, observe, turnLog, turnEnd, slowTurnEnd, onError],

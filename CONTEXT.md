@@ -24,6 +24,10 @@ _Avoid_: component, module, feature
 An external surface through which a human or event reaches a session — a chat UI, a chat app, inbound email, a webhook. Channel integrations live outside karmi.
 _Avoid_: integration, connector, frontend
 
+**Deliverer**:
+A named Catalogue callback for a Channel’s offline output. The Thread remembers `channelRef.deliverer { name, ref }`; completion and Approval events not consumed by a subscriber reach the callback through the Queue, at least once, at its chosen event granularity.
+_Avoid_: notification service, Channel integration (for the Framework callback)
+
 **Capability**:
 A gated ability an Agent may be granted in its Agent Spec, such as running small generated scripts, outbound HTTP, remote MCP, long-running turns (`longRunning`: Step, wall-clock and token budgets), delegating to other Agents, or scheduling its own future wake-ups. The Catalogue implements it; the Spec switches it on; a Scope-level ceiling is merged as a maximum and a Spec asking for more is a validation error. Nothing not granted is reachable.
 _Avoid_: permission, feature flag

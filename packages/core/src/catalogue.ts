@@ -1,3 +1,4 @@
+import type { Deliverer } from "./deliverer.js";
 import type { Agent } from "./agent.js";
 import { KarmiError } from "./errors.js";
 import type { Fragment } from "./fragment.js";
@@ -11,6 +12,7 @@ import { validateAgentSpec } from "./validate.js";
 
 /** Everything a developer defines in code; registration is only by listing here. */
 export interface CatalogueInput {
+  deliverers?: Deliverer[];
   tools?: Tool[];
   fragments?: Fragment[];
   skills?: Skill[];
@@ -20,6 +22,7 @@ export interface CatalogueInput {
 }
 
 export interface Catalogue {
+  readonly deliverers: ReadonlyMap<string, Deliverer>;
   readonly tools: ReadonlyMap<string, Tool>;
   readonly fragments: ReadonlyMap<string, Fragment>;
   readonly skills: ReadonlyMap<string, Skill>;
@@ -33,6 +36,7 @@ export interface Catalogue {
 }
 
 export interface CatalogueDescription {
+  deliverers: { name: string; granularity: NonNullable<Deliverer["granularity"]> }[];
   tools: ToolDescription[];
   fragments: FragmentDescription[];
   skills: SkillDescription[];
@@ -105,6 +109,7 @@ export function assembleCatalogue(input: CatalogueInput): Catalogue {
   }
   let fingerprint: Promise<string> | undefined;
   const catalogue: Catalogue = {
+    deliverers: byName("deliverer", input.deliverers ?? []),
     tools,
     fragments,
     skills,
@@ -136,6 +141,7 @@ function optional<T>(key: string, value: T | undefined): Record<string, T> {
 
 function describe(c: Omit<Catalogue, "describe">): CatalogueDescription {
   return {
+    deliverers: [...c.deliverers.values()].map(d => ({ name: d.name, granularity: d.granularity ?? "part" })),
     tools: [...c.tools.values()].map((t) => ({
       name: t.name,
       description: t.description,
