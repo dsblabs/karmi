@@ -27,7 +27,6 @@ export interface AvailableTool {
 export interface ResolvedSkill {
   skill: Skill;
   invokableBy: SkillInvoker;
-  settings: unknown;
 }
 
 export interface ToolSet {
@@ -76,11 +75,10 @@ export function resolveToolSet({
   }
   const skills: ResolvedSkill[] = [];
   for (const ref of spec.skills ?? []) {
-    const { name, settings, invokableBy } =
-      typeof ref === "string" ? { name: ref, settings: undefined, invokableBy: undefined } : ref;
+    const { name, invokableBy } = typeof ref === "string" ? { name: ref, invokableBy: undefined } : ref;
     const skill = catalogue.skills.get(name);
     if (!skill) continue;
-    skills.push({ skill, invokableBy: invokableBy ?? skill.invokableBy, settings: parseSettings(skill, settings) });
+    skills.push({ skill, invokableBy: invokableBy ?? skill.invokableBy });
     // Skill Tools never defer: the Skill's activation is their load point.
     for (const tool of skill.tools)
       available.set(tool.name, {
@@ -102,9 +100,9 @@ export function resolveToolSet({
   return { available, skills, loaded };
 }
 
-// Validated at put; parsed again so the item sees its schema's defaults and transforms.
-function parseSettings(item: { settings?: Tool["settings"] }, settings: unknown): unknown {
-  return item.settings ? z.parse(item.settings, settings ?? {}) : undefined;
+// Validated at put; parsed again so the Tool sees its schema's defaults and transforms.
+function parseSettings(tool: Tool, settings: unknown): unknown {
+  return tool.settings ? z.parse(tool.settings, settings ?? {}) : undefined;
 }
 
 /** Whether the model can call this Tool now: in its initial context, loaded since, or of an active Skill. */
@@ -130,8 +128,8 @@ export function toolsInContext({ available, loaded }: ToolSet): Tool[] {
   );
 }
 
-/** The names-only index: deferred Tools the model has not loaded yet. */
-export function deferredIndex({ available, loaded }: ToolSet): string[] {
+/** Deferred Tools the model has not loaded yet: what the names-only index lists. */
+export function unloadedDeferred({ available, loaded }: ToolSet): string[] {
   return [...available.values()].flatMap((entry) =>
     entry.deferred && entry.effect !== "deny" && !loaded.tools.has(entry.tool.name) ? [entry.tool.name] : [],
   );

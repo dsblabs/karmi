@@ -1,7 +1,7 @@
 import { AGENT_SPEC_DEFAULTS } from "./agent-spec.js";
 import type { AgentSpec, Capabilities, PolicyRule } from "./agent.js";
 import type { KarmiBindings } from "./bindings.js";
-import { activationText, builtInTools, type BuiltInHost } from "./builtins.js";
+import { activateSkill, builtInTools, type BuiltInHost } from "./builtins.js";
 import {
   attachmentsOf,
   chooseCut,
@@ -55,7 +55,7 @@ import {
 } from "./thread.js";
 import { runToolStep, type PriorCalls, type ToolCall } from "./tool-step.js";
 import { foldTurn, type Plan, type Request, type TurnState } from "./turn-state.js";
-import { deferredIndex, resolveToolSet, toolDefinitions, toolsInContext, type ToolSet } from "./tools.js";
+import { resolveToolSet, toolDefinitions, toolsInContext, unloadedDeferred, type ToolSet } from "./tools.js";
 import { splitModelId, transcriptFromEvents } from "./transcript.js";
 
 const SCHEMA = `
@@ -951,10 +951,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       const message = `Skill "${name}" cannot be invoked by the User of Agent "${row.agent_id}".`;
       return stop(this.finish(this.row(), failure("skill.unavailable", message)));
     }
-    const body = (await entry.skill.body.render(this.fragmentContext(row, snapshot, set), undefined)) ?? "";
-    const names = entry.skill.tools.map((tool) => tool.name);
-    const skill = { name, body: activationText(name, body, names) };
-    this.append(row.turn, { type: "tools.loaded", names, skill }, channelRef);
+    const ctx = this.fragmentContext(row, snapshot, set);
+    await activateSkill(entry.skill, ctx, (data) => void this.append(row.turn, data, channelRef), "event");
     return "continue";
   }
 
@@ -1457,7 +1455,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       this.fragmentContext(row, snapshot, available, model),
       {
         tools: toolsInContext(available),
-        deferred: deferredIndex(available),
+        deferred: unloadedDeferred(available),
         skills: available.skills.map(({ skill, invokableBy }) => ({
           name: skill.name,
           description: skill.description,

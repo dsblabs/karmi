@@ -3,6 +3,7 @@ import { AgentSpecSchema, PROVIDER_TOOL_NAMES } from "./agent-spec.js";
 import { KarmiError } from "./errors.js";
 import type { HookPoint } from "./hook.js";
 import { deepFreeze } from "./names.js";
+import type { SkillInvoker } from "./skill.js";
 import type { ToolAnnotations } from "./tool.js";
 import { firstIssue, pointer } from "./validate.js";
 
@@ -12,8 +13,7 @@ export type PromptEntry =
   | { fragment: string; args?: Record<string, unknown>; models?: string | string[] };
 
 export type ToolReference = string | { name: string; settings?: Record<string, unknown>; alwaysLoad?: boolean };
-export type SkillReference =
-  string | { name: string; settings?: Record<string, unknown>; invokableBy?: "model" | "user" | "both" };
+export type SkillReference = string | { name: string; settings?: Record<string, unknown>; invokableBy?: SkillInvoker };
 export type KnowledgeReference = string | { name: string; retriever?: string; mode?: "tool" | "inline" };
 
 /** Ordered; the first matching rule decides, and no match means `ask`. */

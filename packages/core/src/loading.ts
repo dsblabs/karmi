@@ -1,5 +1,6 @@
 import { estimateTokens } from "./compaction.js";
 import type { Message, ToolDefinition } from "./provider.js";
+import { toJsonSchema } from "./schema.js";
 import type { ThreadEventData } from "./thread-events.js";
 import type { Tool } from "./tool.js";
 import type { ContextConfig } from "./agent.js";
@@ -13,8 +14,6 @@ export interface Loaded {
   tools: ReadonlySet<string>;
   skills: ReadonlySet<string>;
 }
-
-export const NOTHING_LOADED: Loaded = Object.freeze({ tools: new Set<string>(), skills: new Set<string>() });
 
 /** The most matches one search answers: enough to pick from, few enough to keep the load point small. */
 export const SEARCH_LIMIT = 5;
@@ -97,6 +96,6 @@ function keywordScore(terms: readonly string[], tool: Tool): number {
 }
 
 function argumentNames(tool: Tool): string[] {
-  const shape = (tool.input as { _zod?: { def?: { shape?: Record<string, unknown> } } })._zod?.def?.shape;
-  return shape ? Object.keys(shape) : [];
+  const { properties } = toJsonSchema(tool.input);
+  return typeof properties === "object" && properties !== null ? Object.keys(properties) : [];
 }

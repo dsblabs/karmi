@@ -2,6 +2,7 @@ import * as z from "zod/mini";
 import { HOOK_POINTS } from "./hook.js";
 import { IDENTIFIER } from "./names.js";
 import { toJsonSchema, type JsonSchema } from "./schema.js";
+import { SKILL_INVOKERS } from "./skill.js";
 
 // Shape layer of Agent Spec validation: what a Spec looks like before any Catalogue or Scope is consulted.
 
@@ -31,7 +32,7 @@ function reference<Shape extends z.core.$ZodLooseShape>(extra: Shape) {
 }
 
 const ToolReferenceSchema = reference({ settings, alwaysLoad: z.optional(z.boolean()) });
-const SkillReferenceSchema = reference({ settings, invokableBy: z.optional(z.enum(["model", "user", "both"])) });
+const SkillReferenceSchema = reference({ settings, invokableBy: z.optional(z.enum(SKILL_INVOKERS)) });
 const KnowledgeReferenceSchema = reference({
   retriever: z.optional(name),
   mode: z.optional(z.enum(["tool", "inline"])),

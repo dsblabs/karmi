@@ -1,6 +1,7 @@
 import * as z from "zod/mini";
 import type { FragmentContext } from "./fragment.js";
 import { keys } from "./keys.js";
+import type { Skill } from "./skill.js";
 import { searchTools, SEARCH_LIMIT } from "./loading.js";
 import type { ThreadEventData } from "./thread-events.js";
 import type { Tool, ToolContent, ToolResult } from "./tool.js";
@@ -102,17 +103,29 @@ export function useSkillTool(host: BuiltInHost): Tool<typeof UseSkillInput, unde
       const entry = set.skills.find((candidate) => candidate.skill.name === name && candidate.invokableBy !== "user");
       if (!entry) return { content: [{ type: "text", text: `No skill "${name}" is available.` }], isError: true };
       if (set.loaded.skills.has(name)) return `Skill "${name}" is already active.`;
-      const { skill } = entry;
-      const body = (await skill.body.render(host.fragmentContext(), undefined)) ?? "";
-      const names = skill.tools.map((tool) => tool.name);
-      host.append({ type: "tools.loaded", names, skill: { name } });
-      return activationText(name, body, names);
+      return activateSkill(entry.skill, host.fragmentContext(), host.append, "result");
     },
   });
 }
 
-/** How an activated Skill reads to the model, from `use_skill` or from a User command. */
-export function activationText(name: string, body: string, tools: readonly string[]): string {
-  const available = tools.length > 0 ? `\n\nTools now available: ${tools.join(", ")}.` : "";
-  return `Skill "${name}" is active.\n\n${body}${available}`;
+/**
+ * Renders a Skill's body and logs its load point; returns what the model reads. The text rides in the
+ * Tool result when `use_skill` activated the Skill, and in the event itself for a User command.
+ */
+export async function activateSkill(
+  skill: Skill,
+  ctx: FragmentContext,
+  append: BuiltInHost["append"],
+  carrier: "result" | "event",
+): Promise<string> {
+  const body = (await skill.body.render(ctx, undefined)) ?? "";
+  const names = skill.tools.map((tool) => tool.name);
+  const available = names.length > 0 ? `\n\nTools now available: ${names.join(", ")}.` : "";
+  const text = `Skill "${skill.name}" is active.\n\n${body}${available}`;
+  append({
+    type: "tools.loaded",
+    names,
+    skill: carrier === "event" ? { name: skill.name, body: text } : { name: skill.name },
+  });
+  return text;
 }

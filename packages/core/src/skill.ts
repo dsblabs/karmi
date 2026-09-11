@@ -16,7 +16,8 @@ export interface SkillInput<Settings extends Schema | undefined> {
   settings?: Settings;
 }
 
-export type SkillInvoker = "model" | "user" | "both";
+export const SKILL_INVOKERS = ["model", "user", "both"] as const;
+export type SkillInvoker = (typeof SKILL_INVOKERS)[number];
 
 export interface Skill<Settings extends Schema | undefined = Schema | undefined> {
   readonly kind: "skill";
