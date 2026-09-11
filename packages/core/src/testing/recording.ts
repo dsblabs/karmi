@@ -47,19 +47,27 @@ export function recordingProvider(real: Provider, options: RecordingOptions = {}
  * A fakeProvider that answers from a recording: by call order, or — when the recording and the
  * replay share a `key` — by the first unused entry whose key matches the incoming request.
  */
-export function fromRecording(recording: string | RecordingEntry[], options: RecordingOptions & FakeProviderOptions = {}): FakeProvider {
+export function fromRecording(
+  recording: string | RecordingEntry[],
+  options: RecordingOptions & FakeProviderOptions = {},
+): FakeProvider {
   const entries = typeof recording === "string" ? parseJSONL(recording) : recording;
   const { key, ...fakeOptions } = options;
   const used = new Set<number>();
   return fakeProvider(({ request, index }) => {
     if (!key) {
       const entry = entries[index];
-      if (!entry) throw new KarmiError("test.recording-exhausted", `Recording has ${entries.length} entries but received call #${index + 1}.`);
+      if (!entry)
+        throw new KarmiError(
+          "test.recording-exhausted",
+          `Recording has ${entries.length} entries but received call #${index + 1}.`,
+        );
       return entry.events;
     }
     const wanted = key(request);
     const at = entries.findIndex((entry, i) => !used.has(i) && entry.key === wanted);
-    if (at < 0) throw new KarmiError("test.recording-miss", `No unused recording entry with key ${JSON.stringify(wanted)}.`);
+    if (at < 0)
+      throw new KarmiError("test.recording-miss", `No unused recording entry with key ${JSON.stringify(wanted)}.`);
     used.add(at);
     return entries[at]!.events;
   }, fakeOptions);

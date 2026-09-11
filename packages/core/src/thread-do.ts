@@ -19,7 +19,18 @@ import { ScheduledDurableObject, type ScheduledJob } from "./scheduler.js";
 import { providerHosts, scopedFetch } from "./scoped-fetch.js";
 import type { ScopeConfigDurableObject } from "./scope-config-do.js";
 import type { Ceilings, ProviderConfig } from "./scope-config.js";
-import type { ApprovalAnswer, ApprovalSource, Budget, Granularity, PauseReason, ResumeReason, ThreadEvent, ThreadEventData, ThreadEventType, TurnInput } from "./thread-events.js";
+import type {
+  ApprovalAnswer,
+  ApprovalSource,
+  Budget,
+  Granularity,
+  PauseReason,
+  ResumeReason,
+  ThreadEvent,
+  ThreadEventData,
+  ThreadEventType,
+  TurnInput,
+} from "./thread-events.js";
 import { encodeKey, titleOf, type PendingApproval, type ThreadAddress, type ThreadStatus } from "./thread.js";
 import { runToolStep, type CallApproval, type JobOutcome, type PriorCalls, type ToolCall } from "./tool-step.js";
 import { resolveTools, toolDefinitions, type AvailableTool } from "./tools.js";
@@ -92,12 +103,22 @@ type StepResult = { ok: true; stopReason: StopReason; message: ContentBlock[] } 
  * What the log says the Turn should do next: re-run or start a model Step, run the tool batch of the
  * last model Step (re-runs carry what already happened), or end with the last model Step's message.
  */
-type Plan = { kind: "model"; n: number; fresh: boolean } | { kind: "tool"; n: number; fresh: boolean; batch: ToolCall[]; prior: PriorCalls } | { kind: "finish"; stopReason: StopReason; message: ContentBlock[] };
+type Plan =
+  | { kind: "model"; n: number; fresh: boolean }
+  | { kind: "tool"; n: number; fresh: boolean; batch: ToolCall[]; prior: PriorCalls }
+  | { kind: "finish"; stopReason: StopReason; message: ContentBlock[] };
 
 /** An `approval.requested` before its `timeoutAt` is stamped; distributive so each kind keeps its own fields. */
-type ApprovalRequest = Extract<ThreadEventData, { type: "approval.requested" }> extends infer E ? (E extends { timeoutAt: number } ? Omit<E, "timeoutAt"> : never) : never;
+type ApprovalRequest =
+  Extract<ThreadEventData, { type: "approval.requested" }> extends infer E
+    ? E extends { timeoutAt: number }
+      ? Omit<E, "timeoutAt">
+      : never
+    : never;
 
-type Request = { kind: "tool"; id: string; tool: string; timeoutAt: number; answered: boolean } | { kind: "continue"; timeoutAt: number; answered: boolean };
+type Request =
+  | { kind: "tool"; id: string; tool: string; timeoutAt: number; answered: boolean }
+  | { kind: "continue"; timeoutAt: number; answered: boolean };
 
 /** The Turn as the log tells it: the next Step, what it waits on, and what it has spent. */
 interface TurnState {
@@ -128,14 +149,25 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   constructor(ctx: DurableObjectState, env: KarmiBindings) {
     super(ctx, env);
     ctx.storage.sql.exec(SCHEMA);
-    const columns = (table: string) => new Set(ctx.storage.sql.exec<{ name: string }>(`PRAGMA table_info(${table})`).toArray().map((column) => column.name));
+    const columns = (table: string) =>
+      new Set(
+        ctx.storage.sql
+          .exec<{ name: string }>(`PRAGMA table_info(${table})`)
+          .toArray()
+          .map((column) => column.name),
+      );
     if (!columns("thread").has("platform_failure")) {
       ctx.storage.sql.exec("ALTER TABLE thread ADD COLUMN platform_failure INTEGER NOT NULL DEFAULT 0");
       // Preserve the raw watchdog installed by versions predating the jobs table.
-      ctx.storage.sql.exec("INSERT OR IGNORE INTO jobs (id, kind, dueAt, payload, attempt, generation) SELECT 'watchdog', 'watchdog', 0, 'null', 0, ? FROM thread WHERE state = 'running'", crypto.randomUUID());
+      ctx.storage.sql.exec(
+        "INSERT OR IGNORE INTO jobs (id, kind, dueAt, payload, attempt, generation) SELECT 'watchdog', 'watchdog', 0, 'null', 0, ? FROM thread WHERE state = 'running'",
+        crypto.randomUUID(),
+      );
     }
-    if (!columns("thread").has("cancelled")) ctx.storage.sql.exec("ALTER TABLE thread ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0");
-    if (!columns("inputs").has("steer")) ctx.storage.sql.exec("ALTER TABLE inputs ADD COLUMN steer INTEGER NOT NULL DEFAULT 0");
+    if (!columns("thread").has("cancelled"))
+      ctx.storage.sql.exec("ALTER TABLE thread ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0");
+    if (!columns("inputs").has("steer"))
+      ctx.storage.sql.exec("ALTER TABLE inputs ADD COLUMN steer INTEGER NOT NULL DEFAULT 0");
     this.head = ctx.storage.sql.exec<{ seq: number | null }>("SELECT MAX(seq) AS seq FROM events").one().seq ?? 0;
   }
 
@@ -148,13 +180,45 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private enter(address: ThreadAddress): Outcome<ThreadRow> {
     let row = this.sql.exec<ThreadRow>("SELECT * FROM thread").toArray()[0];
     if (!row) {
-      if (!address.create) return fail(new KarmiError("thread.notFound", `Thread "${address.threadId}" does not exist.`));
-      row = { scope_id: address.scope, agent_id: address.agent, user_id: address.user ?? null, thread_id: address.threadId, created_at: this.deployment.clock.now(), state: "idle", turn: 0, step: 0, attempt: 0, recoveries: 0, platform_failure: 0, cancelled: 0, agent_version: null, snapshot_json: null, usage_json: JSON.stringify(ZERO_USAGE) };
-      this.sql.exec("INSERT INTO thread (scope_id, agent_id, user_id, thread_id, created_at, state, turn, step, attempt, recoveries, agent_version, snapshot_json, usage_json) VALUES (?, ?, ?, ?, ?, 'idle', 0, 0, 0, 0, NULL, NULL, ?)", row.scope_id, row.agent_id, row.user_id, row.thread_id, row.created_at, row.usage_json);
+      if (!address.create)
+        return fail(new KarmiError("thread.notFound", `Thread "${address.threadId}" does not exist.`));
+      row = {
+        scope_id: address.scope,
+        agent_id: address.agent,
+        user_id: address.user ?? null,
+        thread_id: address.threadId,
+        created_at: this.deployment.clock.now(),
+        state: "idle",
+        turn: 0,
+        step: 0,
+        attempt: 0,
+        recoveries: 0,
+        platform_failure: 0,
+        cancelled: 0,
+        agent_version: null,
+        snapshot_json: null,
+        usage_json: JSON.stringify(ZERO_USAGE),
+      };
+      this.sql.exec(
+        "INSERT INTO thread (scope_id, agent_id, user_id, thread_id, created_at, state, turn, step, attempt, recoveries, agent_version, snapshot_json, usage_json) VALUES (?, ?, ?, ?, ?, 'idle', 0, 0, 0, 0, NULL, NULL, ?)",
+        row.scope_id,
+        row.agent_id,
+        row.user_id,
+        row.thread_id,
+        row.created_at,
+        row.usage_json,
+      );
     } else if (row.scope_id !== address.scope || row.thread_id !== address.threadId) {
-      throw new Error(`Thread "${row.scope_id}/${row.thread_id}" was addressed as "${address.scope}/${address.threadId}".`);
+      throw new Error(
+        `Thread "${row.scope_id}/${row.thread_id}" was addressed as "${address.scope}/${address.threadId}".`,
+      );
     } else if (row.agent_id !== address.agent || row.user_id !== (address.user ?? null)) {
-      return fail(new KarmiError("thread.mismatch", `Thread "${address.threadId}" belongs to Agent "${row.agent_id}"${row.user_id === null ? "" : ` and User "${row.user_id}"`}.`));
+      return fail(
+        new KarmiError(
+          "thread.mismatch",
+          `Thread "${address.threadId}" belongs to Agent "${row.agent_id}"${row.user_id === null ? "" : ` and User "${row.user_id}"`}.`,
+        ),
+      );
     }
     return ok(row);
   }
@@ -163,8 +227,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     let binding: DeliveryBinding | undefined;
     try {
       binding = deliveryBinding(input.channelRef);
-      if (binding && !this.deployment.catalogue.deliverers.has(binding.name)) throw new KarmiError("deliverer.notFound", `Unknown Deliverer "${binding.name}".`);
-      if (binding && !this.env.KARMI_QUEUE) throw new KarmiError("bindings.missing", "Offline delivery requires KARMI_QUEUE.");
+      if (binding && !this.deployment.catalogue.deliverers.has(binding.name))
+        throw new KarmiError("deliverer.notFound", `Unknown Deliverer "${binding.name}".`);
+      if (binding && !this.env.KARMI_QUEUE)
+        throw new KarmiError("bindings.missing", "Offline delivery requires KARMI_QUEUE.");
     } catch (error) {
       if (error instanceof KarmiError) return fail(error);
       throw error;
@@ -172,10 +238,19 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     const row = entered.value;
-    if (binding) this.sql.exec("INSERT INTO delivery_route (id, json) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json", JSON.stringify(binding));
+    if (binding)
+      this.sql.exec(
+        "INSERT INTO delivery_route (id, json) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json",
+        JSON.stringify(binding),
+      );
     // A steer joins the Turn in flight; anything else coalesces into the one next Turn.
     const joins = steer && row.state !== "idle";
-    this.sql.exec("INSERT INTO inputs (turn, json, steer) VALUES (?, ?, ?)", joins ? row.turn : row.turn + 1, JSON.stringify(input), joins ? 1 : 0);
+    this.sql.exec(
+      "INSERT INTO inputs (turn, json, steer) VALUES (?, ?, ?)",
+      joins ? row.turn : row.turn + 1,
+      JSON.stringify(input),
+      joins ? 1 : 0,
+    );
     if (this.active) this.armWatchdog();
     else if (row.state === "idle" || row.state === "running") this.kick(row.state === "running");
     else if (!joins && this.readTurn(row).paused === "scope_suspended") this.wake(row, "input");
@@ -192,15 +267,28 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     const row = entered.value;
-    const status: ThreadStatus = { state: row.state, ...(row.agent_version !== null && { agentVersion: row.agent_version }), usage: JSON.parse(row.usage_json) as Usage, seq: this.head };
+    const status: ThreadStatus = {
+      state: row.state,
+      ...(row.agent_version !== null && { agentVersion: row.agent_version }),
+      usage: JSON.parse(row.usage_json) as Usage,
+      seq: this.head,
+    };
     if (row.state === "idle") return ok(status);
     const turn = this.readTurn(row);
     status.turn = row.turn;
     status.step = row.step;
     if (turn.paused) status.paused = turn.paused;
-    if (row.snapshot_json !== null) status.budget = { ...turn.budget, max: (JSON.parse(row.snapshot_json) as TurnSnapshot).budget };
+    if (row.snapshot_json !== null)
+      status.budget = { ...turn.budget, max: (JSON.parse(row.snapshot_json) as TurnSnapshot).budget };
     const pending: PendingApproval[] = [];
-    for (const [seq, request] of turn.requests) if (!request.answered) pending.push({ seq, kind: request.kind, ...(request.kind === "tool" && { tool: request.tool }), timeoutAt: request.timeoutAt });
+    for (const [seq, request] of turn.requests)
+      if (!request.answered)
+        pending.push({
+          seq,
+          kind: request.kind,
+          ...(request.kind === "tool" && { tool: request.tool }),
+          timeoutAt: request.timeoutAt,
+        });
     if (pending.length > 0) status.pendingApprovals = pending;
     return ok(status);
   }
@@ -209,7 +297,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   async poll(address: ThreadAddress, after: number, granularity: Granularity): Promise<Outcome<ThreadEvent[]>> {
     const row = this.enter(address);
     if (!row.ok) return row;
-    if (after > this.head) return fail(new KarmiError("thread.seq.invalid", `The log ends at seq ${this.head}; cannot subscribe after ${after}.`));
+    if (after > this.head)
+      return fail(
+        new KarmiError("thread.seq.invalid", `The log ends at seq ${this.head}; cannot subscribe after ${after}.`),
+      );
     if (after === this.head) await this.nextAppend();
     return ok(this.read(after, granularity, POLL_LIMIT));
   }
@@ -221,10 +312,20 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return ok(undefined);
   }
 
-  delivery(address: ThreadAddress, fromSeq: number, toSeq: number): Outcome<{ binding: DeliveryBinding; events: ThreadEvent[] } | null> {
+  delivery(
+    address: ThreadAddress,
+    fromSeq: number,
+    toSeq: number,
+  ): Outcome<{ binding: DeliveryBinding; events: ThreadEvent[] } | null> {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
-    const delivery = this.sql.exec<{ binding_json: string }>("SELECT binding_json FROM deliveries WHERE from_seq = ? AND to_seq = ? AND consumed = 0", fromSeq, toSeq).toArray()[0];
+    const delivery = this.sql
+      .exec<{ binding_json: string }>(
+        "SELECT binding_json FROM deliveries WHERE from_seq = ? AND to_seq = ? AND consumed = 0",
+        fromSeq,
+        toSeq,
+      )
+      .toArray()[0];
     if (!delivery) return ok(null);
     const binding = JSON.parse(delivery.binding_json) as DeliveryBinding;
     const deliverer = this.deployment.catalogue.deliverers.get(binding.name);
@@ -237,12 +338,17 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     const row = entered.value;
-    const requested = this.sql.exec<{ turn: number }>("SELECT turn FROM events WHERE seq = ? AND type = 'approval.requested'", seq).toArray()[0];
+    const requested = this.sql
+      .exec<{ turn: number }>("SELECT turn FROM events WHERE seq = ? AND type = 'approval.requested'", seq)
+      .toArray()[0];
     if (!requested) return fail(new KarmiError("approval.notFound", `No Approval was requested at seq ${seq}.`));
     // A request of a finished Turn was answered by the answer, the clock or the cancel that ended it.
-    const request = row.state === "idle" || requested.turn !== row.turn ? undefined : this.readTurn(row).requests.get(seq);
-    if (!request || request.answered) return fail(new KarmiError("approval.resolved", `The Approval at seq ${seq} has already been answered.`));
-    if (answer.decision !== "allow" && answer.decision !== "deny") return fail(new KarmiError("approval.invalid", `An Approval answer is "allow" or "deny".`));
+    const request =
+      row.state === "idle" || requested.turn !== row.turn ? undefined : this.readTurn(row).requests.get(seq);
+    if (!request || request.answered)
+      return fail(new KarmiError("approval.resolved", `The Approval at seq ${seq} has already been answered.`));
+    if (answer.decision !== "allow" && answer.decision !== "deny")
+      return fail(new KarmiError("approval.invalid", `An Approval answer is "allow" or "deny".`));
     this.resolve(row, seq, request, answer, "answer");
     await this.settle(row);
     return ok(undefined);
@@ -268,23 +374,29 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     const row = entered.value;
-    if (row.state !== "parked" || this.readTurn(row).paused !== "scope_suspended") return fail(new KarmiError("thread.notParked", `Thread "${row.thread_id}" is not parked by a Scope suspension.`));
+    if (row.state !== "parked" || this.readTurn(row).paused !== "scope_suspended")
+      return fail(new KarmiError("thread.notParked", `Thread "${row.thread_id}" is not parked by a Scope suspension.`));
     const status = await this.scopeStub(row).status(row.scope_id);
     if (!status.ok) return status;
-    if (status.value.state === "suspended") return fail(new KarmiError("scope.suspended", `Scope "${row.scope_id}" is still suspended.`));
+    if (status.value.state === "suspended")
+      return fail(new KarmiError("scope.suspended", `Scope "${row.scope_id}" is still suspended.`));
     // The operator resumed on purpose; the Turn goes on under whatever the Scope says now.
     this.update({ snapshot_json: null });
     this.wake(row, "resume");
     return ok(undefined);
   }
 
-  async job(address: ThreadAddress, event: Extract<ThreadEventData, { type: "job.progress" | "job.completed" | "job.failed" | "job.cancelled" }>): Promise<Outcome<void>> {
+  async job(
+    address: ThreadAddress,
+    event: Extract<ThreadEventData, { type: "job.progress" | "job.completed" | "job.failed" | "job.cancelled" }>,
+  ): Promise<Outcome<void>> {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     const row = entered.value;
     const turn = row.state === "idle" ? undefined : this.readTurn(row);
     const pending = turn && [...turn.jobs.values()].some((job) => job.jobId === event.jobId && !job.outcome);
-    if (!pending) return fail(new KarmiError("job.notFound", `No Job "${event.jobId}" is pending on the current Step.`));
+    if (!pending)
+      return fail(new KarmiError("job.notFound", `No Job "${event.jobId}" is pending on the current Step.`));
     this.append(row.turn, event, this.turnInput(row.turn)?.channelRef);
     if (event.type !== "job.progress") await this.settle(row);
     return ok(undefined);
@@ -304,26 +416,68 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     });
   }
 
-  private read(after: number, granularity: Granularity, limit: number, through = Number.MAX_SAFE_INTEGER): ThreadEvent[] {
-    const excluded: ThreadEventType[] = granularity === "delta" ? [] : granularity === "part" ? ["message.delta"] : ["message.delta", "message.part"];
+  private read(
+    after: number,
+    granularity: Granularity,
+    limit: number,
+    through = Number.MAX_SAFE_INTEGER,
+  ): ThreadEvent[] {
+    const excluded: ThreadEventType[] =
+      granularity === "delta" ? [] : granularity === "part" ? ["message.delta"] : ["message.delta", "message.part"];
     const rows =
       excluded.length === 0
-        ? this.sql.exec<EventRow>("SELECT * FROM events WHERE seq > ? AND seq <= ? ORDER BY seq LIMIT ?", after, through, limit)
-        : this.sql.exec<EventRow>(`SELECT * FROM events WHERE seq > ? AND seq <= ? AND type NOT IN (${excluded.map(() => "?").join(", ")}) ORDER BY seq LIMIT ?`, after, through, ...excluded, limit);
-    return rows.toArray().map((row) => ({ seq: row.seq, turn: row.turn, at: row.at, ...(JSON.parse(row.json) as ThreadEventData) }));
+        ? this.sql.exec<EventRow>(
+            "SELECT * FROM events WHERE seq > ? AND seq <= ? ORDER BY seq LIMIT ?",
+            after,
+            through,
+            limit,
+          )
+        : this.sql.exec<EventRow>(
+            `SELECT * FROM events WHERE seq > ? AND seq <= ? AND type NOT IN (${excluded.map(() => "?").join(", ")}) ORDER BY seq LIMIT ?`,
+            after,
+            through,
+            ...excluded,
+            limit,
+          );
+    return rows
+      .toArray()
+      .map((row) => ({ seq: row.seq, turn: row.turn, at: row.at, ...(JSON.parse(row.json) as ThreadEventData) }));
   }
 
-  private append(turn: number, data: ThreadEventData, channelRef: unknown, at = this.deployment.clock.now()): ThreadEvent {
+  private append(
+    turn: number,
+    data: ThreadEventData,
+    channelRef: unknown,
+    at = this.deployment.clock.now(),
+  ): ThreadEvent {
     const seq = ++this.head;
     const body = channelRef === undefined ? data : { ...data, channelRef };
     const event: ThreadEvent = { seq, turn, at, ...body };
-    this.sql.exec("INSERT INTO events (seq, turn, at, type, json) VALUES (?, ?, ?, ?, ?)", seq, turn, at, data.type, JSON.stringify(body));
+    this.sql.exec(
+      "INSERT INTO events (seq, turn, at, type, json) VALUES (?, ?, ?, ?, ?)",
+      seq,
+      turn,
+      at,
+      data.type,
+      JSON.stringify(body),
+    );
     if (data.type === "turn.completed" || data.type === "approval.requested") {
       const route = this.sql.exec<{ json: string }>("SELECT json FROM delivery_route WHERE id = 1").toArray()[0];
       if (route) {
-        const previous = this.sql.exec<{ seq: number | null }>("SELECT MAX(to_seq) AS seq FROM deliveries WHERE turn = ?", turn).one().seq;
-        const first = previous === null ? this.sql.exec<{ seq: number }>("SELECT MIN(seq) AS seq FROM events WHERE turn = ?", turn).one().seq : previous + 1;
-        this.sql.exec("INSERT INTO deliveries (to_seq, from_seq, turn, binding_json) VALUES (?, ?, ?, ?)", seq, first, turn, route.json);
+        const previous = this.sql
+          .exec<{ seq: number | null }>("SELECT MAX(to_seq) AS seq FROM deliveries WHERE turn = ?", turn)
+          .one().seq;
+        const first =
+          previous === null
+            ? this.sql.exec<{ seq: number }>("SELECT MIN(seq) AS seq FROM events WHERE turn = ?", turn).one().seq
+            : previous + 1;
+        this.sql.exec(
+          "INSERT INTO deliveries (to_seq, from_seq, turn, binding_json) VALUES (?, ?, ?, ?)",
+          seq,
+          first,
+          turn,
+          route.json,
+        );
         // Give a live subscriber time to acknowledge the trigger; the Queue checks again before delivery.
         this.scheduler.set({ id: `delivery:${seq}`, kind: "delivery", dueAt: at + 1000, payload: { toSeq: seq } });
       }
@@ -334,7 +488,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return event;
   }
 
-  private update(patch: Partial<Omit<ThreadRow, "scope_id" | "agent_id" | "user_id" | "thread_id" | "created_at">>): void {
+  private update(
+    patch: Partial<Omit<ThreadRow, "scope_id" | "agent_id" | "user_id" | "thread_id" | "created_at">>,
+  ): void {
     const columns = Object.keys(patch);
     this.sql.exec(`UPDATE thread SET ${columns.map((column) => `${column} = ?`).join(", ")}`, ...Object.values(patch));
   }
@@ -360,20 +516,40 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private armWatchdog(): void {
-    this.scheduler.set({ id: "watchdog", kind: "watchdog", dueAt: this.deployment.clock.now() + STEP_WATCHDOG_MS, payload: null });
+    this.scheduler.set({
+      id: "watchdog",
+      kind: "watchdog",
+      dueAt: this.deployment.clock.now() + STEP_WATCHDOG_MS,
+      payload: null,
+    });
   }
 
   protected override async runJob(job: ScheduledJob): Promise<void> {
     if (job.kind === "delivery") {
       const row = this.row();
       const { toSeq } = job.payload as { toSeq: number };
-      const delivery = this.sql.exec<{ from_seq: number; consumed: number }>("SELECT from_seq, consumed FROM deliveries WHERE to_seq = ?", toSeq).toArray()[0];
+      const delivery = this.sql
+        .exec<{ from_seq: number; consumed: number }>(
+          "SELECT from_seq, consumed FROM deliveries WHERE to_seq = ?",
+          toSeq,
+        )
+        .toArray()[0];
       if (!delivery || delivery.consumed) return;
       const status = await this.scopeStub(row).status(row.scope_id);
       if (!status.ok) throw new KarmiError(status.code, status.message);
       if (status.value.state === "destroying" || status.value.state === "destroyed") return;
       if (!this.env.KARMI_QUEUE) throw new KarmiError("bindings.missing", "Offline delivery requires KARMI_QUEUE.");
-      await this.env.KARMI_QUEUE.send({ kind: "delivery", scope: row.scope_id, threadKey: encodeKey({ agent: row.agent_id, threadId: row.thread_id, ...(row.user_id !== null && { user: row.user_id }) }), fromSeq: delivery.from_seq, toSeq });
+      await this.env.KARMI_QUEUE.send({
+        kind: "delivery",
+        scope: row.scope_id,
+        threadKey: encodeKey({
+          agent: row.agent_id,
+          threadId: row.thread_id,
+          ...(row.user_id !== null && { user: row.user_id }),
+        }),
+        fromSeq: delivery.from_seq,
+        toSeq,
+      });
       return;
     }
     if (job.kind === "park-timeout") return this.expire(job.payload as { seq: number });
@@ -416,7 +592,16 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           const inputs = queued.map((next) => JSON.parse(next.json) as TurnInput);
           const turn = row.turn + 1;
           this.sql.exec("DELETE FROM inputs");
-          this.update({ state: "running", turn, step: 0, attempt: 0, recoveries: 0, platform_failure: 0, cancelled: 0, snapshot_json: null });
+          this.update({
+            state: "running",
+            turn,
+            step: 0,
+            attempt: 0,
+            recoveries: 0,
+            platform_failure: 0,
+            cancelled: 0,
+            snapshot_json: null,
+          });
           const [first, ...rest] = inputs as [TurnInput, ...TurnInput[]];
           this.append(turn, { type: "turn.started", input: first, toolsVersion }, first.channelRef);
           for (const input of rest) this.append(turn, { type: "turn.input", input }, first.channelRef);
@@ -427,7 +612,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           const plan = this.readTurn(row).plan;
           if (plan.kind !== "finish" && !plan.fresh) {
             if (!row.platform_failure && row.recoveries + 1 >= MAX_STEP_ATTEMPTS) {
-              await this.finish(row, failure("recovery", `Step ${row.step} of Turn ${row.turn} exhausted its three attempts.`));
+              await this.finish(
+                row,
+                failure("recovery", `Step ${row.step} of Turn ${row.turn} exhausted its three attempts.`),
+              );
               continue;
             }
             this.update({ recoveries: row.recoveries + (row.platform_failure ? 0 : 1), platform_failure: 0 });
@@ -448,7 +636,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private turnInput(turn: number): TurnInput | undefined {
-    const row = this.sql.exec<{ json: string }>("SELECT json FROM events WHERE turn = ? AND type = 'turn.started' LIMIT 1", turn).toArray()[0];
+    const row = this.sql
+      .exec<{ json: string }>("SELECT json FROM events WHERE turn = ? AND type = 'turn.started' LIMIT 1", turn)
+      .toArray()[0];
     return row ? (JSON.parse(row.json) as { input: TurnInput }).input : undefined;
   }
 
@@ -462,13 +652,23 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private async finish(row: ThreadRow, end: TurnEnd): Promise<void> {
     this.append(row.turn, end, this.turnInput(row.turn)?.channelRef);
     if (end.type === "turn.paused") this.update({ state: "parked" });
-    else this.update({ state: "idle", step: 0, attempt: 0, recoveries: 0, platform_failure: 0, cancelled: 0, snapshot_json: null });
+    else
+      this.update({
+        state: "idle",
+        step: 0,
+        attempt: 0,
+        recoveries: 0,
+        platform_failure: 0,
+        cancelled: 0,
+        snapshot_json: null,
+      });
     if (end.type !== "turn.paused" && this.hasInputs()) this.armWatchdog();
     else this.scheduler.cancel("watchdog");
     // The snapshot is gone from the row by now; a Turn that never took one has no Hooks to run.
     const snapshot = row.snapshot_json === null ? undefined : (JSON.parse(row.snapshot_json) as TurnSnapshot);
     if (snapshot) {
-      if (end.type === "turn.failed") await this.turnHooks(row, snapshot, "on-error", { error: { code: end.reason, message: end.message } });
+      if (end.type === "turn.failed")
+        await this.turnHooks(row, snapshot, "on-error", { error: { code: end.reason, message: end.message } });
       await this.turnHooks(row, snapshot, "after-turn", { end });
     }
     this.turnAbort.abort();
@@ -486,7 +686,21 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   private resolve(row: ThreadRow, seq: number, request: Request, answer: ApprovalAnswer, source: ApprovalSource): void {
     const remember = answer.remember === true && answer.decision === "allow" && request.kind === "tool";
-    this.append(row.turn, { type: "approval.resolved", request: seq, kind: request.kind, ...(request.kind === "tool" && { tool: request.tool }), decision: answer.decision, ...(answer.reason !== undefined && { reason: answer.reason }), ...(remember && { remember }), ...(answer.by !== undefined && { by: answer.by }), source }, this.turnInput(row.turn)?.channelRef);
+    this.append(
+      row.turn,
+      {
+        type: "approval.resolved",
+        request: seq,
+        kind: request.kind,
+        ...(request.kind === "tool" && { tool: request.tool }),
+        decision: answer.decision,
+        ...(answer.reason !== undefined && { reason: answer.reason }),
+        ...(remember && { remember }),
+        ...(answer.by !== undefined && { by: answer.by }),
+        source,
+      },
+      this.turnInput(row.turn)?.channelRef,
+    );
     this.scheduler.cancel(`park-timeout:${seq}`);
     request.answered = true;
   }
@@ -517,8 +731,11 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   private async cancelTurn(row: ThreadRow): Promise<void> {
     const turn = this.readTurn(row);
-    for (const [seq, request] of turn.requests) if (!request.answered) this.resolve(row, seq, request, { decision: "deny" }, "cancel");
-    for (const job of turn.jobs.values()) if (!job.outcome) this.append(row.turn, { type: "job.cancelled", jobId: job.jobId }, this.turnInput(row.turn)?.channelRef);
+    for (const [seq, request] of turn.requests)
+      if (!request.answered) this.resolve(row, seq, request, { decision: "deny" }, "cancel");
+    for (const job of turn.jobs.values())
+      if (!job.outcome)
+        this.append(row.turn, { type: "job.cancelled", jobId: job.jobId }, this.turnInput(row.turn)?.channelRef);
     this.turnAbort.abort();
     await this.finish(this.row(), failure("cancelled", "The Turn was cancelled."));
   }
@@ -548,7 +765,17 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     let tools: { remembered: number; available: ReturnType<typeof resolveTools> } | undefined;
     const available = (snapshot: TurnSnapshot) => {
       const remembered = this.remembered();
-      if (tools?.remembered !== remembered.size) tools = { remembered: remembered.size, available: resolveTools(snapshot.spec, this.deployment.catalogue, snapshot.policy, [readOutputTool(this.env.KARMI_MEDIA, row.scope_id, row.thread_id)], remembered) };
+      if (tools?.remembered !== remembered.size)
+        tools = {
+          remembered: remembered.size,
+          available: resolveTools(
+            snapshot.spec,
+            this.deployment.catalogue,
+            snapshot.policy,
+            [readOutputTool(this.env.KARMI_MEDIA, row.scope_id, row.thread_id)],
+            remembered,
+          ),
+        };
       return tools.available;
     };
     for (;;) {
@@ -565,18 +792,28 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       let turn = this.readTurn(row);
       if (turn.plan.kind === "finish" || turn.plan.fresh) {
         // A batch boundary: steer inputs join the conversation before the next model Step.
-        const steers = this.sql.exec<InputRow>("SELECT id, json, steer FROM inputs WHERE steer = 1 ORDER BY id").toArray();
+        const steers = this.sql
+          .exec<InputRow>("SELECT id, json, steer FROM inputs WHERE steer = 1 ORDER BY id")
+          .toArray();
         if (steers.length > 0) {
           this.sql.exec("DELETE FROM inputs WHERE steer = 1");
-          for (const next of steers) this.append(row.turn, { type: "turn.input", input: JSON.parse(next.json) as TurnInput, steer: true }, channelRef);
+          for (const next of steers)
+            this.append(
+              row.turn,
+              { type: "turn.input", input: JSON.parse(next.json) as TurnInput, steer: true },
+              channelRef,
+            );
           turn = this.readTurn(row);
         }
       }
       const { plan } = turn;
-      if (plan.kind === "finish") return this.finish(this.row(), { type: "turn.completed", stopReason: plan.stopReason, message: plan.message });
+      if (plan.kind === "finish")
+        return this.finish(this.row(), { type: "turn.completed", stopReason: plan.stopReason, message: plan.message });
 
       if (plan.fresh && exhausted(turn.budget, snapshot.budget)) {
-        for (const request of turn.requests.values()) if (request.kind === "continue" && !request.answered) return this.finish(this.row(), { type: "turn.paused", reason: "budget" });
+        for (const request of turn.requests.values())
+          if (request.kind === "continue" && !request.answered)
+            return this.finish(this.row(), { type: "turn.paused", reason: "budget" });
         this.request(row, snapshot, { type: "approval.requested", kind: "continue", budget: turn.budget }, channelRef);
         return this.finish(this.row(), { type: "turn.paused", reason: "budget" });
       }
@@ -586,21 +823,54 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         const attempt = modelAttempt + (plan.fresh ? 0 : row.recoveries);
         const models = [snapshot.spec.model.id, ...(snapshot.spec.model.fallbacks ?? [])];
         const model = models[modelAttempt - 1];
-        if (model === undefined) return this.finish(this.row(), failure("provider", `Every model of Agent "${row.agent_id}" failed.`));
-        if (attempt > MAX_STEP_ATTEMPTS) return this.finish(this.row(), failure("recovery", `Step ${plan.n} of Turn ${row.turn} exhausted its three attempts.`));
+        if (model === undefined)
+          return this.finish(this.row(), failure("provider", `Every model of Agent "${row.agent_id}" failed.`));
+        if (attempt > MAX_STEP_ATTEMPTS)
+          return this.finish(
+            this.row(),
+            failure("recovery", `Step ${plan.n} of Turn ${row.turn} exhausted its three attempts.`),
+          );
         this.update({ step: plan.n, attempt: modelAttempt, ...(plan.fresh && { recoveries: 0, platform_failure: 0 }) });
-        this.append(row.turn, { type: "step.started", kind: "model", n: plan.n, attempt, model, provider: snapshot.profile.adapter, agentVersion: snapshot.agentVersion }, channelRef);
+        this.append(
+          row.turn,
+          {
+            type: "step.started",
+            kind: "model",
+            n: plan.n,
+            attempt,
+            model,
+            provider: snapshot.profile.adapter,
+            agentVersion: snapshot.agentVersion,
+          },
+          channelRef,
+        );
         this.armWatchdog();
-        const result = await this.untilCancelled(this.modelStep({ ...row, step: plan.n }, snapshot, available(snapshot), model, channelRef));
+        const result = await this.untilCancelled(
+          this.modelStep({ ...row, step: plan.n }, snapshot, available(snapshot), model, channelRef),
+        );
         if (result === CANCELLED) return this.cancelTurn(this.row());
         // The failed attempt stays in the log; the transcript ignores Steps that never completed.
         if (!result.ok) this.update({ attempt: modelAttempt + 1 });
       } else {
         const attempt = (plan.fresh ? 0 : row.recoveries) + 1;
         this.update({ step: plan.n, attempt, ...(plan.fresh && { recoveries: 0, platform_failure: 0 }) });
-        this.append(row.turn, { type: "step.started", kind: "tool", n: plan.n, attempt, agentVersion: snapshot.agentVersion }, channelRef);
+        this.append(
+          row.turn,
+          { type: "step.started", kind: "tool", n: plan.n, attempt, agentVersion: snapshot.agentVersion },
+          channelRef,
+        );
         this.armWatchdog();
-        const waits = await this.untilCancelled(this.toolStep({ ...row, step: plan.n }, snapshot, available(snapshot), attempt, plan.batch, plan.prior, channelRef));
+        const waits = await this.untilCancelled(
+          this.toolStep(
+            { ...row, step: plan.n },
+            snapshot,
+            available(snapshot),
+            attempt,
+            plan.batch,
+            plan.prior,
+            channelRef,
+          ),
+        );
         if (waits === CANCELLED) return this.cancelTurn(this.row());
         if (waits !== undefined) {
           // An answer may have landed while the batch was still running; only a real wait parks.
@@ -625,13 +895,20 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private untilCancelled<T>(work: Promise<T>): Promise<T | typeof CANCELLED> {
     const signal = this.turnAbort.signal;
     if (signal.aborted) return Promise.resolve(CANCELLED);
-    return Promise.race([work, new Promise<typeof CANCELLED>((resolve) => signal.addEventListener("abort", () => resolve(CANCELLED), { once: true }))]);
+    return Promise.race([
+      work,
+      new Promise<typeof CANCELLED>((resolve) =>
+        signal.addEventListener("abort", () => resolve(CANCELLED), { once: true }),
+      ),
+    ]);
   }
 
   /** Tool names allowed for the rest of the Thread by a remembered `allow`. */
   private remembered(): Set<string> {
     const names = new Set<string>();
-    for (const { json } of this.sql.exec<{ json: string }>("SELECT json FROM events WHERE type = 'approval.resolved'")) {
+    for (const { json } of this.sql.exec<{ json: string }>(
+      "SELECT json FROM events WHERE type = 'approval.resolved'",
+    )) {
       const event = JSON.parse(json) as Extract<ThreadEventData, { type: "approval.resolved" }>;
       if (event.remember && event.decision === "allow" && event.tool !== undefined) names.add(event.tool);
     }
@@ -642,7 +919,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   // the same tool Step and dropped only when a new model Step starts a new batch; the budget window
   // reopens at an allowed `continue`.
   private readTurn(row: ThreadRow): TurnState {
-    const events = this.sql.exec<EventRow>("SELECT * FROM events WHERE turn = ? AND type NOT IN ('message.delta') ORDER BY seq", row.turn).toArray();
+    const events = this.sql
+      .exec<EventRow>("SELECT * FROM events WHERE turn = ? AND type NOT IN ('message.delta') ORDER BY seq", row.turn)
+      .toArray();
     let started: { kind: "model" | "tool"; n: number } | undefined;
     let completed = true;
     let steered = false;
@@ -712,7 +991,13 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           break;
         case "approval.requested":
           if (event.kind === "tool") {
-            requests.set(seq, { kind: "tool", id: event.id, tool: event.tool, timeoutAt: event.timeoutAt, answered: false });
+            requests.set(seq, {
+              kind: "tool",
+              id: event.id,
+              tool: event.tool,
+              timeoutAt: event.timeoutAt,
+              answered: false,
+            });
             approvals.set(event.id, { request: seq });
           } else requests.set(seq, { kind: "continue", timeoutAt: event.timeoutAt, answered: false });
           break;
@@ -720,7 +1005,15 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           const request = requests.get(event.request);
           if (!request) break;
           request.answered = true;
-          if (request.kind === "tool") approvals.set(request.id, { request: event.request, answer: { decision: event.decision, ...(event.reason !== undefined && { reason: event.reason }), source: event.source } });
+          if (request.kind === "tool")
+            approvals.set(request.id, {
+              request: event.request,
+              answer: {
+                decision: event.decision,
+                ...(event.reason !== undefined && { reason: event.reason }),
+                source: event.source,
+              },
+            });
           else if (event.decision === "allow") {
             requests.delete(event.request);
             budget.steps = 0;
@@ -747,8 +1040,18 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     }
     if (activeSince !== undefined) budget.wallMs += this.deployment.clock.now() - activeSince;
     const prior: PriorCalls = { started: calls, finished: results, approvals, jobs };
-    const batch = (): ToolCall[] => (last?.message ?? []).flatMap((block) => (block.type === "tool_call" ? [{ id: block.id, name: block.name, input: block.input }] : []));
-    const state = { budget, requests, approvals, jobs, lastMessage: last?.message ?? [], ...(paused !== undefined && { paused }) };
+    const batch = (): ToolCall[] =>
+      (last?.message ?? []).flatMap((block) =>
+        block.type === "tool_call" ? [{ id: block.id, name: block.name, input: block.input }] : [],
+      );
+    const state = {
+      budget,
+      requests,
+      approvals,
+      jobs,
+      lastMessage: last?.message ?? [],
+      ...(paused !== undefined && { paused }),
+    };
     if (started && !completed) {
       if (started.kind === "model") return { ...state, plan: { kind: "model", n: started.n, fresh: false } };
       return { ...state, plan: { kind: "tool", n: started.n, fresh: false, batch: batch(), prior } };
@@ -756,13 +1059,16 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (!started || !last) return { ...state, plan: { kind: "model", n: 1, fresh: true } };
     if (started.kind === "tool" || steered) return { ...state, plan: { kind: "model", n: started.n + 1, fresh: true } };
     const pending = batch();
-    if (pending.length > 0) return { ...state, plan: { kind: "tool", n: started.n + 1, fresh: true, batch: pending, prior } };
+    if (pending.length > 0)
+      return { ...state, plan: { kind: "tool", n: started.n + 1, fresh: true, batch: pending, prior } };
     return { ...state, plan: { kind: "finish", stopReason: last.stopReason, message: last.message } };
   }
 
   // The Step boundary: the first Step takes the Turn snapshot from the Scope and persists it; every
   // Step checks the Scope is still active.
-  private async snapshot(row: ThreadRow): Promise<{ ok: true; snapshot: TurnSnapshot } | { ok: false; failure: TurnEnd }> {
+  private async snapshot(
+    row: ThreadRow,
+  ): Promise<{ ok: true; snapshot: TurnSnapshot } | { ok: false; failure: TurnEnd }> {
     const stub = this.scopeStub(row);
     let snapshot: TurnSnapshot;
     let state: string;
@@ -774,29 +1080,47 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     } else {
       const input = this.turnInput(row.turn);
       const title = input ? titleOf(input) : undefined;
-      const source = await stub.turnSnapshot(row.scope_id, row.agent_id, { threadId: row.thread_id, ...(row.user_id !== null && { userId: row.user_id }), createdAt: row.created_at, activeAt: this.deployment.clock.now(), ...(title !== undefined && { title }) });
+      const source = await stub.turnSnapshot(row.scope_id, row.agent_id, {
+        threadId: row.thread_id,
+        ...(row.user_id !== null && { userId: row.user_id }),
+        createdAt: row.created_at,
+        activeAt: this.deployment.clock.now(),
+        ...(title !== undefined && { title }),
+      });
       if (!source.ok) return { ok: false, failure: failure(source.code, source.message) };
       const { version } = source.value.agent;
       const spec = source.value.agent.spec as AgentSpec;
       const profile = resolveProfile(spec, source.value.config.providers ?? {});
-      if (!profile) return { ok: false, failure: failure("provider.profile.unknown", `Agent "${row.agent_id}" names no configured Provider profile.`) };
+      if (!profile)
+        return {
+          ok: false,
+          failure: failure("provider.profile.unknown", `Agent "${row.agent_id}" names no configured Provider profile.`),
+        };
       const ceilings = source.value.config.ceilings ?? {};
       snapshot = {
         agentVersion: version,
         spec,
         profile,
         policy: [...(source.value.config.policy ?? []), ...(spec.policy ?? [])],
-        approvalTimeout: Math.min(spec.approvals?.timeout ?? AGENT_SPEC_DEFAULTS.approvals.timeout, ceilings.approvals?.timeout ?? UNBOUNDED),
+        approvalTimeout: Math.min(
+          spec.approvals?.timeout ?? AGENT_SPEC_DEFAULTS.approvals.timeout,
+          ceilings.approvals?.timeout ?? UNBOUNDED,
+        ),
         budget: resolveBudget(spec.capabilities?.longRunning, ceilings.longRunning),
       };
       const json = JSON.stringify(snapshot);
       const bytes = new TextEncoder().encode(json).byteLength;
-      if (bytes > SNAPSHOT_LIMIT) return { ok: false, failure: failure("snapshot.too-large", `Turn snapshot is ${bytes} bytes; the limit is ${SNAPSHOT_LIMIT}.`) };
+      if (bytes > SNAPSHOT_LIMIT)
+        return {
+          ok: false,
+          failure: failure("snapshot.too-large", `Turn snapshot is ${bytes} bytes; the limit is ${SNAPSHOT_LIMIT}.`),
+        };
       this.update({ snapshot_json: json, agent_version: version });
       state = source.value.state;
     }
     if (state === "suspended") return { ok: false, failure: { type: "turn.paused", reason: "scope_suspended" } };
-    if (state !== "active") return { ok: false, failure: failure("scope.destroyed", `Scope "${row.scope_id}" has been destroyed.`) };
+    if (state !== "active")
+      return { ok: false, failure: failure("scope.destroyed", `Scope "${row.scope_id}" has been destroyed.`) };
     return { ok: true, snapshot };
   }
 
@@ -810,22 +1134,43 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   // Turn-level Hooks, dispatched by name with the Turn's context. `before-turn` may refuse the Turn by
   // throwing; the observing points only log a failure.
-  private async turnHooks<P extends "before-turn" | "after-turn" | "on-error">(row: ThreadRow, snapshot: TurnSnapshot, point: P, extra: Omit<HookContexts[P], keyof HookContextBase>): Promise<{ ok: true } | { ok: false; failure: TurnEnd }> {
-    const base: HookContextBase = { point, scope: row.scope_id, ...(row.user_id !== null && { user: row.user_id }), thread: { id: row.thread_id }, agent: row.agent_id, turn: row.turn, logger: this.logger(row), signal: this.turnAbort.signal };
+  private async turnHooks<P extends "before-turn" | "after-turn" | "on-error">(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    point: P,
+    extra: Omit<HookContexts[P], keyof HookContextBase>,
+  ): Promise<{ ok: true } | { ok: false; failure: TurnEnd }> {
+    const base: HookContextBase = {
+      point,
+      scope: row.scope_id,
+      ...(row.user_id !== null && { user: row.user_id }),
+      thread: { id: row.thread_id },
+      agent: row.agent_id,
+      turn: row.turn,
+      logger: this.logger(row),
+      signal: this.turnAbort.signal,
+    };
     for (const hook of hooksAt(snapshot.spec, this.deployment.catalogue, point)) {
       try {
         await hook.run({ ...base, ...extra } as HookContexts[P]);
       } catch (caught) {
         if (isPlatformFailure(caught)) throw caught;
         const message = caught instanceof Error ? caught.message : String(caught);
-        if (point === "before-turn") return { ok: false, failure: failure("hook", `Hook "${hook.name}" refused the Turn: ${message}`) };
+        if (point === "before-turn")
+          return { ok: false, failure: failure("hook", `Hook "${hook.name}" refused the Turn: ${message}`) };
         base.logger.warn(`${point} Hook "${hook.name}" failed`, { error: message });
       }
     }
     return { ok: true };
   }
 
-  private async modelStep(row: ThreadRow, snapshot: TurnSnapshot, available: ReadonlyMap<string, AvailableTool>, model: string, channelRef: unknown): Promise<StepResult> {
+  private async modelStep(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    available: ReadonlyMap<string, AvailableTool>,
+    model: string,
+    channelRef: unknown,
+  ): Promise<StepResult> {
     const { spec, profile } = snapshot;
     const provider = this.deployment.providers[profile.adapter];
     if (!provider) return stepError(`Provider adapter "${profile.adapter}" is not registered.`);
@@ -836,8 +1181,23 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     try {
       const tools = toolDefinitions(available);
       const offered = tools.map((tool) => available.get(tool.name)!.tool);
-      const system = await evaluatePrompt(spec, this.deployment.catalogue, { model, scope: row.scope_id, ...(row.user_id !== null && { user: row.user_id }), thread: { id: row.thread_id }, tools: tools.map((tool) => tool.name), now: new Date(this.deployment.clock.now()) }, offered);
-      const { messages } = prepareMessages(transcriptFromEvents(this.read(0, "part", Number.MAX_SAFE_INTEGER)), { provider: profile.adapter, model: native });
+      const system = await evaluatePrompt(
+        spec,
+        this.deployment.catalogue,
+        {
+          model,
+          scope: row.scope_id,
+          ...(row.user_id !== null && { user: row.user_id }),
+          thread: { id: row.thread_id },
+          tools: tools.map((tool) => tool.name),
+          now: new Date(this.deployment.clock.now()),
+        },
+        offered,
+      );
+      const { messages } = prepareMessages(transcriptFromEvents(this.read(0, "part", Number.MAX_SAFE_INTEGER)), {
+        provider: profile.adapter,
+        model: native,
+      });
       const request = {
         model: native,
         config: profile,
@@ -845,7 +1205,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         messages,
         ...(tools.length > 0 && { tools }),
         ...(spec.model.params && { params: spec.model.params }),
-        ...((profile.providerOptions || spec.model.providerOptions) && { providerOptions: { ...profile.providerOptions, ...spec.model.providerOptions } }),
+        ...((profile.providerOptions || spec.model.providerOptions) && {
+          providerOptions: { ...profile.providerOptions, ...spec.model.providerOptions },
+        }),
       };
       const hosts = providerHosts(profile);
       const egress = scopedFetch({ ...(hosts && { hosts }), logger });
@@ -855,7 +1217,11 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         if (signal.aborted) return stepError("The Turn was cancelled.");
         switch (event.type) {
           case "delta":
-            this.append(row.turn, { type: "message.delta", index: event.index, kind: event.kind, text: event.text }, channelRef);
+            this.append(
+              row.turn,
+              { type: "message.delta", index: event.index, kind: event.kind, text: event.text },
+              channelRef,
+            );
             break;
           case "part":
             parts[event.index] = event.block;
@@ -864,7 +1230,11 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           case "message.end": {
             const usage = addUsage(JSON.parse(this.row().usage_json) as Usage, event.usage);
             this.update({ usage_json: JSON.stringify(usage) });
-            this.append(row.turn, { type: "step.completed", kind: "model", n: row.step, stopReason: event.stopReason, usage: event.usage }, channelRef);
+            this.append(
+              row.turn,
+              { type: "step.completed", kind: "model", n: row.step, stopReason: event.stopReason, usage: event.usage },
+              channelRef,
+            );
             return { ok: true, stopReason: event.stopReason, message: parts.filter((part) => part !== undefined) };
           }
           case "error":
@@ -880,7 +1250,15 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     }
   }
 
-  private toolStep(row: ThreadRow, snapshot: TurnSnapshot, available: ReadonlyMap<string, AvailableTool>, attempt: number, batch: ToolCall[], prior: PriorCalls, channelRef: unknown): ReturnType<typeof runToolStep> {
+  private toolStep(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    available: ReadonlyMap<string, AvailableTool>,
+    attempt: number,
+    batch: ToolCall[],
+    prior: PriorCalls,
+    channelRef: unknown,
+  ): ReturnType<typeof runToolStep> {
     const stub = this.scopeStub(row);
     const signal = this.turnAbort.signal;
     return runToolStep(
@@ -903,7 +1281,12 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         },
         ask: (call) => {
           signal.throwIfAborted();
-          this.request(row, snapshot, { type: "approval.requested", kind: "tool", id: call.id, tool: call.name, input: call.input }, channelRef);
+          this.request(
+            row,
+            snapshot,
+            { type: "approval.requested", kind: "tool", id: call.id, tool: call.name, input: call.input },
+            channelRef,
+          );
         },
         connection: async (level, name) => {
           // The user-level store lands with the Connection ticket; until then only agent-level values exist.
@@ -925,20 +1308,32 @@ export function isTurnEnd(event: ThreadEventData): event is TurnEnd {
 }
 
 const failure = (reason: string, message: string): TurnEnd => ({ type: "turn.failed", reason, message });
-const stepError = (message: string): StepResult => ({ ok: false, error: { code: "unknown", message, retryable: false } });
+const stepError = (message: string): StepResult => ({
+  ok: false,
+  error: { code: "unknown", message, retryable: false },
+});
 
 function resolveProfile(spec: AgentSpec, providers: Record<string, ProviderConfig>): ProviderConfig | undefined {
-  const name = spec.model.providerProfile ?? (Object.keys(providers).length === 1 ? Object.keys(providers)[0] : undefined);
+  const name =
+    spec.model.providerProfile ?? (Object.keys(providers).length === 1 ? Object.keys(providers)[0] : undefined);
   return name === undefined ? undefined : providers[name];
 }
 
 /** A grant lifts each bound it names and leaves the others open; the Scope ceiling caps all of them. */
 function resolveBudget(grant: Capabilities["longRunning"], ceiling: Ceilings["longRunning"]): Budget {
-  const limits = (bounds: { maxSteps?: number; maxWallMs?: number; maxTokens?: number }): Budget => ({ steps: bounds.maxSteps ?? UNBOUNDED, wallMs: bounds.maxWallMs ?? UNBOUNDED, tokens: bounds.maxTokens ?? UNBOUNDED });
+  const limits = (bounds: { maxSteps?: number; maxWallMs?: number; maxTokens?: number }): Budget => ({
+    steps: bounds.maxSteps ?? UNBOUNDED,
+    wallMs: bounds.maxWallMs ?? UNBOUNDED,
+    tokens: bounds.maxTokens ?? UNBOUNDED,
+  });
   const budget = grant ? limits(grant) : { ...DEFAULT_BUDGET };
   if (!ceiling) return budget;
   const cap = limits(ceiling);
-  return { steps: Math.min(budget.steps, cap.steps), wallMs: Math.min(budget.wallMs, cap.wallMs), tokens: Math.min(budget.tokens, cap.tokens) };
+  return {
+    steps: Math.min(budget.steps, cap.steps),
+    wallMs: Math.min(budget.wallMs, cap.wallMs),
+    tokens: Math.min(budget.tokens, cap.tokens),
+  };
 }
 
 function exhausted(used: Budget, max: Budget): boolean {
@@ -946,5 +1341,10 @@ function exhausted(used: Budget, max: Budget): boolean {
 }
 
 function addUsage(total: Usage, usage: Usage): Usage {
-  return { input: total.input + usage.input, output: total.output + usage.output, cacheRead: total.cacheRead + usage.cacheRead, cacheWrite: total.cacheWrite + usage.cacheWrite };
+  return {
+    input: total.input + usage.input,
+    output: total.output + usage.output,
+    cacheRead: total.cacheRead + usage.cacheRead,
+    cacheWrite: total.cacheWrite + usage.cacheWrite,
+  };
 }

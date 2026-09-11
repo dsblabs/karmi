@@ -7,10 +7,13 @@ import type { ToolAnnotations } from "./tool.js";
 import { pointer } from "./validate.js";
 
 /** One item in an Agent Spec's ordered instructions. */
-export type PromptEntry = { text: string; models?: string | string[] } | { fragment: string; args?: Record<string, unknown>; models?: string | string[] };
+export type PromptEntry =
+  | { text: string; models?: string | string[] }
+  | { fragment: string; args?: Record<string, unknown>; models?: string | string[] };
 
 export type ToolReference = string | { name: string; settings?: Record<string, unknown>; alwaysLoad?: boolean };
-export type SkillReference = string | { name: string; settings?: Record<string, unknown>; invokableBy?: "model" | "user" | "both" };
+export type SkillReference =
+  string | { name: string; settings?: Record<string, unknown>; invokableBy?: "model" | "user" | "both" };
 export type KnowledgeReference = string | { name: string; retriever?: string; mode?: "tool" | "inline" };
 
 /** Ordered; the first matching rule decides, and no match means `ask`. */
@@ -30,7 +33,14 @@ export interface ConnectionDeclaration {
 export interface Capabilities {
   scripts?: {
     tier: "isolate" | "container";
-    limits?: { cpuMs?: number; wallMs?: number; maxToolCalls?: number; idleMs?: number; jobMaxWallMs?: number; maxArtifacts?: number };
+    limits?: {
+      cpuMs?: number;
+      wallMs?: number;
+      maxToolCalls?: number;
+      idleMs?: number;
+      jobMaxWallMs?: number;
+      maxArtifacts?: number;
+    };
     /** Which of the Agent's Tools a Script may call; `"allowed"` means every allow-resolved one. */
     tools?: "allowed" | string[];
   };
@@ -89,7 +99,12 @@ export interface AgentSpec {
     id: string;
     providerProfile?: string;
     fallbacks?: string[];
-    params?: { temperature?: number; topP?: number; maxOutputTokens?: number; reasoning?: "off" | "low" | "medium" | "high" };
+    params?: {
+      temperature?: number;
+      topP?: number;
+      maxOutputTokens?: number;
+      reasoning?: "off" | "low" | "medium" | "high";
+    };
     providerOptions?: Record<string, unknown>;
   };
   tools?: ToolReference[];
@@ -120,7 +135,10 @@ export function defineAgent(spec: AgentSpec): Agent {
   const result = z.safeParse(AgentSpecSchema, spec);
   if (!result.success) {
     const first = result.error.issues[0]!;
-    throw new KarmiError("agent.spec.invalid", `Agent Spec "${String(spec.agentId)}" is invalid at "${pointer(first.path)}": ${first.message}`);
+    throw new KarmiError(
+      "agent.spec.invalid",
+      `Agent Spec "${String(spec.agentId)}" is invalid at "${pointer(first.path)}": ${first.message}`,
+    );
   }
   return Object.freeze({ kind: "agent", agentId: spec.agentId, spec: deepFreeze(structuredClone(spec)) });
 }

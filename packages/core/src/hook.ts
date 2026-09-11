@@ -3,7 +3,15 @@ import { assertName } from "./names.js";
 import type { ToolAnnotations, ToolResult } from "./tool.js";
 import type { ThreadEventData, TurnInput } from "./thread-events.js";
 
-export const HOOK_POINTS = ["before-turn", "after-turn", "before-tool", "after-tool", "before-compact", "after-compact", "on-error"] as const;
+export const HOOK_POINTS = [
+  "before-turn",
+  "after-turn",
+  "before-tool",
+  "after-tool",
+  "before-compact",
+  "after-compact",
+  "on-error",
+] as const;
 export type HookPoint = (typeof HOOK_POINTS)[number];
 
 /** Every Hook sees where it runs; nothing is ambient. */

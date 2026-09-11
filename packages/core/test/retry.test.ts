@@ -65,7 +65,9 @@ describe("retry", () => {
     const controller = new AbortController();
     controller.abort();
     let calls = 0;
-    await expect(retry(async () => void calls++, { retryable, signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+    await expect(retry(async () => void calls++, { retryable, signal: controller.signal })).rejects.toMatchObject({
+      name: "AbortError",
+    });
     expect(calls).toBe(0);
   });
 });

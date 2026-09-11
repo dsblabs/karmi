@@ -102,7 +102,12 @@ export function openThread(bindings: KarmiBindings, scope: ScopeId, target: Thre
   const identity = typeof target === "string" ? decodeKey(target) : target;
   assertIdentifier("agent.id.invalid", "agent", identity.agent);
   if (identity.user !== undefined) assertIdentifier("user.id.invalid", "user", identity.user);
-  const address: ThreadAddress = { scope, agent: identity.agent, threadId: identity.threadId, create: typeof target !== "string" };
+  const address: ThreadAddress = {
+    scope,
+    agent: identity.agent,
+    threadId: identity.threadId,
+    create: typeof target !== "string",
+  };
   if (identity.user !== undefined) address.user = identity.user;
   // keys.thread validates the threadId; an invalid one never reaches a Durable Object name.
   const stub = remote<ThreadDurableObject>(bindings.KARMI_THREADS, keys.thread(scope, identity.threadId));
@@ -113,7 +118,14 @@ export function openThread(bindings: KarmiBindings, scope: ScopeId, target: Thre
     cancel: () => unwrap(stub.cancel(address)),
     resume: () => unwrap(stub.resume(address)),
     jobs: {
-      progress: (jobId, content) => unwrap(stub.job(address, { type: "job.progress", jobId, content: typeof content === "string" ? [{ type: "text", text: content }] : content })),
+      progress: (jobId, content) =>
+        unwrap(
+          stub.job(address, {
+            type: "job.progress",
+            jobId,
+            content: typeof content === "string" ? [{ type: "text", text: content }] : content,
+          }),
+        ),
       complete: (jobId, result) => unwrap(stub.job(address, { type: "job.completed", jobId, result })),
       fail: (jobId, message) => unwrap(stub.job(address, { type: "job.failed", jobId, message })),
       cancel: (jobId) => unwrap(stub.job(address, { type: "job.cancelled", jobId })),
@@ -125,25 +137,39 @@ export function openThread(bindings: KarmiBindings, scope: ScopeId, target: Thre
 }
 
 // Each poll returns as soon as the Thread has something new (or times out empty), so a subscriber never spins.
-async function* subscribe(stub: Remote<ThreadDurableObject>, address: ThreadAddress, after: number, granularity: Granularity): AsyncGenerator<ThreadEvent> {
+async function* subscribe(
+  stub: Remote<ThreadDurableObject>,
+  address: ThreadAddress,
+  after: number,
+  granularity: Granularity,
+): AsyncGenerator<ThreadEvent> {
   for (;;) {
     const batch = await unwrap(stub.poll(address, after, granularity));
     for (const event of batch) {
       after = event.seq;
-      if (event.type === "turn.completed" || event.type === "approval.requested") await unwrap(stub.consumed(address, event.seq));
+      if (event.type === "turn.completed" || event.type === "approval.requested")
+        await unwrap(stub.consumed(address, event.seq));
       yield event;
     }
   }
 }
 
 export function encodeKey(identity: ThreadIdentity): string {
-  return btoa(JSON.stringify([identity.agent, identity.user ?? null, identity.threadId])).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  return btoa(JSON.stringify([identity.agent, identity.user ?? null, identity.threadId]))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/, "");
 }
 
 export function decodeKey(key: string): ThreadIdentity {
   try {
-    const [agent, user, threadId] = JSON.parse(atob(key.replaceAll("-", "+").replaceAll("_", "/"))) as [string, string | null, string];
-    if (typeof agent !== "string" || typeof threadId !== "string" || (user !== null && typeof user !== "string")) throw new Error();
+    const [agent, user, threadId] = JSON.parse(atob(key.replaceAll("-", "+").replaceAll("_", "/"))) as [
+      string,
+      string | null,
+      string,
+    ];
+    if (typeof agent !== "string" || typeof threadId !== "string" || (user !== null && typeof user !== "string"))
+      throw new Error();
     return user === null ? { agent, threadId } : { agent, user, threadId };
   } catch {
     throw new KarmiError("thread.key.invalid", "Not a Thread key.");
@@ -152,7 +178,10 @@ export function decodeKey(key: string): ThreadIdentity {
 
 export function titleOf(input: TurnInput): string | undefined {
   if (input.kind !== "message") return undefined;
-  const text = input.parts.find((part) => part.type === "text")?.text.trim().replace(/\s+/g, " ");
+  const text = input.parts
+    .find((part) => part.type === "text")
+    ?.text.trim()
+    .replace(/\s+/g, " ");
   if (!text) return undefined;
   return text.length <= TITLE_LENGTH ? text : `${text.slice(0, TITLE_LENGTH - 1)}…`;
 }

@@ -37,11 +37,15 @@ export interface RetrieverInput<Settings extends Schema | undefined> {
   destroy?: (ctx: RetrieverContext<Output<Settings>>) => Promise<void>;
 }
 
-export interface Retriever<Settings extends Schema | undefined = Schema | undefined> extends Readonly<RetrieverInput<Settings>> {
+export interface Retriever<Settings extends Schema | undefined = Schema | undefined> extends Readonly<
+  RetrieverInput<Settings>
+> {
   readonly kind: "retriever";
 }
 
-export function defineRetriever<Settings extends Schema | undefined = undefined>(input: RetrieverInput<Settings>): Retriever<Settings> {
+export function defineRetriever<Settings extends Schema | undefined = undefined>(
+  input: RetrieverInput<Settings>,
+): Retriever<Settings> {
   assertName("retriever", input.name);
   return Object.freeze({ kind: "retriever", ...input });
 }

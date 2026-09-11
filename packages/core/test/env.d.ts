@@ -10,4 +10,3 @@ declare namespace Cloudflare {
     durableNamespaces: "ThreadDO" | "ScopeConfigDO";
   }
 }
-

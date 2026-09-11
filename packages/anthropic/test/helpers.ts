@@ -12,7 +12,9 @@ export interface Served {
   fetch: typeof fetch;
 }
 
-type Answer = { sse: string; headers?: Record<string, string> } | { status: number; json: unknown; headers?: Record<string, string> };
+type Answer =
+  | { sse: string; headers?: Record<string, string> }
+  | { status: number; json: unknown; headers?: Record<string, string> };
 
 /** A transport that answers each call from its script in order and records what it received. */
 export function serve(...answers: Answer[]): Served {
@@ -22,10 +24,19 @@ export function serve(...answers: Answer[]): Served {
     const text = await request.text();
     const headers: Record<string, string> = {};
     request.headers.forEach((value, name) => (headers[name] = value));
-    calls.push({ url: request.url, method: request.method, headers, body: text ? (JSON.parse(text) as Record<string, unknown>) : undefined });
+    calls.push({
+      url: request.url,
+      method: request.method,
+      headers,
+      body: text ? (JSON.parse(text) as Record<string, unknown>) : undefined,
+    });
     const answer = answers[Math.min(calls.length - 1, answers.length - 1)];
     if (!answer) return new Response("no script", { status: 500 });
-    if ("sse" in answer) return new Response(answer.sse, { status: 200, headers: { "content-type": "text/event-stream", ...answer.headers } });
+    if ("sse" in answer)
+      return new Response(answer.sse, {
+        status: 200,
+        headers: { "content-type": "text/event-stream", ...answer.headers },
+      });
     return Response.json(answer.json, { status: answer.status, headers: answer.headers ?? {} });
   }) as typeof fetch;
   return { calls, fetch: stub };
@@ -38,8 +49,13 @@ export const request = (overrides: Partial<ProviderRequest> = {}): ProviderReque
   ...overrides,
 });
 
-export async function collect(provider: Provider, req: ProviderRequest, options: Partial<ProviderCallOptions> & { fetch: typeof fetch }): Promise<ProviderEvent[]> {
+export async function collect(
+  provider: Provider,
+  req: ProviderRequest,
+  options: Partial<ProviderCallOptions> & { fetch: typeof fetch },
+): Promise<ProviderEvent[]> {
   const events: ProviderEvent[] = [];
-  for await (const event of provider.stream(req, { signal: new AbortController().signal, ...options })) events.push(event);
+  for await (const event of provider.stream(req, { signal: new AbortController().signal, ...options }))
+    events.push(event);
   return events;
 }

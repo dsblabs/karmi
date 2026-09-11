@@ -96,12 +96,29 @@ function shapeIssue(issue: z.core.$ZodIssue): Issue {
   const path = pointer(issue.path);
   if (issue.code === "unrecognized_keys") {
     if (path === "/capabilities" && issue.keys.includes("egress")) {
-      return { severity: "error", code: "capability.reserved", path: `${path}/egress`, message: "The `egress` Capability is reserved for the container tier." };
+      return {
+        severity: "error",
+        code: "capability.reserved",
+        path: `${path}/egress`,
+        message: "The `egress` Capability is reserved for the container tier.",
+      };
     }
-    return { severity: "error", code: "shape.unknown-key", path, message: issue.message, context: { keys: issue.keys } };
+    return {
+      severity: "error",
+      code: "shape.unknown-key",
+      path,
+      message: issue.message,
+      context: { keys: issue.keys },
+    };
   }
   if (issue.code === "invalid_type") {
-    return { severity: "error", code: "shape.invalid-type", path, message: issue.message, context: { expected: issue.expected } };
+    return {
+      severity: "error",
+      code: "shape.invalid-type",
+      path,
+      message: issue.message,
+      context: { expected: issue.expected },
+    };
   }
   return { severity: "error", code: "shape.invalid", path, message: issue.message };
 }
@@ -154,19 +171,27 @@ class ReferenceChecker {
 
   private instructions(): void {
     const { instructions, model } = this.spec;
-    if (instructions.length === 0) this.issues.warn("instructions.empty", "/instructions", "The Agent has no instructions.");
+    if (instructions.length === 0)
+      this.issues.warn("instructions.empty", "/instructions", "The Agent has no instructions.");
     const models = [model.id, ...(model.fallbacks ?? [])];
     instructions.forEach((entry, i) => {
       const path = `/instructions/${i}`;
       if (entry.models !== undefined) {
         if (!toList(entry.models).some((glob) => models.some((id) => matchGlob(glob, id)))) {
-          this.issues.warn("models.unmatched", `${path}/models`, `No model in this Spec matches ${JSON.stringify(entry.models)}; the entry never applies.`, { models });
+          this.issues.warn(
+            "models.unmatched",
+            `${path}/models`,
+            `No model in this Spec matches ${JSON.stringify(entry.models)}; the entry never applies.`,
+            { models },
+          );
         }
       }
       if (!("fragment" in entry)) return;
       const fragment = this.catalogue.fragments.get(entry.fragment);
       if (!fragment) {
-        this.issues.error("ref.fragment.unknown", `${path}/fragment`, `Unknown Fragment "${entry.fragment}".`, { name: entry.fragment });
+        this.issues.error("ref.fragment.unknown", `${path}/fragment`, `Unknown Fragment "${entry.fragment}".`, {
+          name: entry.fragment,
+        });
         return;
       }
       this.validateAgainstItemSchema("args", fragment.args, entry.args, `${path}/args`, `Fragment "${fragment.name}"`);
@@ -181,15 +206,26 @@ class ReferenceChecker {
       if (ref.name.startsWith("mcp:")) {
         const mcp = parseMcpReference(ref.name);
         if (!mcp) {
-          this.issues.error("ref.mcp.invalid", `${path}/name`, `"${ref.name}" must be mcp:<server> or mcp:<server>/<tool>.`, { name: ref.name });
+          this.issues.error(
+            "ref.mcp.invalid",
+            `${path}/name`,
+            `"${ref.name}" must be mcp:<server> or mcp:<server>/<tool>.`,
+            { name: ref.name },
+          );
           return;
         }
         this.mcpRefs.push(mcp);
-        if (ref.settings !== undefined) this.issues.error("settings.unexpected", `${path}/settings`, `MCP Tools take no settings.`);
+        if (ref.settings !== undefined)
+          this.issues.error("settings.unexpected", `${path}/settings`, `MCP Tools take no settings.`);
         return;
       }
       if (BUILT_IN_TOOL_NAMES.includes(ref.name)) {
-        this.issues.error("ref.tool.built-in", `${path}/name`, `"${ref.name}" is a built-in Tool; it is granted by a Capability, not referenced.`, { name: ref.name });
+        this.issues.error(
+          "ref.tool.built-in",
+          `${path}/name`,
+          `"${ref.name}" is a built-in Tool; it is granted by a Capability, not referenced.`,
+          { name: ref.name },
+        );
         return;
       }
       const tool = this.catalogue.tools.get(ref.name);
@@ -198,7 +234,13 @@ class ReferenceChecker {
         return;
       }
       this.reachableTools.set(tool.name, tool);
-      this.validateAgainstItemSchema("settings", tool.settings, ref.settings, `${path}/settings`, `Tool "${tool.name}"`);
+      this.validateAgainstItemSchema(
+        "settings",
+        tool.settings,
+        ref.settings,
+        `${path}/settings`,
+        `Tool "${tool.name}"`,
+      );
     });
   }
 
@@ -213,7 +255,13 @@ class ReferenceChecker {
         return;
       }
       for (const tool of skill.tools) this.reachableTools.set(tool.name, tool);
-      this.validateAgainstItemSchema("settings", skill.settings, ref.settings, `${path}/settings`, `Skill "${skill.name}"`);
+      this.validateAgainstItemSchema(
+        "settings",
+        skill.settings,
+        ref.settings,
+        `${path}/settings`,
+        `Skill "${skill.name}"`,
+      );
     });
   }
 
@@ -223,7 +271,9 @@ class ReferenceChecker {
       const path = `/knowledge/${i}`;
       if (this.rejectDuplicate(seen, ref.name, path)) return;
       if (ref.retriever !== undefined && !this.catalogue.retrievers.has(ref.retriever)) {
-        this.issues.error("ref.retriever.unknown", `${path}/retriever`, `Unknown Retriever "${ref.retriever}".`, { name: ref.retriever });
+        this.issues.error("ref.retriever.unknown", `${path}/retriever`, `Unknown Retriever "${ref.retriever}".`, {
+          name: ref.retriever,
+        });
       }
     });
   }
@@ -234,10 +284,18 @@ class ReferenceChecker {
     delegates.forEach((agentId, i) => this.rejectDuplicate(seen, agentId, `/delegates/${i}`));
     const granted = this.spec.capabilities?.delegation !== undefined;
     if (delegates.length > 0 && !granted) {
-      this.issues.error("delegation.no-capability", "/delegates", "Delegates are listed but the `delegation` Capability is not granted.");
+      this.issues.error(
+        "delegation.no-capability",
+        "/delegates",
+        "Delegates are listed but the `delegation` Capability is not granted.",
+      );
     }
     if (delegates.length === 0 && granted) {
-      this.issues.warn("delegation.no-delegates", "/capabilities/delegation", "The `delegation` Capability is granted but no delegates are listed.");
+      this.issues.warn(
+        "delegation.no-delegates",
+        "/capabilities/delegation",
+        "The `delegation` Capability is granted but no delegates are listed.",
+      );
     }
   }
 
@@ -249,7 +307,10 @@ class ReferenceChecker {
         if (!hook) {
           this.issues.error("ref.hook.unknown", path, `Unknown Hook "${hookName}".`, { name: hookName });
         } else if (hook.point !== point) {
-          this.issues.error("ref.hook.point", path, `Hook "${hookName}" runs at "${hook.point}", not "${point}".`, { name: hookName, point: hook.point });
+          this.issues.error("ref.hook.point", path, `Hook "${hookName}" runs at "${hook.point}", not "${point}".`, {
+            name: hookName,
+            point: hook.point,
+          });
         }
       });
     }
@@ -262,27 +323,44 @@ class ReferenceChecker {
       if (tool.requires === undefined) continue;
       required.add(tool.requires);
       if (!(tool.requires in declared)) {
-        this.issues.error("connection.missing", `/connections/${tool.requires}`, `Tool "${tool.name}" requires the Connection "${tool.requires}", which the Spec does not declare.`, {
-          tool: tool.name,
-          connection: tool.requires,
-        });
+        this.issues.error(
+          "connection.missing",
+          `/connections/${tool.requires}`,
+          `Tool "${tool.name}" requires the Connection "${tool.requires}", which the Spec does not declare.`,
+          {
+            tool: tool.name,
+            connection: tool.requires,
+          },
+        );
       }
     }
     // An OAuth grant for an MCP server is the Connection `mcp:<server>`; the ref implies it.
     for (const { server } of this.mcpRefs) required.add(`mcp:${server}`);
     for (const connection of Object.keys(declared)) {
-      if (!required.has(connection)) this.issues.warn("connection.unused", `/connections/${connection}`, `No referenced Tool requires the Connection "${connection}".`, { connection });
+      if (!required.has(connection))
+        this.issues.warn(
+          "connection.unused",
+          `/connections/${connection}`,
+          `No referenced Tool requires the Connection "${connection}".`,
+          { connection },
+        );
     }
   }
 
   /** Every Tool name the model may see, as far as the Catalogue can tell; whole-server MCP refs add more at Turn start. */
   private grantedToolNames(): Set<string> {
     const capabilities = this.spec.capabilities ?? {};
-    const granted = new Set<string>([...this.reachableTools.keys(), ...(capabilities.providerTools?.tools ?? []), "read_output", "tool_search"]);
+    const granted = new Set<string>([
+      ...this.reachableTools.keys(),
+      ...(capabilities.providerTools?.tools ?? []),
+      "read_output",
+      "tool_search",
+    ]);
     if (this.spec.memory !== undefined) for (const name of ["remember", "recall"]) granted.add(name);
     if (capabilities.scripts) granted.add("run_script");
     if (capabilities.delegation) granted.add("delegate");
-    if (capabilities.scheduling) for (const name of ["schedule", "cancel_schedule", "list_schedules"]) granted.add(name);
+    if (capabilities.scheduling)
+      for (const name of ["schedule", "cancel_schedule", "list_schedules"]) granted.add(name);
     for (const { server, tool } of this.mcpRefs) if (tool !== undefined) granted.add(`${server}__${tool}`);
     return granted;
   }
@@ -294,7 +372,12 @@ class ReferenceChecker {
     const wholeServers = this.mcpRefs.some((ref) => ref.tool === undefined);
     tools.forEach((toolName, i) => {
       if (!granted.has(toolName) && !(wholeServers && toolName.includes("__"))) {
-        this.issues.error("capability.scripts.tool-unreferenced", `/capabilities/scripts/tools/${i}`, `Scripts may only call Tools the Agent references; "${toolName}" is not one of them.`, { name: toolName });
+        this.issues.error(
+          "capability.scripts.tool-unreferenced",
+          `/capabilities/scripts/tools/${i}`,
+          `Scripts may only call Tools the Agent references; "${toolName}" is not one of them.`,
+          { name: toolName },
+        );
       }
     });
   }
@@ -309,14 +392,23 @@ class ReferenceChecker {
     rules.forEach((rule, i) => {
       const path = `/policy/${i}`;
       if (rule.match.tool === undefined && rule.match.annotations === undefined) {
-        this.issues.error("policy.match.empty", `${path}/match`, "A Policy rule must match on `tool`, `annotations` or both.");
+        this.issues.error(
+          "policy.match.empty",
+          `${path}/match`,
+          "A Policy rule must match on `tool`, `annotations` or both.",
+        );
         return;
       }
       if (rule.match.tool === undefined) return;
       toList(rule.match.tool).forEach((glob, j) => {
         const globPath = Array.isArray(rule.match.tool) ? `${path}/match/tool/${j}` : `${path}/match/tool`;
         if (!glob.includes("*") && !wholeServers && !granted.has(glob)) {
-          this.issues.warn("policy.unreferenced-tool", globPath, `No Tool of this Agent is named "${glob}"; the rule never matches.`, { tool: glob });
+          this.issues.warn(
+            "policy.unreferenced-tool",
+            globPath,
+            `No Tool of this Agent is named "${glob}"; the rule never matches.`,
+            { tool: glob },
+          );
         }
       });
     });
@@ -325,10 +417,18 @@ class ReferenceChecker {
     // Only an explicit `ask` is an error; a Provider Tool no rule names is included, since the grant itself is the consent.
     for (const providerTool of providerTools) {
       const index = rules.findIndex((rule) => {
-        return rule.match.annotations === undefined && toList(rule.match.tool ?? []).some((glob) => matchGlob(glob, providerTool));
+        return (
+          rule.match.annotations === undefined &&
+          toList(rule.match.tool ?? []).some((glob) => matchGlob(glob, providerTool))
+        );
       });
       if (index !== -1 && rules[index]!.effect === "ask") {
-        this.issues.error("policy.ask-on-provider-tool", `/policy/${index}/effect`, `Provider Tool "${providerTool}" can only be allowed or denied, never asked.`, { tool: providerTool });
+        this.issues.error(
+          "policy.ask-on-provider-tool",
+          `/policy/${index}/effect`,
+          `Provider Tool "${providerTool}" can only be allowed or denied, never asked.`,
+          { tool: providerTool },
+        );
       }
     }
   }
@@ -344,7 +444,13 @@ class ReferenceChecker {
   }
 
   // A bare reference is validated as `{}` so a schema with required keys reports what is missing.
-  private validateAgainstItemSchema(kind: "settings" | "args", schema: Schema | undefined, value: unknown, path: string, owner: string): void {
+  private validateAgainstItemSchema(
+    kind: "settings" | "args",
+    schema: Schema | undefined,
+    value: unknown,
+    path: string,
+    owner: string,
+  ): void {
     if (schema === undefined) {
       if (value !== undefined) this.issues.error(`${kind}.unexpected`, path, `${owner} takes no ${kind}.`);
       return;
@@ -352,7 +458,8 @@ class ReferenceChecker {
     const result = z.safeParse(schema, value ?? {});
     if (!result.success) {
       for (const issue of result.error.issues) {
-        const message = value === undefined ? `${owner} requires ${kind}: ${issue.message}` : `${owner}: ${issue.message}`;
+        const message =
+          value === undefined ? `${owner} requires ${kind}: ${issue.message}` : `${owner}: ${issue.message}`;
         this.issues.error(`${kind}.invalid`, `${path}${pointer(issue.path)}`, message, { zod: issue.code });
       }
     }
@@ -378,22 +485,36 @@ class ScopeChecker {
     const { model } = this.spec;
     const providers = this.scope.config.providers ?? {};
     // A Spec may leave the choice open only when the Scope has just one profile; there is no magic name.
-    const profileName = model.providerProfile ?? (Object.keys(providers).length === 1 ? Object.keys(providers)[0] : undefined);
+    const profileName =
+      model.providerProfile ?? (Object.keys(providers).length === 1 ? Object.keys(providers)[0] : undefined);
     if (profileName === undefined) {
       const profiles = Object.keys(providers);
-      const hint = profiles.length === 0 ? "the Scope has no Provider profiles" : `one of ${profiles.map((p) => `"${p}"`).join(", ")}`;
+      const hint =
+        profiles.length === 0
+          ? "the Scope has no Provider profiles"
+          : `one of ${profiles.map((p) => `"${p}"`).join(", ")}`;
       this.issues.error("provider.profile.required", "/model", `Set model.providerProfile: ${hint}.`, { profiles });
       return;
     }
     const profile = providers[profileName];
     if (!profile) {
-      this.issues.error("provider.profile.unknown", "/model/providerProfile", `Provider profile "${profileName}" is not configured for this Scope.`, { profile: profileName });
+      this.issues.error(
+        "provider.profile.unknown",
+        "/model/providerProfile",
+        `Provider profile "${profileName}" is not configured for this Scope.`,
+        { profile: profileName },
+      );
       return;
     }
     const globs = profile.models ?? [`${profile.adapter}/*`];
     const check = (id: string, path: string) => {
       if (!globs.some((glob) => matchGlob(glob, id))) {
-        this.issues.error("provider.model.unsupported", path, `Provider profile "${profileName}" does not serve "${id}".`, { profile: profileName, model: id, models: globs });
+        this.issues.error(
+          "provider.model.unsupported",
+          path,
+          `Provider profile "${profileName}" does not serve "${id}".`,
+          { profile: profileName, model: id, models: globs },
+        );
       }
     };
     check(model.id, "/model/id");
@@ -415,7 +536,12 @@ class ScopeChecker {
     const timeout = this.spec.approvals?.timeout;
     const maxTimeout = ceilings.approvals?.timeout;
     if (timeout !== undefined && maxTimeout !== undefined && timeout > maxTimeout) {
-      this.issues.error("approvals.over-ceiling", "/approvals/timeout", `Approval timeout ${timeout} exceeds the Scope ceiling ${maxTimeout}.`, { requested: timeout, ceiling: maxTimeout });
+      this.issues.error(
+        "approvals.over-ceiling",
+        "/approvals/timeout",
+        `Approval timeout ${timeout} exceeds the Scope ceiling ${maxTimeout}.`,
+        { requested: timeout, ceiling: maxTimeout },
+      );
     }
   }
 
@@ -426,14 +552,25 @@ class ScopeChecker {
       if (value === undefined || max === undefined) continue;
       const at = `${path}/${key}`;
       const over = (requested: unknown, limit: unknown) =>
-        this.issues.error("capability.over-ceiling", at, `Requested ${JSON.stringify(requested)} exceeds the Scope ceiling ${JSON.stringify(limit)}.`, { requested, ceiling: limit });
+        this.issues.error(
+          "capability.over-ceiling",
+          at,
+          `Requested ${JSON.stringify(requested)} exceeds the Scope ceiling ${JSON.stringify(limit)}.`,
+          { requested, ceiling: limit },
+        );
       if (typeof max === "number") {
         if (typeof value === "number" && value > max) over(value, max);
       } else if (typeof max === "boolean") {
         if (value === true && !max) over(value, max);
       } else if (Array.isArray(max)) {
         (value as unknown[]).forEach((item, i) => {
-          if (!max.includes(item)) this.issues.error("capability.over-ceiling", `${at}/${i}`, `${JSON.stringify(item)} is outside the Scope ceiling ${JSON.stringify(max)}.`, { requested: item, ceiling: max });
+          if (!max.includes(item))
+            this.issues.error(
+              "capability.over-ceiling",
+              `${at}/${i}`,
+              `${JSON.stringify(item)} is outside the Scope ceiling ${JSON.stringify(max)}.`,
+              { requested: item, ceiling: max },
+            );
         });
       } else if (key === "tier") {
         if (value === "container" && max === "isolate") over(value, max);
@@ -446,7 +583,9 @@ class ScopeChecker {
   private delegates(): void {
     (this.spec.delegates ?? []).forEach((agentId, i) => {
       if (this.catalogue.agents.has(agentId) || this.scope.agents.some((agent) => agent.agentId === agentId)) return;
-      this.issues.error("ref.agent.unknown", `/delegates/${i}`, `No Agent "${agentId}" exists in this Scope.`, { agentId });
+      this.issues.error("ref.agent.unknown", `/delegates/${i}`, `No Agent "${agentId}" exists in this Scope.`, {
+        agentId,
+      });
     });
   }
 
@@ -460,10 +599,15 @@ class ScopeChecker {
         const mine = (properties[field] as MemoryProfileProperty | undefined)?.type;
         const theirs = property.type;
         if (mine === undefined || theirs === undefined || sameType(mine, theirs)) continue;
-        this.issues.error("memory.profile.conflict", `/memory/profile/properties/${field}`, `Memory profile field "${field}" is ${JSON.stringify(theirs)} in Agent "${other.agentId}".`, {
-          agentId: other.agentId,
-          type: theirs,
-        });
+        this.issues.error(
+          "memory.profile.conflict",
+          `/memory/profile/properties/${field}`,
+          `Memory profile field "${field}" is ${JSON.stringify(theirs)} in Agent "${other.agentId}".`,
+          {
+            agentId: other.agentId,
+            type: theirs,
+          },
+        );
       }
     }
   }

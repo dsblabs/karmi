@@ -10,6 +10,9 @@ export const COMPATIBILITY_DATE_FLOOR = "2026-08-04";
 export function assertCompatibilityBaseline(globals: object = globalThis): void {
   const process = (globals as { process?: { nextTick?: unknown } }).process;
   if (typeof process?.nextTick !== "function") {
-    throw new KarmiError("compatibility.date", `karmi requires compatibility_date >= ${COMPATIBILITY_DATE_FLOOR} (ADR-0002); set it in wrangler.jsonc.`);
+    throw new KarmiError(
+      "compatibility.date",
+      `karmi requires compatibility_date >= ${COMPATIBILITY_DATE_FLOOR} (ADR-0002); set it in wrangler.jsonc.`,
+    );
   }
 }

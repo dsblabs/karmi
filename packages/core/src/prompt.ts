@@ -10,7 +10,12 @@ import type { Tool } from "./tool.js";
 // actually in use, then the Harness sections in fixed order: instructions → tool instructions →
 // (deferred-tool index → skills → memory → knowledge → event, with their tickets).
 
-export async function evaluatePrompt(spec: AgentSpec, catalogue: Catalogue, ctx: FragmentContext, tools: readonly Tool[] = []): Promise<string | undefined> {
+export async function evaluatePrompt(
+  spec: AgentSpec,
+  catalogue: Catalogue,
+  ctx: FragmentContext,
+  tools: readonly Tool[] = [],
+): Promise<string | undefined> {
   const sections: string[] = [];
   for (const entry of spec.instructions) {
     if (entry.models !== undefined && !toList(entry.models).some((glob) => matchGlob(glob, ctx.model))) continue;
@@ -18,7 +23,8 @@ export async function evaluatePrompt(spec: AgentSpec, catalogue: Catalogue, ctx:
     if ("text" in entry) text = entry.text;
     else {
       const fragment = catalogue.fragments.get(entry.fragment);
-      if (!fragment) throw new KarmiError("ref.fragment.unknown", `Fragment "${entry.fragment}" is not in the Catalogue.`);
+      if (!fragment)
+        throw new KarmiError("ref.fragment.unknown", `Fragment "${entry.fragment}" is not in the Catalogue.`);
       // Validated at put; parsed again so the Fragment sees its schema's defaults and transforms.
       const args = fragment.args ? z.parse(fragment.args, entry.args ?? {}) : undefined;
       text = await fragment.render(ctx, args);

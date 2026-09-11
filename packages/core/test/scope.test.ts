@@ -6,7 +6,13 @@ import { karmi } from "./worker.js";
 let n = 0;
 const fresh = () => karmi.scope(`s${++n}`);
 
-const spec = (patch: Partial<AgentSpec> = {}): AgentSpec => ({ agentId: "concierge", name: "Concierge", instructions: [{ text: "Help." }], model: { id: "anthropic/claude-sonnet-5" }, ...patch });
+const spec = (patch: Partial<AgentSpec> = {}): AgentSpec => ({
+  agentId: "concierge",
+  name: "Concierge",
+  instructions: [{ text: "Help." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  ...patch,
+});
 
 describe("scope.config", () => {
   it("starts every Scope at revision 0 with an empty document", async () => {
@@ -16,21 +22,35 @@ describe("scope.config", () => {
   it("stores each set as the next revision", async () => {
     const scope = fresh();
     expect(await scope.config.set({ ceilings: { longRunning: { maxSteps: 50 } } })).toEqual({ revision: 1 });
-    expect(await scope.config.set({ ceilings: { longRunning: { maxSteps: 40 } } }, { ifRevision: 1 })).toEqual({ revision: 2 });
-    expect(await scope.config.get()).toEqual({ revision: 2, document: { ceilings: { longRunning: { maxSteps: 40 } } } });
+    expect(await scope.config.set({ ceilings: { longRunning: { maxSteps: 40 } } }, { ifRevision: 1 })).toEqual({
+      revision: 2,
+    });
+    expect(await scope.config.get()).toEqual({
+      revision: 2,
+      document: { ceilings: { longRunning: { maxSteps: 40 } } },
+    });
   });
 
   it("refuses a set against a stale revision", async () => {
     const scope = fresh();
     await scope.config.set({});
-    await expect(scope.config.set({}, { ifRevision: 0 })).rejects.toThrowError(new KarmiError("config.conflict", "Scope config is at revision 1, not 0."));
+    await expect(scope.config.set({}, { ifRevision: 0 })).rejects.toThrowError(
+      new KarmiError("config.conflict", "Scope config is at revision 1, not 0."),
+    );
     expect((await scope.config.get()).revision).toBe(1);
   });
 
   it("rejects secret values and unknown adapters without writing a revision", async () => {
     const scope = fresh();
-    await expect(scope.config.set({ providers: { default: { adapter: "anthropic", apiKey: "sk-ant" } } } as never)).rejects.toMatchObject({ code: "config.secret-value" });
-    await expect(scope.config.set({ providers: { default: { adapter: "nope" } } })).rejects.toThrowError(new KarmiError("config.invalid", 'Scope config is invalid at "/providers/default/adapter": no Provider "nope" is registered in createKarmi({ providers }).'));
+    await expect(
+      scope.config.set({ providers: { default: { adapter: "anthropic", apiKey: "sk-ant" } } } as never),
+    ).rejects.toMatchObject({ code: "config.secret-value" });
+    await expect(scope.config.set({ providers: { default: { adapter: "nope" } } })).rejects.toThrowError(
+      new KarmiError(
+        "config.invalid",
+        'Scope config is invalid at "/providers/default/adapter": no Provider "nope" is registered in createKarmi({ providers }).',
+      ),
+    );
     expect((await scope.config.get()).revision).toBe(0);
   });
 });
@@ -47,15 +67,23 @@ describe("scope.agents", () => {
   it("keeps every version and serves an old one on request", async () => {
     const scope = fresh();
     await scope.agents.put(spec({ name: "One" }));
-    expect(await scope.agents.put(spec({ name: "Two" }), { ifVersion: 1 })).toEqual({ agentId: "concierge", version: 2 });
+    expect(await scope.agents.put(spec({ name: "Two" }), { ifVersion: 1 })).toEqual({
+      agentId: "concierge",
+      version: 2,
+    });
     expect((await scope.agents.get("concierge")).spec.name).toBe("Two");
     expect((await scope.agents.get("concierge", { version: 1 })).spec.name).toBe("One");
-    expect(await scope.agents.history("concierge")).toEqual([expect.objectContaining({ version: 1 }), expect.objectContaining({ version: 2 })]);
+    expect(await scope.agents.history("concierge")).toEqual([
+      expect.objectContaining({ version: 1 }),
+      expect.objectContaining({ version: 2 }),
+    ]);
   });
 
   it("refuses a put against a stale version, with 0 meaning create-only", async () => {
     const scope = fresh();
-    await expect(scope.agents.put(spec(), { ifVersion: 1 })).rejects.toThrowError(new KarmiError("agent.conflict", 'Agent "concierge" is at version 0, not 1.'));
+    await expect(scope.agents.put(spec(), { ifVersion: 1 })).rejects.toThrowError(
+      new KarmiError("agent.conflict", 'Agent "concierge" is at version 0, not 1.'),
+    );
     await scope.agents.put(spec(), { ifVersion: 0 });
     await expect(scope.agents.put(spec(), { ifVersion: 0 })).rejects.toMatchObject({ code: "agent.conflict" });
   });
@@ -65,25 +93,43 @@ describe("scope.agents", () => {
     const bad = spec({ tools: ["nope"] });
     const error = await scope.agents.put(bad).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(SpecInvalidError);
-    expect((error as SpecInvalidError).result.issues).toEqual([expect.objectContaining({ code: "ref.tool.unknown", path: "/tools/0/name" })]);
+    expect((error as SpecInvalidError).result.issues).toEqual([
+      expect.objectContaining({ code: "ref.tool.unknown", path: "/tools/0/name" }),
+    ]);
     expect(await scope.agents.validate(bad)).toEqual((error as SpecInvalidError).result);
     await expect(scope.agents.get("concierge")).rejects.toMatchObject({ code: "agent.notFound" });
   });
 
   it("validates against the Scope's config merged under the Deployment defaults", async () => {
     const scope = fresh();
-    await scope.config.set({ ceilings: { longRunning: { maxSteps: 10 } }, providers: { default: { adapter: "fake", models: ["anthropic/*"] } } });
-    await expect(scope.agents.put(spec({ capabilities: { longRunning: { maxSteps: 100 } } }))).rejects.toMatchObject({ code: "agent.spec.invalid" });
-    await expect(scope.agents.put(spec({ model: { id: "openai/gpt-5" } }))).rejects.toMatchObject({ result: { issues: [expect.objectContaining({ code: "provider.model.unsupported" })] } });
+    await scope.config.set({
+      ceilings: { longRunning: { maxSteps: 10 } },
+      providers: { default: { adapter: "fake", models: ["anthropic/*"] } },
+    });
+    await expect(scope.agents.put(spec({ capabilities: { longRunning: { maxSteps: 100 } } }))).rejects.toMatchObject({
+      code: "agent.spec.invalid",
+    });
+    await expect(scope.agents.put(spec({ model: { id: "openai/gpt-5" } }))).rejects.toMatchObject({
+      result: { issues: [expect.objectContaining({ code: "provider.model.unsupported" })] },
+    });
     await scope.config.set({ providers: { default: { adapter: "fake", models: ["*"] } } });
-    await expect(scope.agents.put(spec({ model: { id: "openai/gpt-5" } }))).resolves.toEqual({ agentId: "concierge", version: 1 });
+    await expect(scope.agents.put(spec({ model: { id: "openai/gpt-5" } }))).resolves.toEqual({
+      agentId: "concierge",
+      version: 1,
+    });
   });
 
   it("validates the Memory profile as a union across the Scope's Agents", async () => {
     const scope = fresh();
     await scope.agents.put(spec({ agentId: "a", memory: { profile: { properties: { tier: { type: "number" } } } } }));
-    await expect(scope.agents.put(spec({ agentId: "b", memory: { profile: { properties: { tier: { type: "string" } } } } }))).rejects.toMatchObject({
-      result: { issues: [expect.objectContaining({ code: "memory.profile.conflict", context: { agentId: "a", type: "number" } })] },
+    await expect(
+      scope.agents.put(spec({ agentId: "b", memory: { profile: { properties: { tier: { type: "string" } } } } })),
+    ).rejects.toMatchObject({
+      result: {
+        issues: [
+          expect.objectContaining({ code: "memory.profile.conflict", context: { agentId: "a", type: "number" } }),
+        ],
+      },
     });
   });
 
@@ -97,7 +143,9 @@ describe("scope.agents", () => {
     ]);
     await scope.agents.delete("a");
     expect((await scope.agents.list()).map((a) => a.agentId)).toEqual(["b"]);
-    await expect(scope.agents.get("a")).rejects.toThrowError(new KarmiError("agent.deleted", 'Agent "a" has been deleted.'));
+    await expect(scope.agents.get("a")).rejects.toThrowError(
+      new KarmiError("agent.deleted", 'Agent "a" has been deleted.'),
+    );
     expect(await scope.agents.history("a")).toHaveLength(1);
     await expect(scope.agents.delete("zzz")).rejects.toMatchObject({ code: "agent.notFound" });
   });

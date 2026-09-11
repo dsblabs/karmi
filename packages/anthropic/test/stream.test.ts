@@ -15,7 +15,8 @@ import streamError from "./fixtures/stream-error.sse?raw";
 import { collect, request, serve } from "./helpers.js";
 
 const provider = anthropic({ apiKey: "sk-test" });
-const parts = (events: Awaited<ReturnType<typeof collect>>) => events.flatMap((event) => (event.type === "part" ? [event] : []));
+const parts = (events: Awaited<ReturnType<typeof collect>>) =>
+  events.flatMap((event) => (event.type === "part" ? [event] : []));
 const end = (events: Awaited<ReturnType<typeof collect>>) => events.find((event) => event.type === "message.end");
 
 describe("stream mapping", () => {
@@ -26,7 +27,11 @@ describe("stream mapping", () => {
       { type: "delta", index: 0, kind: "text", text: "Hello" },
       { type: "delta", index: 0, kind: "text", text: ", world" },
       { type: "part", index: 0, block: { type: "text", text: "Hello, world" } },
-      { type: "message.end", stopReason: "end_turn", usage: { input: 25, output: 7, cacheRead: 100, cacheWrite: 12, cacheWrite1h: 8 } },
+      {
+        type: "message.end",
+        stopReason: "end_turn",
+        usage: { input: 25, output: 7, cacheRead: 100, cacheWrite: 12, cacheWrite1h: 8 },
+      },
     ]);
   });
 
@@ -52,7 +57,11 @@ describe("stream mapping", () => {
       { type: "delta", index: 1, kind: "tool_input", text: '"Oslo"}' },
     ]);
     expect(parts(events).slice(1)).toEqual([
-      { type: "part", index: 1, block: { type: "tool_call", id: "toolu_01", name: "weather", input: { city: "Oslo" } } },
+      {
+        type: "part",
+        index: 1,
+        block: { type: "tool_call", id: "toolu_01", name: "weather", input: { city: "Oslo" } },
+      },
       { type: "part", index: 2, block: { type: "tool_call", id: "toolu_02", name: "lookup", input: {} } },
     ]);
     expect(end(events)).toMatchObject({ stopReason: "tool_use" });
@@ -60,9 +69,31 @@ describe("stream mapping", () => {
 
   it("joins a server tool call and its byte-exact result into one server_tool part and counts the call", async () => {
     const events = await collect(provider, request(), serve({ sse: serverTool }));
-    const raw = { type: "web_search_tool_result", tool_use_id: "srvtoolu_01", content: [{ type: "web_search_result", title: "karmi", url: "https://example.com/karmi", encrypted_content: "ENC1", page_age: null }] };
+    const raw = {
+      type: "web_search_tool_result",
+      tool_use_id: "srvtoolu_01",
+      content: [
+        {
+          type: "web_search_result",
+          title: "karmi",
+          url: "https://example.com/karmi",
+          encrypted_content: "ENC1",
+          page_age: null,
+        },
+      ],
+    };
     expect(parts(events)).toEqual([
-      { type: "part", index: 0, block: { type: "server_tool", id: "srvtoolu_01", name: "web_search", input: { query: "karmi framework" }, result: { raw, summary: "karmi — https://example.com/karmi" } } },
+      {
+        type: "part",
+        index: 0,
+        block: {
+          type: "server_tool",
+          id: "srvtoolu_01",
+          name: "web_search",
+          input: { query: "karmi framework" },
+          result: { raw, summary: "karmi — https://example.com/karmi" },
+        },
+      },
       { type: "part", index: 2, block: { type: "text", text: "Found it." } },
     ]);
     expect(end(events)).toMatchObject({ usage: { serverToolCalls: 1 } });
@@ -71,60 +102,166 @@ describe("stream mapping", () => {
   it("carries tool_search results with their tool_reference blocks byte-exact, then the deferred tool call", async () => {
     const events = await collect(provider, request(), serve({ sse: toolSearch }));
     expect(parts(events)).toEqual([
-      { type: "part", index: 0, block: { type: "server_tool", id: "srvtoolu_02", name: "tool_search_tool_regex", input: { query: "weather" }, result: { raw: { type: "tool_search_tool_result", tool_use_id: "srvtoolu_02", content: { type: "tool_search_tool_search_result", tool_references: [{ type: "tool_reference", tool_name: "get_weather" }] } }, summary: expect.any(String) } } },
-      { type: "part", index: 2, block: { type: "tool_call", id: "toolu_03", name: "get_weather", input: { city: "Oslo" } } },
+      {
+        type: "part",
+        index: 0,
+        block: {
+          type: "server_tool",
+          id: "srvtoolu_02",
+          name: "tool_search_tool_regex",
+          input: { query: "weather" },
+          result: {
+            raw: {
+              type: "tool_search_tool_result",
+              tool_use_id: "srvtoolu_02",
+              content: {
+                type: "tool_search_tool_search_result",
+                tool_references: [{ type: "tool_reference", tool_name: "get_weather" }],
+              },
+            },
+            summary: expect.any(String),
+          },
+        },
+      },
+      {
+        type: "part",
+        index: 2,
+        block: { type: "tool_call", id: "toolu_03", name: "get_weather", input: { city: "Oslo" } },
+      },
     ]);
   });
 
   it("lands a compaction block as karmi's compaction part with the raw block for replay", async () => {
     const events = await collect(provider, request(), serve({ sse: compaction }));
-    expect(parts(events)[0]).toEqual({ type: "part", index: 0, block: { type: "compaction", summary: "The user asked about the weather.", raw: { type: "compaction", content: "The user asked about the weather.", encrypted_content: "ENC_SUMMARY" } } });
+    expect(parts(events)[0]).toEqual({
+      type: "part",
+      index: 0,
+      block: {
+        type: "compaction",
+        summary: "The user asked about the weather.",
+        raw: { type: "compaction", content: "The user asked about the weather.", encrypted_content: "ENC_SUMMARY" },
+      },
+    });
     expect(events.some((event) => event.type === "delta" && event.index === 0)).toBe(false);
   });
 
   it("reports the served model on a fallback, logs the hop and keeps the fallback block as a provider part", async () => {
     const hops: unknown[] = [];
-    const logger = { debug() {}, info: (message: string, fields?: unknown) => void hops.push([message, fields]), warn() {}, error() {} };
+    const logger = {
+      debug() {},
+      info: (message: string, fields?: unknown) => void hops.push([message, fields]),
+      warn() {},
+      error() {},
+    };
     const events = await collect(provider, request(), { fetch: serve({ sse: fallback }).fetch, logger });
     expect(events[0]).toEqual({ type: "message.start", model: "claude-haiku-4-5", responseId: "msg_01" });
-    expect(parts(events)[0]).toEqual({ type: "part", index: 0, block: { type: "provider", raw: { type: "fallback", from: { model: "claude-sonnet-5" }, to: { model: "claude-haiku-4-5" }, trigger: { type: "refusal", stop_details: { type: "refusal", reason: "classifier" } } } } });
-    expect(hops).toEqual([["provider fallback", { from: "claude-sonnet-5", to: "claude-haiku-4-5", trigger: { type: "refusal", stop_details: { type: "refusal", reason: "classifier" } } }]]);
+    expect(parts(events)[0]).toEqual({
+      type: "part",
+      index: 0,
+      block: {
+        type: "provider",
+        raw: {
+          type: "fallback",
+          from: { model: "claude-sonnet-5" },
+          to: { model: "claude-haiku-4-5" },
+          trigger: { type: "refusal", stop_details: { type: "refusal", reason: "classifier" } },
+        },
+      },
+    });
+    expect(hops).toEqual([
+      [
+        "provider fallback",
+        {
+          from: "claude-sonnet-5",
+          to: "claude-haiku-4-5",
+          trigger: { type: "refusal", stop_details: { type: "refusal", reason: "classifier" } },
+        },
+      ],
+    ]);
   });
 
   it("keeps MCP connector blocks as provider parts, with the call's streamed input filled in", async () => {
     const events = await collect(provider, request(), serve({ sse: mcp }));
     expect(parts(events)).toEqual([
-      { type: "part", index: 0, block: { type: "provider", raw: { type: "mcp_tool_use", id: "mcptoolu_01", name: "echo", server_name: "demo", input: { text: "hi" } } } },
-      { type: "part", index: 1, block: { type: "provider", raw: { type: "mcp_tool_result", tool_use_id: "mcptoolu_01", is_error: false, content: [{ type: "text", text: "hi", citations: null }] } } },
+      {
+        type: "part",
+        index: 0,
+        block: {
+          type: "provider",
+          raw: { type: "mcp_tool_use", id: "mcptoolu_01", name: "echo", server_name: "demo", input: { text: "hi" } },
+        },
+      },
+      {
+        type: "part",
+        index: 1,
+        block: {
+          type: "provider",
+          raw: {
+            type: "mcp_tool_result",
+            tool_use_id: "mcptoolu_01",
+            is_error: false,
+            content: [{ type: "text", text: "hi", citations: null }],
+          },
+        },
+      },
       { type: "part", index: 2, block: { type: "text", text: "Echoed." } },
     ]);
   });
 
   it("maps refusal with its stop_details and model_context_window_exceeded", async () => {
-    expect(end(await collect(provider, request(), serve({ sse: refusal })))).toEqual({ type: "message.end", stopReason: "refusal", stopDetails: { type: "refusal", reason: "classifier", fallback_credit_token: "tok_1" }, usage: { input: 25, output: 1, cacheRead: 100, cacheWrite: 12, cacheWrite1h: 8 } });
-    expect(end(await collect(provider, request(), serve({ sse: contextWindow })))).toMatchObject({ stopReason: "context_window_exceeded" });
+    expect(end(await collect(provider, request(), serve({ sse: refusal })))).toEqual({
+      type: "message.end",
+      stopReason: "refusal",
+      stopDetails: { type: "refusal", reason: "classifier", fallback_credit_token: "tok_1" },
+      usage: { input: 25, output: 1, cacheRead: 100, cacheWrite: 12, cacheWrite1h: 8 },
+    });
+    expect(end(await collect(provider, request(), serve({ sse: contextWindow })))).toMatchObject({
+      stopReason: "context_window_exceeded",
+    });
   });
 
   it("ends a stream cut before message_stop with a retryable network error", async () => {
     const events = await collect(provider, request(), serve({ sse: truncated }));
-    expect(events.at(-1)).toEqual({ type: "error", error: { code: "network", message: "The stream ended before message_stop.", retryable: true } });
+    expect(events.at(-1)).toEqual({
+      type: "error",
+      error: { code: "network", message: "The stream ended before message_stop.", retryable: true },
+    });
   });
 
   it("classifies a mid-stream error event by its Anthropic type, keeping what streamed before it", async () => {
     const events = await collect(provider, request(), serve({ sse: streamError }));
     expect(parts(events)).toEqual([{ type: "part", index: 0, block: { type: "text", text: "Partial" } }]);
-    expect(events.at(-1)).toMatchObject({ type: "error", error: { code: "unavailable", message: "Overloaded", retryable: true } });
+    expect(events.at(-1)).toMatchObject({
+      type: "error",
+      error: { code: "unavailable", message: "Overloaded", retryable: true },
+    });
   });
 
   it("passes every SSE event through as raw when asked", async () => {
-    const events = await collect(provider, request({ providerOptions: { anthropic: { raw: true } } }), serve({ sse: text }));
-    expect(events.filter((event) => event.type === "raw").map((event) => (event as { raw: { type: string } }).raw.type)).toEqual(["message_start", "content_block_start", "content_block_delta", "content_block_delta", "content_block_stop", "message_delta", "message_stop"]);
+    const events = await collect(
+      provider,
+      request({ providerOptions: { anthropic: { raw: true } } }),
+      serve({ sse: text }),
+    );
+    expect(
+      events.filter((event) => event.type === "raw").map((event) => (event as { raw: { type: string } }).raw.type),
+    ).toEqual([
+      "message_start",
+      "content_block_start",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_stop",
+      "message_delta",
+      "message_stop",
+    ]);
   });
 
   it("ends with an aborted error when the signal fires", async () => {
     const controller = new AbortController();
     controller.abort();
     const events = await collect(provider, request(), { fetch: serve({ sse: text }).fetch, signal: controller.signal });
-    expect(events).toEqual([{ type: "error", error: { code: "aborted", message: "The call was aborted.", retryable: false } }]);
+    expect(events).toEqual([
+      { type: "error", error: { code: "aborted", message: "The call was aborted.", retryable: false } },
+    ]);
   });
 });

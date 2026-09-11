@@ -13,7 +13,10 @@ export interface FragmentContext {
   now: Date;
 }
 
-export type FragmentRender<Args> = (ctx: FragmentContext, args: Args) => string | null | undefined | Promise<string | null | undefined>;
+export type FragmentRender<Args> = (
+  ctx: FragmentContext,
+  args: Args,
+) => string | null | undefined | Promise<string | null | undefined>;
 
 export interface FragmentInput<Args extends Schema | undefined> {
   name: string;
@@ -31,7 +34,9 @@ export interface Fragment<Args extends Schema | undefined = Schema | undefined> 
   readonly render: FragmentRender<Output<Args>>;
 }
 
-export function defineFragment<Args extends Schema | undefined = undefined>(input: FragmentInput<Args>): Fragment<Args> {
+export function defineFragment<Args extends Schema | undefined = undefined>(
+  input: FragmentInput<Args>,
+): Fragment<Args> {
   assertName("fragment", input.name);
   return Object.freeze({ kind: "fragment", ...input });
 }

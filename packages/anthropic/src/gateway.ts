@@ -9,7 +9,11 @@ export interface GatewaySettings {
   headers: Record<string, string>;
 }
 
-export function gatewaySettings(gateway: GatewayConfig, token: string | undefined, attribution: CallAttribution | undefined): GatewaySettings {
+export function gatewaySettings(
+  gateway: GatewayConfig,
+  token: string | undefined,
+  attribution: CallAttribution | undefined,
+): GatewaySettings {
   const headers: Record<string, string> = {};
   if (token) headers["cf-aig-authorization"] = `Bearer ${token}`;
   const slot = Object.entries(gateway.metadata ?? {}).slice(0, 1);

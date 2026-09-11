@@ -8,7 +8,11 @@ import type { ToolAnnotations } from "./tool.js";
 
 export type PolicyEffect = PolicyRule["effect"];
 
-export function evaluatePolicy(rules: readonly PolicyRule[], tool: { name: string; annotations: ToolAnnotations }, remembered?: ReadonlySet<string>): PolicyEffect {
+export function evaluatePolicy(
+  rules: readonly PolicyRule[],
+  tool: { name: string; annotations: ToolAnnotations },
+  remembered?: ReadonlySet<string>,
+): PolicyEffect {
   if (remembered?.has(tool.name)) return "allow";
   for (const rule of rules) {
     if (matchesRule(rule, tool)) return rule.effect;
@@ -18,7 +22,8 @@ export function evaluatePolicy(rules: readonly PolicyRule[], tool: { name: strin
 
 function matchesRule(rule: PolicyRule, tool: { name: string; annotations: ToolAnnotations }): boolean {
   const { tool: globs, annotations } = rule.match;
-  if (globs !== undefined && !(Array.isArray(globs) ? globs : [globs]).some((glob) => matchGlob(glob, tool.name))) return false;
+  if (globs !== undefined && !(Array.isArray(globs) ? globs : [globs]).some((glob) => matchGlob(glob, tool.name)))
+    return false;
   if (annotations !== undefined) {
     for (const [key, value] of Object.entries(annotations)) {
       if (value !== undefined && tool.annotations[key as keyof ToolAnnotations] !== value) return false;

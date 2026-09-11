@@ -1,6 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages";
-import { retry, type Provider, type ProviderCallOptions, type ProviderConfig, type ProviderError, type ProviderEvent } from "@karmi/core";
+import {
+  retry,
+  type Provider,
+  type ProviderCallOptions,
+  type ProviderConfig,
+  type ProviderError,
+  type ProviderEvent,
+} from "@karmi/core";
 import { toProviderError } from "./errors.js";
 import { gatewaySettings } from "./gateway.js";
 import { capabilities } from "./models.js";
@@ -40,20 +47,41 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
   async function client(config: ProviderConfig, call: ProviderCallOptions): Promise<Client> {
     const byok = config.gateway?.byok === true;
     const apiKey = byok ? undefined : config.credential ? await resolve(config.credential) : options.apiKey;
-    if (!byok && !apiKey) throw new ProviderFailure({ code: "auth", message: config.credential ? `Credential "${config.credential}" did not resolve.` : "The Provider profile names no credential and the adapter has no apiKey.", retryable: false });
+    if (!byok && !apiKey)
+      throw new ProviderFailure({
+        code: "auth",
+        message: config.credential
+          ? `Credential "${config.credential}" did not resolve.`
+          : "The Provider profile names no credential and the adapter has no apiKey.",
+        retryable: false,
+      });
     const headers: Record<string, string | null> = {};
-    for (const [name, value] of Object.entries(config.headers ?? {})) if (name.toLowerCase() !== "anthropic-beta") headers[name] = value;
+    for (const [name, value] of Object.entries(config.headers ?? {}))
+      if (name.toLowerCase() !== "anthropic-beta") headers[name] = value;
     let baseURL = config.baseUrl;
     if (config.gateway) {
       const token = config.gateway.credential ? await resolve(config.gateway.credential) : undefined;
-      if (config.gateway.credential && !token) throw new ProviderFailure({ code: "auth", message: `Gateway credential "${config.gateway.credential}" did not resolve.`, retryable: false });
+      if (config.gateway.credential && !token)
+        throw new ProviderFailure({
+          code: "auth",
+          message: `Gateway credential "${config.gateway.credential}" did not resolve.`,
+          retryable: false,
+        });
       const gateway = gatewaySettings(config.gateway, token, call.attribution);
       baseURL = gateway.baseURL;
       Object.assign(headers, gateway.headers);
     }
     // With the key held by the gateway, no provider auth header may leave the Worker at all.
     if (byok) Object.assign(headers, { "x-api-key": null, authorization: null });
-    return new Client({ apiKey: apiKey ?? null, authToken: null, baseURL: baseURL ?? null, defaultHeaders: headers, fetch: call.fetch, maxRetries: 0, timeout: config.gateway?.timeoutMs ?? DEFAULT_TIMEOUT_MS });
+    return new Client({
+      apiKey: apiKey ?? null,
+      authToken: null,
+      baseURL: baseURL ?? null,
+      defaultHeaders: headers,
+      fetch: call.fetch,
+      maxRetries: 0,
+      timeout: config.gateway?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    });
   }
 
   return {
@@ -66,7 +94,10 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
         const params = buildParams(request);
         // Retrying is only safe before the first byte: karmi retries the connection, never a stream.
         const attempts = request.config.gateway?.retry ? 1 : 3;
-        const { data, response } = await retry(() => api.beta.messages.create({ ...params, stream: true }, { signal }).withResponse(), { attempts, signal, retryable: (error) => toProviderError(error).retryable });
+        const { data, response } = await retry(
+          () => api.beta.messages.create({ ...params, stream: true }, { signal }).withResponse(),
+          { attempts, signal, retryable: (error) => toProviderError(error).retryable },
+        );
         events = data;
         const logId = response.headers.get("cf-aig-log-id");
         if (logId && request.config.gateway) gateway = { provider: "cloudflare", id: logId };
@@ -83,7 +114,9 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
     async countTokens(request, call) {
       try {
         const api = await client(request.config, call);
-        const { input_tokens } = await api.beta.messages.countTokens(countTokensParams(request), { signal: call.signal });
+        const { input_tokens } = await api.beta.messages.countTokens(countTokensParams(request), {
+          signal: call.signal,
+        });
         return { tokens: input_tokens };
       } catch (error) {
         return { error: failure(error) };

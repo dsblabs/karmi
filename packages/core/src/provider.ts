@@ -21,7 +21,8 @@ export type ContentBlock =
   /** Anything else a provider emits that it needs back verbatim; never crosses providers. */
   | { type: "provider"; raw: unknown };
 
-export type StopReason = "end_turn" | "max_tokens" | "tool_use" | "pause_turn" | "refusal" | "context_window_exceeded" | "error" | "aborted";
+export type StopReason =
+  "end_turn" | "max_tokens" | "tool_use" | "pause_turn" | "refusal" | "context_window_exceeded" | "error" | "aborted";
 
 export type Message =
   /** A mid-conversation system message; the Prompt itself travels as `ProviderRequest.system`. */
@@ -73,13 +74,27 @@ export interface ProviderRequest {
   tools?: ToolDefinition[];
   toolChoice?: "auto" | "any" | "none" | { name: string };
   parallelToolCalls?: boolean;
-  params?: { temperature?: number; topP?: number; maxOutputTokens?: number; reasoning?: "off" | "low" | "medium" | "high" };
+  params?: {
+    temperature?: number;
+    topP?: number;
+    maxOutputTokens?: number;
+    reasoning?: "off" | "low" | "medium" | "high";
+  };
   /** Adapter-namespaced escape hatch, already merged over `config.providerOptions`. */
   providerOptions?: Record<string, unknown>;
 }
 
 /** Codes line up with the Provider-profile fallback triggers (`fallbackOn`). */
-export type ProviderErrorCode = "auth" | "quota" | "rate_limit" | "unavailable" | "invalid_request" | "context_window_exceeded" | "network" | "aborted" | "unknown";
+export type ProviderErrorCode =
+  | "auth"
+  | "quota"
+  | "rate_limit"
+  | "unavailable"
+  | "invalid_request"
+  | "context_window_exceeded"
+  | "network"
+  | "aborted"
+  | "unknown";
 
 export interface ProviderError {
   code: ProviderErrorCode;
@@ -129,6 +144,9 @@ export interface CallAttribution {
 /** A model-provider adapter, registered by name in `createKarmi({ providers })` and chosen by a Provider profile. */
 export interface Provider {
   stream(request: ProviderRequest, options: ProviderCallOptions): AsyncIterable<ProviderEvent>;
-  countTokens?(request: ProviderRequest, options: ProviderCallOptions): Promise<{ tokens: number } | { error: ProviderError }>;
+  countTokens?(
+    request: ProviderRequest,
+    options: ProviderCallOptions,
+  ): Promise<{ tokens: number } | { error: ProviderError }>;
   capabilities(modelId: string): ModelCapabilities;
 }

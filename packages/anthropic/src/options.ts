@@ -1,5 +1,10 @@
 import type { ProviderRequest } from "@karmi/core";
-import type { BetaContextManagementConfig, BetaRequestMCPServerURLDefinition, BetaThinkingConfigParam, BetaToolUnion } from "@anthropic-ai/sdk/resources/beta/messages/messages";
+import type {
+  BetaContextManagementConfig,
+  BetaRequestMCPServerURLDefinition,
+  BetaThinkingConfigParam,
+  BetaToolUnion,
+} from "@anthropic-ai/sdk/resources/beta/messages/messages";
 
 /** The `providerOptions.anthropic` escape hatch: forwarded to the Messages API, betas inferred where the feature needs one. */
 export interface AnthropicOptions {

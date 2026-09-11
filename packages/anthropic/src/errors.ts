@@ -5,12 +5,25 @@ import type { ProviderError, ProviderErrorCode } from "@karmi/core";
 // Harness's fallback rotation, so it says what the status means, not how it was transported.
 
 export function toProviderError(error: unknown): ProviderError {
-  if (error instanceof APIUserAbortError || (error instanceof Error && error.name === "AbortError")) return { code: "aborted", message: "The call was aborted.", retryable: false };
-  if (error instanceof APIConnectionError) return { code: "network", message: error.message, retryable: true, ...(error.cause !== undefined && { raw: String(error.cause) }) };
+  if (error instanceof APIUserAbortError || (error instanceof Error && error.name === "AbortError"))
+    return { code: "aborted", message: "The call was aborted.", retryable: false };
+  if (error instanceof APIConnectionError)
+    return {
+      code: "network",
+      message: error.message,
+      retryable: true,
+      ...(error.cause !== undefined && { raw: String(error.cause) }),
+    };
   if (error instanceof APIError) {
     const body = error.error as { error?: { code?: string; type?: string; message?: string } } | undefined;
     const code = classify(error.status, body?.error?.type, body?.error?.code, error.message);
-    return { code, message: body?.error?.message ?? error.message, retryable: RETRYABLE.has(code), ...(error.status !== undefined && { status: error.status }), ...(error.error !== undefined && { raw: error.error }) };
+    return {
+      code,
+      message: body?.error?.message ?? error.message,
+      retryable: RETRYABLE.has(code),
+      ...(error.status !== undefined && { status: error.status }),
+      ...(error.error !== undefined && { raw: error.error }),
+    };
   }
   return { code: "unknown", message: error instanceof Error ? error.message : String(error), retryable: false };
 }
@@ -30,7 +43,12 @@ const BY_TYPE: Record<string, ProviderErrorCode> = {
   request_too_large: "invalid_request",
 };
 
-function classify(status: number | undefined, type: string | undefined, code: string | undefined, message: string): ProviderErrorCode {
+function classify(
+  status: number | undefined,
+  type: string | undefined,
+  code: string | undefined,
+  message: string,
+): ProviderErrorCode {
   if (code?.startsWith("egress.")) return "invalid_request";
   if (/context window|prompt is too long|too many tokens/i.test(message)) return "context_window_exceeded";
   if (type && BY_TYPE[type]) return BY_TYPE[type];

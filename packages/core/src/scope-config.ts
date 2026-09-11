@@ -1,5 +1,12 @@
 import * as z from "zod/mini";
-import { CapabilityLimitSchemas, name, PolicyRuleSchema, positiveInt, ProviderToolNameSchema, ScriptTierSchema } from "./agent-spec.js";
+import {
+  CapabilityLimitSchemas,
+  name,
+  PolicyRuleSchema,
+  positiveInt,
+  ProviderToolNameSchema,
+  ScriptTierSchema,
+} from "./agent-spec.js";
 import type { PolicyRule, ProviderToolName } from "./agent.js";
 import { KarmiError } from "./errors.js";
 import { toJsonSchema, type JsonSchema } from "./schema.js";
@@ -12,7 +19,9 @@ import { pointer } from "./validate.js";
 const CREDENTIAL_REF = /^(scope|deployment):[A-Za-z0-9_-]{1,64}$/;
 const SECRET_LOOKING_KEY = /key|secret|token|password|authorization/i;
 
-const credentialRef = z.string().check(z.regex(CREDENTIAL_REF, "must be scope:<name> or deployment:<name>, never a value"));
+const credentialRef = z
+  .string()
+  .check(z.regex(CREDENTIAL_REF, "must be scope:<name> or deployment:<name>, never a value"));
 
 // Cloudflare AI Gateway is configuration under any adapter: a URL plus `cf-aig-*` headers. Bounds are the gateway's own.
 const GatewaySchema = z.strictObject({
@@ -24,9 +33,21 @@ const GatewaySchema = z.strictObject({
   /** The provider key is stored in the gateway, so the profile carries none. */
   byok: z.optional(z.boolean()),
   /** `cf-aig-metadata` entries beside karmi's own four (scope, agent, thread, turn); an adapter sends the first one. */
-  metadata: z.optional(z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).check(z.refine((metadata) => Object.keys(metadata).length <= 5, "at most 5 entries"))),
-  cache: z.optional(z.strictObject({ ttl: z.optional(positiveInt), skip: z.optional(z.boolean()), key: z.optional(z.string()) })),
-  retry: z.optional(z.strictObject({ maxAttempts: z.optional(z.int().check(z.minimum(1), z.maximum(5))), delayMs: z.optional(z.int().check(z.minimum(0), z.maximum(5000))), backoff: z.optional(z.enum(["constant", "linear", "exponential"])) })),
+  metadata: z.optional(
+    z
+      .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+      .check(z.refine((metadata) => Object.keys(metadata).length <= 5, "at most 5 entries")),
+  ),
+  cache: z.optional(
+    z.strictObject({ ttl: z.optional(positiveInt), skip: z.optional(z.boolean()), key: z.optional(z.string()) }),
+  ),
+  retry: z.optional(
+    z.strictObject({
+      maxAttempts: z.optional(z.int().check(z.minimum(1), z.maximum(5))),
+      delayMs: z.optional(z.int().check(z.minimum(0), z.maximum(5000))),
+      backoff: z.optional(z.enum(["constant", "linear", "exponential"])),
+    }),
+  ),
   timeoutMs: z.optional(positiveInt),
 });
 
@@ -51,11 +72,18 @@ const ProviderConfigSchema = z.strictObject({
 // `false` switches a Capability off for the Scope; an absent block leaves it unbounded.
 const ceiling = <T extends z.core.$ZodType>(schema: T) => z.optional(z.union([z.literal(false), schema]));
 const CeilingsSchema = z.strictObject({
-  scripts: ceiling(z.strictObject({ tier: z.optional(ScriptTierSchema), limits: z.optional(CapabilityLimitSchemas.scripts) })),
+  scripts: ceiling(
+    z.strictObject({ tier: z.optional(ScriptTierSchema), limits: z.optional(CapabilityLimitSchemas.scripts) }),
+  ),
   longRunning: ceiling(CapabilityLimitSchemas.longRunning),
   delegation: ceiling(CapabilityLimitSchemas.delegation),
   scheduling: ceiling(z.extend(CapabilityLimitSchemas.scheduling, { cron: z.optional(z.boolean()) })),
-  providerTools: ceiling(z.strictObject({ tools: z.optional(z.array(ProviderToolNameSchema)), limits: z.optional(CapabilityLimitSchemas.providerTools) })),
+  providerTools: ceiling(
+    z.strictObject({
+      tools: z.optional(z.array(ProviderToolNameSchema)),
+      limits: z.optional(CapabilityLimitSchemas.providerTools),
+    }),
+  ),
   approvals: z.optional(z.strictObject({ timeout: z.optional(positiveInt) })),
 });
 
@@ -92,11 +120,24 @@ export interface ProviderConfig {
 
 /** Upper bounds on what an Agent Spec in this Scope may ask for; `false` makes the Capability unavailable. */
 export interface Ceilings {
-  scripts?: false | { tier?: "isolate" | "container"; limits?: { cpuMs?: number; wallMs?: number; maxToolCalls?: number; idleMs?: number; jobMaxWallMs?: number; maxArtifacts?: number } };
+  scripts?:
+    | false
+    | {
+        tier?: "isolate" | "container";
+        limits?: {
+          cpuMs?: number;
+          wallMs?: number;
+          maxToolCalls?: number;
+          idleMs?: number;
+          jobMaxWallMs?: number;
+          maxArtifacts?: number;
+        };
+      };
   longRunning?: false | { maxSteps?: number; maxWallMs?: number; maxTokens?: number };
   delegation?: false | { maxDepth?: number; maxConcurrent?: number; maxChildren?: number };
   scheduling?: false | { maxPending?: number; maxHorizonMs?: number; cron?: boolean };
-  providerTools?: false | { tools?: ProviderToolName[]; limits?: { maxCallsPerTurn?: number; maxCallsPerThread?: number } };
+  providerTools?:
+    false | { tools?: ProviderToolName[]; limits?: { maxCallsPerTurn?: number; maxCallsPerThread?: number } };
   approvals?: { timeout?: number };
 }
 
@@ -117,11 +158,16 @@ export function parseScopeConfig(document: unknown, providers?: Record<string, u
   if (!result.success) {
     const issue = result.error.issues[0]!;
     const path = pointer(issue.path);
-    if (issue.code === "unrecognized_keys" && issue.keys.some((key) => SECRET_LOOKING_KEY.test(key))) throw secretValue(path);
+    if (issue.code === "unrecognized_keys" && issue.keys.some((key) => SECRET_LOOKING_KEY.test(key)))
+      throw secretValue(path);
     throw invalid(path, issue.message);
   }
   for (const [profile, { adapter, headers }] of Object.entries(result.data.providers ?? {})) {
-    if (providers && !(adapter in providers)) throw invalid(`/providers/${profile}/adapter`, `no Provider "${adapter}" is registered in createKarmi({ providers }).`);
+    if (providers && !(adapter in providers))
+      throw invalid(
+        `/providers/${profile}/adapter`,
+        `no Provider "${adapter}" is registered in createKarmi({ providers }).`,
+      );
     // A header that authenticates is a credential like any other.
     const secret = Object.keys(headers ?? {}).find((key) => SECRET_LOOKING_KEY.test(key));
     if (secret) throw secretValue(`/providers/${profile}/headers/${secret}`);
@@ -130,7 +176,10 @@ export function parseScopeConfig(document: unknown, providers?: Record<string, u
 }
 
 function secretValue(path: string): KarmiError {
-  return new KarmiError("config.secret-value", `Secret values never enter the Scope config (at "${path}"); store them with scope.credentials.put and reference them as scope:<name>.`);
+  return new KarmiError(
+    "config.secret-value",
+    `Secret values never enter the Scope config (at "${path}"); store them with scope.credentials.put and reference them as scope:<name>.`,
+  );
 }
 
 function invalid(path: string, message: string): KarmiError {
@@ -146,7 +195,8 @@ const TIER_ORDER = ["isolate", "container"] as const;
 export function resolveScopeConfig(deployment: ScopeConfigDocument, scope: ScopeConfigDocument): ScopeConfigDocument {
   const resolved: ScopeConfigDocument = {};
   if (deployment.providers || scope.providers) resolved.providers = { ...deployment.providers, ...scope.providers };
-  if (deployment.ceilings || scope.ceilings) resolved.ceilings = mergeCeilings(deployment.ceilings ?? {}, scope.ceilings ?? {});
+  if (deployment.ceilings || scope.ceilings)
+    resolved.ceilings = mergeCeilings(deployment.ceilings ?? {}, scope.ceilings ?? {});
   if (deployment.policy || scope.policy) resolved.policy = [...(scope.policy ?? []), ...(deployment.policy ?? [])];
   return resolved;
 }
@@ -171,7 +221,8 @@ function tighten(a: Record<string, unknown>, b: Record<string, unknown>): Record
     else if (typeof x === "number" && typeof y === "number") out[key] = Math.min(x, y);
     else if (typeof x === "boolean" && typeof y === "boolean") out[key] = x && y;
     else if (Array.isArray(x) && Array.isArray(y)) out[key] = x.filter((item) => y.includes(item));
-    else if (key === "tier") out[key] = TIER_ORDER[Math.min(TIER_ORDER.indexOf(x as never), TIER_ORDER.indexOf(y as never))];
+    else if (key === "tier")
+      out[key] = TIER_ORDER[Math.min(TIER_ORDER.indexOf(x as never), TIER_ORDER.indexOf(y as never))];
     else out[key] = tighten(x as Record<string, unknown>, y as Record<string, unknown>);
   }
   return out;

@@ -18,6 +18,9 @@ export class SpecInvalidError extends KarmiError {
 
   constructor(readonly result: ValidationResult) {
     const errors = result.issues.filter((issue) => issue.severity === "error");
-    super("agent.spec.invalid", `Agent Spec is invalid: ${errors.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`);
+    super(
+      "agent.spec.invalid",
+      `Agent Spec is invalid: ${errors.map((issue) => `${issue.path}: ${issue.message}`).join("; ")}`,
+    );
   }
 }

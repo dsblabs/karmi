@@ -14,7 +14,11 @@ const settings = z.optional(z.record(z.string(), z.unknown()));
 
 const PromptEntrySchema = z.union([
   z.strictObject({ text: z.string(), models: z.optional(modelGlob) }),
-  z.strictObject({ fragment: name, args: z.optional(z.record(z.string(), z.unknown())), models: z.optional(modelGlob) }),
+  z.strictObject({
+    fragment: name,
+    args: z.optional(z.record(z.string(), z.unknown())),
+    models: z.optional(modelGlob),
+  }),
 ]);
 
 // Every reference list accepts a bare name or an object; normalisation makes them all objects.
@@ -28,7 +32,10 @@ function reference<Shape extends z.core.$ZodLooseShape>(extra: Shape) {
 
 const ToolReferenceSchema = reference({ settings, alwaysLoad: z.optional(z.boolean()) });
 const SkillReferenceSchema = reference({ settings, invokableBy: z.optional(z.enum(["model", "user", "both"])) });
-const KnowledgeReferenceSchema = reference({ retriever: z.optional(name), mode: z.optional(z.enum(["tool", "inline"])) });
+const KnowledgeReferenceSchema = reference({
+  retriever: z.optional(name),
+  mode: z.optional(z.enum(["tool", "inline"])),
+});
 
 const ModelSchema = z.strictObject({
   id: modelId,
@@ -45,7 +52,11 @@ const ModelSchema = z.strictObject({
   providerOptions: z.optional(z.record(z.string(), z.unknown())),
 });
 
-const ConnectionDeclarationSchema = z.strictObject({ type: name, level: z.enum(["agent", "user"]), required: z.optional(z.boolean()) });
+const ConnectionDeclarationSchema = z.strictObject({
+  type: name,
+  level: z.enum(["agent", "user"]),
+  required: z.optional(z.boolean()),
+});
 
 export const PROVIDER_TOOL_NAMES = ["web_search", "web_fetch"] as const;
 
@@ -59,10 +70,21 @@ export const CapabilityLimitSchemas = {
     jobMaxWallMs: z.optional(positiveInt),
     maxArtifacts: z.optional(positiveInt),
   }),
-  longRunning: z.strictObject({ maxSteps: z.optional(positiveInt), maxWallMs: z.optional(positiveInt), maxTokens: z.optional(positiveInt) }),
-  delegation: z.strictObject({ maxDepth: z.optional(positiveInt), maxConcurrent: z.optional(positiveInt), maxChildren: z.optional(positiveInt) }),
+  longRunning: z.strictObject({
+    maxSteps: z.optional(positiveInt),
+    maxWallMs: z.optional(positiveInt),
+    maxTokens: z.optional(positiveInt),
+  }),
+  delegation: z.strictObject({
+    maxDepth: z.optional(positiveInt),
+    maxConcurrent: z.optional(positiveInt),
+    maxChildren: z.optional(positiveInt),
+  }),
   scheduling: z.strictObject({ maxPending: z.optional(positiveInt), maxHorizonMs: z.optional(positiveInt) }),
-  providerTools: z.strictObject({ maxCallsPerTurn: z.optional(positiveInt), maxCallsPerThread: z.optional(positiveInt) }),
+  providerTools: z.strictObject({
+    maxCallsPerTurn: z.optional(positiveInt),
+    maxCallsPerThread: z.optional(positiveInt),
+  }),
 };
 export const ScriptTierSchema = z.enum(["isolate", "container"]);
 export const ProviderToolNameSchema = z.enum(PROVIDER_TOOL_NAMES);
@@ -79,7 +101,12 @@ const CapabilitiesSchema = z.strictObject({
   longRunning: z.optional(CapabilityLimitSchemas.longRunning),
   delegation: z.optional(CapabilityLimitSchemas.delegation),
   scheduling: z.optional(z.extend(CapabilityLimitSchemas.scheduling, { cron: z.optional(z.boolean()) })),
-  providerTools: z.optional(z.strictObject({ tools: z.array(ProviderToolNameSchema), limits: z.optional(CapabilityLimitSchemas.providerTools) })),
+  providerTools: z.optional(
+    z.strictObject({
+      tools: z.array(ProviderToolNameSchema),
+      limits: z.optional(CapabilityLimitSchemas.providerTools),
+    }),
+  ),
 });
 
 // A Memory profile is JSON Schema a form can be rendered from: named properties, no composition, no references.
@@ -129,7 +156,12 @@ const ContextSchema = z.strictObject({
   reserveTokens: z.optional(positiveInt),
   keepRecentTokens: z.optional(positiveInt),
   toolOutput: z.optional(z.strictObject({ maxChars: z.optional(positiveInt), maxLines: z.optional(positiveInt) })),
-  tools: z.optional(z.strictObject({ defer: z.optional(z.enum(["auto", "always", "never"])), threshold: z.optional(z.number().check(z.gt(0), z.lte(1))) })),
+  tools: z.optional(
+    z.strictObject({
+      defer: z.optional(z.enum(["auto", "always", "never"])),
+      threshold: z.optional(z.number().check(z.gt(0), z.lte(1))),
+    }),
+  ),
 });
 
 export const AgentSpecSchema = z.strictObject({

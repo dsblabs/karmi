@@ -11,7 +11,15 @@ export interface KarmiBindings {
   KARMI_AI?: Ai;
 }
 
-const BINDING_NAMES = ["KARMI_THREADS", "KARMI_SCOPES", "KARMI_MEDIA", "KARMI_QUEUE", "KARMI_LOADER", "KARMI_VECTORIZE", "KARMI_AI"] as const;
+const BINDING_NAMES = [
+  "KARMI_THREADS",
+  "KARMI_SCOPES",
+  "KARMI_MEDIA",
+  "KARMI_QUEUE",
+  "KARMI_LOADER",
+  "KARMI_VECTORIZE",
+  "KARMI_AI",
+] as const;
 const REQUIRED = ["KARMI_THREADS", "KARMI_SCOPES"] as const;
 
 /** Escape hatch for a Worker whose bindings cannot use the fixed names. */
@@ -25,7 +33,10 @@ export function resolveBindings<Env>(env: Env, resolver?: BindingsResolver<Env>)
   }
   for (const name of REQUIRED) {
     if (bindings[name] === undefined) {
-      throw new KarmiError("bindings.missing", `Missing Durable Object binding ${name}; see @karmi/core/wrangler.baseline.jsonc.`);
+      throw new KarmiError(
+        "bindings.missing",
+        `Missing Durable Object binding ${name}; see @karmi/core/wrangler.baseline.jsonc.`,
+      );
     }
   }
   return bindings as KarmiBindings;

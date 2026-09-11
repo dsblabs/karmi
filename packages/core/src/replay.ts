@@ -36,7 +36,14 @@ export function prepareMessages(messages: Message[], target: ReplayTarget): Repl
 
   const closeBatch = (): void => {
     for (const call of pending) {
-      if (!answered.has(call.id)) out.push({ role: "toolResult", toolCallId: call.id, toolName: call.name, content: ORPHAN_RESULT, isError: true });
+      if (!answered.has(call.id))
+        out.push({
+          role: "toolResult",
+          toolCallId: call.id,
+          toolName: call.name,
+          content: ORPHAN_RESULT,
+          isError: true,
+        });
     }
     pending = [];
     answered = new Set();
@@ -53,7 +60,8 @@ export function prepareMessages(messages: Message[], target: ReplayTarget): Repl
         else if (pending.length > 0) deferredSystem.push(message.content);
         else {
           const last = out[out.length - 1];
-          if (last?.role === "system") out[out.length - 1] = { role: "system", content: `${last.content}\n\n${message.content}` };
+          if (last?.role === "system")
+            out[out.length - 1] = { role: "system", content: `${last.content}\n\n${message.content}` };
           else out.push(message);
         }
         break;
@@ -90,7 +98,12 @@ export function prepareMessages(messages: Message[], target: ReplayTarget): Repl
   return result;
 }
 
-function replayBlock(block: ContentBlock, sameModel: boolean, sameProvider: boolean, idMap: Map<string, string>): ContentBlock[] {
+function replayBlock(
+  block: ContentBlock,
+  sameModel: boolean,
+  sameProvider: boolean,
+  idMap: Map<string, string>,
+): ContentBlock[] {
   switch (block.type) {
     case "thinking": {
       if (sameModel) return block.redacted || block.signature || block.text.trim() ? [block] : [];

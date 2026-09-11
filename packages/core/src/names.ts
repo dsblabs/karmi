@@ -19,7 +19,10 @@ export const BUILT_IN_TOOL_NAMES: readonly string[] = [
 
 export function assertName(kind: CatalogueKind, name: string): void {
   if (name.startsWith("__") || name.startsWith("mcp:")) {
-    throw new KarmiError("name.reserved", `${kind} name "${name}" is reserved: names may not start with "__" or "mcp:".`);
+    throw new KarmiError(
+      "name.reserved",
+      `${kind} name "${name}" is reserved: names may not start with "__" or "mcp:".`,
+    );
   }
   if (!NAME.test(name)) {
     throw new KarmiError("name.invalid", `${kind} name "${name}" must match [a-z0-9_-]{1,64}.`);
