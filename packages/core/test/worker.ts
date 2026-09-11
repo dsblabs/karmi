@@ -292,6 +292,7 @@ const providerCompactor = defineAgent({
   name: "Provider compactor",
   instructions: [{ text: "Remember everything." }],
   model: { id: "anthropic/claude-sonnet-5", providerProfile: "provider-compact" },
+  hooks: { "before-compact": ["compact-gate"] },
   context: compactContext,
 });
 

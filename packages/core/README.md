@@ -18,7 +18,15 @@ const weather = defineTool({
 const karmi = createKarmi({
   catalogue: {
     tools: [weather],
-    agents: [defineAgent({ agentId: "concierge", name: "Concierge", instructions: [{ text: "Help the guest." }], model: { id: "anthropic/claude-sonnet-5" }, tools: ["weather"] })],
+    agents: [
+      defineAgent({
+        agentId: "concierge",
+        name: "Concierge",
+        instructions: [{ text: "Help the guest." }],
+        model: { id: "anthropic/claude-sonnet-5" },
+        tools: ["weather"],
+      }),
+    ],
   },
 });
 
@@ -52,8 +60,14 @@ A Provider is an adapter registered by name; a Provider profile in the Scope con
 ```ts
 import { fakeProvider, reply } from "@karmi/core/testing";
 
-const provider = fakeProvider(({ request, index }) => (index === 0 ? [reply.reasoning("…"), reply.toolCall("weather", { city: "Oslo" })] : "Sunny in Oslo"));
-createKarmi({ catalogue, providers: { fake: provider }, defaults: { providers: { default: { adapter: "fake", models: ["*"] } } } });
+const provider = fakeProvider(({ request, index }) =>
+  index === 0 ? [reply.reasoning("…"), reply.toolCall("weather", { city: "Oslo" })] : "Sunny in Oslo",
+);
+createKarmi({
+  catalogue,
+  providers: { fake: provider },
+  defaults: { providers: { default: { adapter: "fake", models: ["*"] } } },
+});
 // later: expect(provider.requests[1].messages).toMatchSnapshot();
 ```
 
@@ -98,7 +112,7 @@ await clock.advance("24h"); // Also fires due alarms through cloudflare:test.
 
 Long Threads keep working. Before every fresh model Step, and after a `context_window_exceeded` stop, the Harness compares the context (the last model Step's usage plus a cheap estimate of what was logged since, never a re-tokenisation) with `context.window - reserveTokens`. Over it, a `compact` Step runs: the cut walks back to `keepRecentTokens`, then to the start of that Turn (falling back to a tool Step boundary, never inside a call/result batch), the events before the cut are summarised, and `thread.compacted { trigger, firstKeptSeq, tokensBefore, tokensAfter, strategy, summary, attachments }` is appended. The log is never rewritten: the next request is the Prompt, the summary, and the events from `firstKeptSeq` on. Summaries chain, and the media of the summarised events is carried forward as `attachments`.
 
-`context.window` defaults to what the adapter reports for the model (`capabilities(model).contextWindow`) and is capped by the Scope ceiling `ceilings.context.window`; `reserveTokens` (16k) and `keepRecentTokens` (20k) have Framework defaults. The summary is written by the Harness's own model call by default, or by the provider when the Provider profile says `compaction: "provider"` (Anthropic's `context_management` compaction; the returned block replays byte-exact to the same provider and as text elsewhere). A `compact` Step counts against `longRunning.maxSteps`, is watchdog-covered and re-runs whole after an eviction.
+`context.window` defaults to what the adapter reports for the model (`capabilities(model).contextWindow`) and is capped by the Scope ceiling `ceilings.context.window`; `reserveTokens` (16k) and `keepRecentTokens` (20k) have Framework defaults. The summary is written by the Harness's own model call by default, or by the provider when the Provider profile says `compaction: "provider"` (Anthropic's `context_management` compaction; the returned block replays byte-exact to the same provider and as text elsewhere, and a reply without a block, as under the provider's 50k-token minimum, is taken as a Harness summary instead). A `compact` Step counts against `longRunning.maxSteps`, is watchdog-covered and re-runs whole after an eviction.
 
 `before-compact { trigger, instructions?, tokensBefore }` Hooks may answer `{ skip: true }` or `{ summary }`; a Hook summary is ignored under the `provider` strategy, which cannot take one. `after-compact { compacted }` observes. `thread.compact({ instructions })` compacts an idle Thread on request. `thread.fork(seq, { threadId? })` opens a new Thread for the same Agent and User holding the log up to `seq`, after a Compaction included; the fork reads the original's media by reference and joins the Scope's Thread index on its first Turn.
 
@@ -118,12 +132,15 @@ const karmi = createKarmi({ catalogue: { agents: [agent], deliverers: [receipt] 
 export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
 export default { queue: karmi.queueHandler };
 
-await karmi.scope("tenant").thread({ agent: "billing", user: "payer", threadId: "receipt" }).send({
-  kind: "event",
-  type: "payment.received",
-  payload: { amount: 100 },
-  channelRef: { deliverer: { name: "receipt", ref: { chat: "payer" } } },
-});
+await karmi
+  .scope("tenant")
+  .thread({ agent: "billing", user: "payer", threadId: "receipt" })
+  .send({
+    kind: "event",
+    type: "payment.received",
+    payload: { amount: 100 },
+    channelRef: { deliverer: { name: "receipt", ref: { chat: "payer" } } },
+  });
 ```
 
 The Thread remembers the last supplied `channelRef.deliverer`; inputs without one retain the route. Each completion or Approval request captures that route and an event range. A durable alarm gives subscribers one second to consume the trigger before enqueueing it. The Queue checks consumption again before calling the Deliverer. Merely polling `events()` or opening a subscription does not count as consumption: the iterator must reach the completion or Approval event. A subscriber racing an in-flight delivery can still see the same event.

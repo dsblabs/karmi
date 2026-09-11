@@ -173,7 +173,9 @@ class TurnFold {
   }
 
   private stepStarted(event: EventOf<"step.started">): void {
-    if (event.kind === "compact") this.previous = { started: this.started, completed: this.completed };
+    // A re-run of the compact Step keeps pointing at the Step it interrupted.
+    if (event.kind === "compact" && this.started?.kind !== "compact")
+      this.previous = { started: this.started, completed: this.completed };
     this.started =
       event.kind === "compact"
         ? { kind: "compact", n: event.n, trigger: event.trigger }

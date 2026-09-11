@@ -288,7 +288,6 @@ describe("provider strategy", () => {
       raw: { type: "compaction", content: "PROVIDER SUMMARY", encrypted_content: "ENC" },
     });
     expect(provider.requests[1]).toMatchObject({ compact: {}, config: { compaction: "provider" } });
-    expect(provider.requests[1]?.system).toBeUndefined();
     expect(provider.requests[2]?.messages).toEqual([
       user("The conversation so far was compacted."),
       {
@@ -308,12 +307,22 @@ describe("provider strategy", () => {
     ]);
   });
 
-  it("fails the Turn when the provider answers without a compaction block", async () => {
-    provider.script([[reply.text("one"), reply.usage({ input: 950 })], "just text"]);
+  it("takes the prose reply as a Harness summary when the provider answers without a block", async () => {
+    provider.script([[reply.text("one"), reply.usage({ input: 950 })], "PROSE", "two"]);
     const thread = karmi.scope("compact-provider").thread({ agent: "compactor-provider", threadId: "p2" });
     await settled(thread, message(big("one")));
     const events = await settled(thread, message(big("two")));
-    expect(events).toContainEvent({ type: "turn.failed", reason: "compaction" });
+    expect(events).toContainEvent({ type: "thread.compacted", strategy: "harness", summary: "PROSE" });
+    expect(provider.requests[2]?.messages).toEqual([summaryOf("PROSE"), user(big("two"))]);
+  });
+
+  it("ignores a before-compact Hook's summary under the provider strategy", async () => {
+    provider.script([[reply.text("one"), reply.usage({ input: 100 })], "two", compaction]);
+    const thread = karmi.scope("compact-provider").thread({ agent: "compactor-provider", threadId: "p3" });
+    await settled(thread, message(big("one")));
+    await settled(thread, message(big("two")));
+    await thread.compact({ instructions: "hook" });
+    expect(await thread.events()).toContainEvent({ type: "thread.compacted", strategy: "provider" });
   });
 });
 

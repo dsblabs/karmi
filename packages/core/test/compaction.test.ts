@@ -90,10 +90,12 @@ function log() {
 }
 
 describe("resolveWindow", () => {
-  it("takes the smallest of the Spec's window, the Scope ceiling and the model's own, else the default", () => {
+  it("takes the Spec's window over the model's own over the default, capped by the Scope ceiling", () => {
     expect(resolveWindow({})).toBe(DEFAULT_WINDOW);
     expect(resolveWindow({ model: 1_000_000 })).toBe(1_000_000);
     expect(resolveWindow({ spec: 50_000, model: 200_000 })).toBe(50_000);
+    // A Spec may opt into more than the adapter assumes; only the Scope says no.
+    expect(resolveWindow({ spec: 1_000_000, model: 200_000 })).toBe(1_000_000);
     expect(resolveWindow({ spec: 50_000, ceiling: 30_000, model: 200_000 })).toBe(30_000);
     expect(resolveWindow({ ceiling: 30_000 })).toBe(30_000);
   });

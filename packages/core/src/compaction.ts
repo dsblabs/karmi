@@ -18,10 +18,10 @@ export const DEFAULT_WINDOW = 200_000;
 /** Characters per token, the cheap estimate for what was logged since the last usage report. */
 const CHARS_PER_TOKEN = 4;
 
-/** The smallest window anyone declares: the Spec's, the Scope ceiling's or the model's own. */
+/** The Spec's window, else the model's own, else the default; the Scope ceiling caps whichever applies. */
 export function resolveWindow(sources: { spec?: number; ceiling?: number; model?: number }): number {
-  const declared = [sources.spec, sources.ceiling, sources.model].filter((value) => value !== undefined);
-  return declared.length === 0 ? DEFAULT_WINDOW : Math.min(...declared);
+  const window = sources.spec ?? sources.model ?? DEFAULT_WINDOW;
+  return sources.ceiling === undefined ? window : Math.min(window, sources.ceiling);
 }
 
 export function estimateTokens(value: unknown): number {
