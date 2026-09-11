@@ -93,3 +93,33 @@ await clock.advance("24h"); // Also fires due alarms through cloudflare:test.
 ```
 
 `advance()` accepts milliseconds or durations with `ms`, `s`, `m`, `h`, or `d` suffixes. It moves the clock forward and dispatches due alarms; live or recovered Steps continue in-process, so observe completion through the Thread's event stream.
+
+## Offline delivery
+
+Register a Channel's delivery callback in the Catalogue and set its route on an inbound input:
+
+```ts
+const receipt = defineDeliverer({
+  name: "receipt",
+  granularity: "turn", // "part" by default; "delta" includes streaming chunks
+  async deliver(threadKey, events, ref) {
+    await sendReceipt(ref, events, threadKey); // your Channel integration
+  },
+});
+const karmi = createKarmi({ catalogue: { agents: [agent], deliverers: [receipt] } });
+export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
+export default { queue: karmi.queueHandler };
+
+await karmi.scope("tenant").thread({ agent: "billing", user: "payer", threadId: "receipt" }).send({
+  kind: "event",
+  type: "payment.received",
+  payload: { amount: 100 },
+  channelRef: { deliverer: { name: "receipt", ref: { chat: "payer" } } },
+});
+```
+
+The Thread remembers the last supplied `channelRef.deliverer`; inputs without one retain the route. Each completion or Approval request captures that route and an event range. A durable alarm gives subscribers one second to consume the trigger before enqueueing it. The Queue checks consumption again before calling the Deliverer. Merely polling `events()` or opening a subscription does not count as consumption: the iterator must reach the completion or Approval event. A subscriber racing an in-flight delivery can still see the same event.
+
+Delivery uses the persisted event log at the Deliverer's granularity, including Approval events. Successive ranges in a Turn do not overlap. Without a Deliverer, output stays available through `events()` and `subscribe()`.
+
+Delivery is at-least-once, independent of Turn success; deduplicate side effects using the Thread key and event `seq` within your Channel's Scope. Queued delivery and late delivery alarms skip destroyed Scopes. Configure `KARMI_QUEUE` and export `karmi.queueHandler`; the published Wrangler baseline retries three times and routes exhausted messages to `my-karmi-dlq`. Create both queues when provisioning the deployment and operate the DLQ using [Cloudflare's dead-letter queue guidance](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/).

@@ -39,6 +39,7 @@ describe("assembleCatalogue", () => {
     const description = assembleCatalogue({ tools: [weather], fragments: [greeting], skills: [research], retrievers: [fts], hooks: [audit], agents: [concierge] }).describe();
     expect(JSON.parse(JSON.stringify(description))).toEqual(description);
     expect(description).toEqual({
+      deliverers: [],
       tools: [
         {
           name: "weather",

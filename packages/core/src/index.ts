@@ -1,3 +1,4 @@
+export { defineDeliverer, type Deliverer, type DeliveryBinding } from "./deliverer.js";
 export { wallClock, type Clock } from "./clock.js";
 export {
   defineAgent,
