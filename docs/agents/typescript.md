@@ -31,6 +31,10 @@ If you are about to write "mirrors X" or "keep in sync with X", extract a shared
 - Reuse the existing result type and its constructors. Don't invent a new `{ ok, ... }` shape.
 - Error codes form one closed union with one naming convention. A new failure adds its code to the union.
 
+## Make invalid states unrepresentable
+
+Model mutually exclusive outcomes as a discriminated union. Each branch contains only the data valid for that outcome: for example, a successful validation result carries its normalized value and warnings, while a failed result carries issues. Do not combine a boolean discriminator with optional success and failure fields in one interface.
+
 ## Keep pure logic apart from I/O
 
 Folding events, computing limits and deciding the next action are pure functions over plain data. Put them in their own module and test them without storage, network or timers. Stateful and I/O-owning classes keep only the I/O.

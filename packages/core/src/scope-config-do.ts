@@ -234,7 +234,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     ifVersion?: number,
   ): Outcome<{ agentId: string; version: number }> {
     const result = this.validate(head, spec);
-    if (!result.normalized) return { ok: false, code: "agent.spec.invalid", message: "Agent Spec is invalid.", result };
+    if (!result.ok) return { ok: false, code: "agent.spec.invalid", message: "Agent Spec is invalid.", result };
     const normalized = result.normalized;
     return this.ctx.storage.transactionSync(() => {
       const current = this.agentHead(normalized.agentId)?.current_version ?? 0;
@@ -354,7 +354,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     if (!agent.ok) return agent;
     if (agent.value.catalogueChanged) {
       const result = this.validate(head.value, agent.value.spec);
-      if (!result.normalized)
+      if (!result.ok)
         return {
           ok: false,
           code: "agent.spec.invalid",

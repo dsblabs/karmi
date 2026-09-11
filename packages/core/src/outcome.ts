@@ -1,12 +1,12 @@
 import { KarmiError, SpecInvalidError, type KarmiErrorCode } from "./errors";
-import type { ValidationResult } from "./validate";
+import type { ValidationFailure } from "./validate";
 
 /**
  * Workers RPC keeps only an Error's message, so every Durable Object method reports failure as data and
  * the handle rethrows it as a `KarmiError` (or `SpecInvalidError` when `result` is present).
  */
 export type Outcome<T> =
-  { ok: true; value: T } | { ok: false; code: KarmiErrorCode; message: string; result?: ValidationResult };
+  { ok: true; value: T } | { ok: false; code: KarmiErrorCode; message: string; result?: ValidationFailure };
 
 export const ok = <T>(value: T): Outcome<T> => ({ ok: true, value });
 export const fail = (error: KarmiError): Outcome<never> => ({ ok: false, code: error.code, message: error.message });

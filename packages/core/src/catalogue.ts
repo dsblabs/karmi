@@ -129,9 +129,9 @@ export function assembleCatalogue(input: CatalogueInput): Catalogue {
 // A code-defined Agent that references a missing Catalogue item is a boot error, like any other dangling name.
 function assertAgentsResolve(catalogue: Catalogue): void {
   for (const agent of catalogue.agents.values()) {
-    const errors = validateAgentSpec(agent.spec, catalogue).issues.filter((issue) => issue.severity === "error");
-    if (errors.length > 0) {
-      const detail = errors.map((issue) => `${issue.path}: ${issue.message}`).join("; ");
+    const result = validateAgentSpec(agent.spec, catalogue);
+    if (!result.ok) {
+      const detail = result.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; ");
       throw new KarmiError(
         "agent.spec.invalid",
         `Agent "${agent.agentId}" does not resolve against the Catalogue: ${detail}`,

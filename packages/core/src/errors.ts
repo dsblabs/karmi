@@ -1,4 +1,4 @@
-import type { ValidationResult } from "./validate";
+import type { ValidationFailure } from "./validate";
 
 /** Every code karmi throws; a new failure adds its code here first, as `area.camelCase`. */
 export type KarmiErrorCode =
@@ -58,7 +58,7 @@ export class KarmiError extends Error {
 export class SpecInvalidError extends KarmiError {
   override readonly name = "SpecInvalidError";
 
-  constructor(readonly result: ValidationResult) {
+  constructor(readonly result: ValidationFailure) {
     const errors = result.issues.filter((issue) => issue.severity === "error");
     super(
       "agent.spec.invalid",

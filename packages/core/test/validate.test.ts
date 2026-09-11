@@ -18,6 +18,7 @@ import {
   type Issue,
   type IssueCode,
   type ScopeContext,
+  type ValidationResult,
 } from "../src/index";
 
 const weather = defineTool({
@@ -87,6 +88,7 @@ const scope: ScopeContext = {
 };
 const validate = (s: unknown, ctx: ScopeContext = scope) => validateAgentSpec(s, catalogue, ctx);
 const codesOf = (issues: Issue[]) => issues.map((i) => i.code);
+const diagnostics = (result: ValidationResult): Issue[] => (result.ok ? result.warnings : result.issues);
 
 // Every code paired with a Spec that produces it, so a new code without a test fails the coverage check below.
 const cases: Record<IssueCode, { spec: unknown; path: string; severity: Issue["severity"]; ctx?: ScopeContext }> = {
@@ -242,9 +244,15 @@ const cases: Record<IssueCode, { spec: unknown; path: string; severity: Issue["s
 describe("validateAgentSpec", () => {
   it.each(Object.entries(cases))("reports %s", (code, { spec, path, severity, ctx }) => {
     const result = validate(spec, ctx);
-    expect(result.issues).toContainEqual(expect.objectContaining({ code, path, severity }));
     expect(result.ok).toBe(severity === "warning");
-    expect(result.normalized === undefined).toBe(severity === "error");
+    if (result.ok) {
+      expect(result).not.toHaveProperty("issues");
+      expect(result.warnings).toContainEqual(expect.objectContaining({ code, path, severity }));
+      expect(result.normalized).toBeDefined();
+    } else {
+      expect(result).not.toHaveProperty("normalized");
+      expect(result.issues).toContainEqual(expect.objectContaining({ code, path, severity }));
+    }
   });
 
   it("has a case for every code", () => {
@@ -311,19 +319,21 @@ describe("validateAgentSpec", () => {
       }),
       loose,
     );
-    expect(result.issues).toEqual([]);
     expect(result.ok).toBe(true);
-    expect(result.normalized?.tools).toEqual([
+    if (!result.ok) throw new Error("Expected the Spec to validate.");
+    expect(result).not.toHaveProperty("issues");
+    expect(result.warnings).toEqual([]);
+    expect(result.normalized.tools).toEqual([
       { name: "echo" },
       { name: "weather", settings: { units: "c" }, alwaysLoad: true },
       { name: "mcp:github" },
       { name: "mcp:linear/create_issue" },
     ]);
-    expect(result.normalized?.knowledge).toEqual([
+    expect(result.normalized.knowledge).toEqual([
       { name: "faq" },
       { name: "policies", retriever: "fts", mode: "inline" },
     ]);
-    expect(result.normalized?.context).toEqual({
+    expect(result.normalized.context).toEqual({
       window: 200_000,
       toolOutput: { maxChars: 10_000 },
       tools: { defer: "always" },
@@ -331,25 +341,25 @@ describe("validateAgentSpec", () => {
   });
 
   it("rejects a Spec that is not an object", () => {
-    expect(validate(null).issues).toEqual([expect.objectContaining({ code: "shape.invalid-type", path: "" })]);
+    expect(diagnostics(validate(null))).toEqual([expect.objectContaining({ code: "shape.invalid-type", path: "" })]);
   });
 
   it("reports one issue per shape problem with its pointer", () => {
     const result = validate(
       spec({ model: { id: "no-slash", params: { temperature: 3 } }, capabilities: { longRunning: { maxSteps: 0 } } }),
     );
-    expect(result.issues.map((i) => i.path).sort()).toEqual([
-      "/capabilities/longRunning/maxSteps",
-      "/model/id",
-      "/model/params/temperature",
-    ]);
+    expect(
+      diagnostics(result)
+        .map((i) => i.path)
+        .sort(),
+    ).toEqual(["/capabilities/longRunning/maxSteps", "/model/id", "/model/params/temperature"]);
   });
 
   it("checks required settings even when the reference is bare", () => {
     const result = validate(
       spec({ tools: ["weather"], connections: { weather_api: { type: "key", level: "agent" } } }),
     );
-    expect(codesOf(result.issues)).toEqual(["settings.invalid"]);
+    expect(codesOf(diagnostics(result))).toEqual(["settings.invalid"]);
   });
 
   it("does not let an ask on a non-provider Tool trip the provider-tool rule", () => {
@@ -363,7 +373,7 @@ describe("validateAgentSpec", () => {
         ],
       }),
     );
-    expect(result.issues).toEqual([]);
+    expect(diagnostics(result)).toEqual([]);
   });
 
   it("lets Scripts call MCP Tools the Agent references", () => {
@@ -371,26 +381,27 @@ describe("validateAgentSpec", () => {
       tools: ["mcp:linear/create_issue"],
       capabilities: { scripts: { tier: "isolate", tools: ["linear__create_issue"] } },
     });
-    expect(validate(ok).issues).toEqual([]);
+    expect(diagnostics(validate(ok))).toEqual([]);
     const server = spec({
       tools: ["mcp:linear"],
       capabilities: { scripts: { tier: "isolate", tools: ["linear__create_issue", "echo"] } },
     });
-    expect(validate(server).issues).toEqual([
+    expect(diagnostics(validate(server))).toEqual([
       expect.objectContaining({ code: "capability.scripts.tool-unreferenced", path: "/capabilities/scripts/tools/1" }),
     ]);
   });
 
   it("skips the unreferenced-tool warning when a whole MCP server is referenced", () => {
     expect(
-      validate(spec({ tools: ["mcp:github"], policy: [{ match: { tool: "github__create_issue" }, effect: "ask" }] }))
-        .issues,
+      diagnostics(
+        validate(spec({ tools: ["mcp:github"], policy: [{ match: { tool: "github__create_issue" }, effect: "ask" }] })),
+      ),
     ).toEqual([]);
   });
 
   it("restricts the Memory profile to renderable JSON Schema", () => {
     const result = validate(spec({ memory: { profile: { properties: { a: { $ref: "#/x" } } } as never } }));
-    expect(result.issues).toEqual([
+    expect(diagnostics(result)).toEqual([
       expect.objectContaining({ code: "shape.unknown-key", path: "/memory/profile/properties/a" }),
     ]);
   });
@@ -398,18 +409,18 @@ describe("validateAgentSpec", () => {
 
 describe("validateAgentSpec against a Scope", () => {
   it("skips the Scope layer when no Scope is given", () => {
-    expect(validateAgentSpec(spec({ approvals: { timeout: 120_000 } }), catalogue).issues).toEqual([]);
+    expect(diagnostics(validateAgentSpec(spec({ approvals: { timeout: 120_000 } }), catalogue))).toEqual([]);
   });
 
   it("uses the Scope's sole Provider profile when the Spec names none, and requires a name otherwise", () => {
-    expect(validate(base, { config: { providers: { main: { adapter: "anthropic" } } }, agents: [] }).issues).toEqual(
-      [],
-    );
-    expect(validate(base, { config: {}, agents: [] }).issues).toEqual([
+    expect(
+      diagnostics(validate(base, { config: { providers: { main: { adapter: "anthropic" } } }, agents: [] })),
+    ).toEqual([]);
+    expect(diagnostics(validate(base, { config: {}, agents: [] }))).toEqual([
       expect.objectContaining({ code: "provider.profile.required", path: "/model", context: { profiles: [] } }),
     ]);
     const two = { config: { providers: { a: { adapter: "anthropic" }, b: { adapter: "anthropic" } } }, agents: [] };
-    expect(validate(base, two).issues).toEqual([
+    expect(diagnostics(validate(base, two))).toEqual([
       expect.objectContaining({ code: "provider.profile.required", path: "/model", context: { profiles: ["a", "b"] } }),
     ]);
   });
@@ -436,17 +447,17 @@ describe("validateAgentSpec against a Scope", () => {
       }),
       ctx,
     );
-    expect(result.issues.map((i) => i.path).sort()).toEqual([
-      "/capabilities/providerTools/tools/1",
-      "/capabilities/scheduling/cron",
-      "/capabilities/scripts/tier",
-    ]);
-    expect(new Set(codesOf(result.issues))).toEqual(new Set(["capability.over-ceiling"]));
+    expect(
+      diagnostics(result)
+        .map((i) => i.path)
+        .sort(),
+    ).toEqual(["/capabilities/providerTools/tools/1", "/capabilities/scheduling/cron", "/capabilities/scripts/tier"]);
+    expect(new Set(codesOf(diagnostics(result)))).toEqual(new Set(["capability.over-ceiling"]));
   });
 
   it("lets a Spec ask for exactly the ceiling", () => {
     expect(
-      validate(spec({ capabilities: { longRunning: { maxSteps: 100 } }, approvals: { timeout: 60_000 } })).issues,
+      diagnostics(validate(spec({ capabilities: { longRunning: { maxSteps: 100 } }, approvals: { timeout: 60_000 } }))),
     ).toEqual([]);
   });
 
@@ -457,13 +468,13 @@ describe("validateAgentSpec against a Scope", () => {
         { agentId: "concierge", spec: { ...base, memory: { profile: { properties: { tier: { type: "number" } } } } } },
       ],
     };
-    expect(validate(spec({ memory: { profile: { properties: { tier: { type: "string" } } } } }), ctx).issues).toEqual(
-      [],
-    );
+    expect(
+      diagnostics(validate(spec({ memory: { profile: { properties: { tier: { type: "string" } } } } }), ctx)),
+    ).toEqual([]);
   });
 
   it("accepts a delegate stored in the Scope", () => {
-    expect(validate(spec({ delegates: ["helper"], capabilities: { delegation: {} } })).issues).toEqual([]);
+    expect(diagnostics(validate(spec({ delegates: ["helper"], capabilities: { delegation: {} } })))).toEqual([]);
   });
 });
 

@@ -61,12 +61,13 @@ export interface Issue {
   context?: Record<string, unknown>;
 }
 
-export interface ValidationResult {
-  ok: boolean;
-  issues: Issue[];
-  /** Present when there are no errors; warnings never block. */
-  normalized?: NormalizedAgentSpec;
-}
+type ErrorIssue = Issue & { severity: "error" };
+type WarningIssue = Issue & { severity: "warning" };
+
+export type ValidationFailure = { ok: false; issues: [ErrorIssue, ...Issue[]] };
+
+export type ValidationResult =
+  { ok: true; normalized: NormalizedAgentSpec; warnings: WarningIssue[] } | ValidationFailure;
 
 /** What the Scope layer sees: the resolved (Deployment ≤ Scope) config and the Scope's other Agents. */
 export interface ScopeContext {
@@ -100,7 +101,7 @@ export function pointer(path: readonly PropertyKey[]): string {
   return path.map((segment) => `/${String(segment)}`).join("");
 }
 
-function shapeIssue(issue: z.core.$ZodIssue): Issue {
+function shapeIssue(issue: z.core.$ZodIssue): ErrorIssue {
   const path = pointer(issue.path);
   if (issue.code === "unrecognized_keys") {
     if (path === "/capabilities" && issue.keys.includes("egress")) {
@@ -145,13 +146,19 @@ class Issues {
 export function validateAgentSpec(spec: unknown, catalogue: Catalogue, scope?: ScopeContext): ValidationResult {
   const parsed = z.safeParse(AgentSpecSchema, spec);
   if (!parsed.success) {
-    return { ok: false, issues: parsed.error.issues.map(shapeIssue) };
+    const first = firstIssue(parsed.error);
+    return { ok: false, issues: [shapeIssue(first), ...parsed.error.issues.slice(1).map(shapeIssue)] };
   }
   const issues = new Issues();
   new ReferenceChecker(parsed.data, catalogue, issues).run();
   if (scope) new ScopeChecker(parsed.data, catalogue, scope, issues).run();
-  const ok = issues.list.every((issue) => issue.severity !== "error");
-  return { ok, issues: issues.list, ...(ok && { normalized: parsed.data }) };
+  const error = issues.list.find((issue): issue is ErrorIssue => issue.severity === "error");
+  if (error) return { ok: false, issues: [error, ...issues.list.filter((issue) => issue !== error)] };
+  return {
+    ok: true,
+    normalized: parsed.data,
+    warnings: issues.list.map((issue) => ({ ...issue, severity: "warning" })),
+  };
 }
 
 class ReferenceChecker {

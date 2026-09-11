@@ -38,6 +38,7 @@ export {
   ISSUE_CODES,
   type Issue,
   type IssueCode,
+  type ValidationFailure,
   type ValidationResult,
   type ScopeContext,
 } from "./validate";
