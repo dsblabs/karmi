@@ -235,3 +235,32 @@ describe("prepareMessages", () => {
     expect(JSON.parse(JSON.stringify(prepared))).toEqual(prepared);
   });
 });
+
+it("keeps provider metadata only when replaying to the same model", () => {
+  const block: ContentBlock = { type: "text", text: "Hello", providerMetadata: { openai: { itemId: "opaque" } } };
+  const message = assistant([block], gpt);
+  expect(prepareMessages([message], gpt).messages).toEqual([message]);
+  expect(prepareMessages([message], { ...gpt, model: "another-model" }).messages).toEqual([
+    assistant([{ type: "text", text: "Hello" }], gpt),
+  ]);
+  expect(prepareMessages([message], claude).messages).toEqual([assistant([{ type: "text", text: "Hello" }], gpt)]);
+  expect(block.providerMetadata).toEqual({ openai: { itemId: "opaque" } });
+});
+
+it("retains compaction and provider-tool metadata across models of the same provider", () => {
+  const compaction: ContentBlock = {
+    type: "compaction",
+    summary: "Summary",
+    raw: { type: "text", text: "Summary" },
+    providerMetadata: { anthropic: { type: "compaction" } },
+  };
+  const serverTool: ContentBlock = {
+    type: "server_tool",
+    id: "mcp",
+    name: "search",
+    input: {},
+    providerMetadata: { anthropic: { type: "mcp-tool-use", serverName: "docs" } },
+  };
+  const message = assistant([compaction, serverTool]);
+  expect(prepareMessages([message], { ...claude, model: "another-model" }).messages).toEqual([message]);
+});

@@ -1,0 +1,6 @@
+data: {"id": "chat-1", "object": "chat.completion.chunk", "created": 1, "model": "test", "choices": [{"index": 0, "delta": {"role": "assistant", "content": "Hello"}, "finish_reason": null}]}
+
+data: {"id": "chat-1", "object": "chat.completion.chunk", "created": 1, "model": "test", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4, "cost": 0.001, "is_byok": true, "cost_details": {"upstream_inference_cost": 0.0008}}}
+
+data: [DONE]
+
