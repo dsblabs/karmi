@@ -59,7 +59,9 @@ export async function parseKeyring(json: string): Promise<Keyring> {
   for (const [version, encoded] of Object.entries(result.data.keys)) {
     const bytes = tryBase64(encoded);
     if (bytes?.byteLength !== KEY_BYTES) throw invalid(`key "${version}" must be ${KEY_BYTES} base64-encoded bytes.`);
-    keys.set(version, await crypto.subtle.importKey("raw", bytes, "AES-GCM", false, ["encrypt", "decrypt"]));
+    // Only the active key may wrap; every other key is decrypt-only by construction.
+    const usages: ("encrypt" | "decrypt")[] = version === active ? ["encrypt", "decrypt"] : ["decrypt"];
+    keys.set(version, await crypto.subtle.importKey("raw", bytes, "AES-GCM", false, usages));
   }
   return { deployment, active, keys };
 }

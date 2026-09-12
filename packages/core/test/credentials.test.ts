@@ -64,10 +64,12 @@ describe("envelopeSecrets", () => {
     expect(await rotated.describe(ref(scope))).toMatchObject({ version: 1 });
   });
 
-  it("refuses to store without a keyring and treats every Scope reference as missing", async () => {
+  it("refuses to store without a keyring, and treats only a never-stored credential as missing", async () => {
     const scope = fresh();
     const secrets = store();
     expect(await secrets.resolve(ref(scope))).toBeUndefined();
+    await store(ringV1).put!(ref(scope), sensitive("v"));
+    await expect(secrets.resolve(ref(scope))).rejects.toMatchObject({ code: "secrets.unavailable" });
     await expect(secrets.put!(ref(scope), sensitive("v"))).rejects.toThrowError(
       new KarmiError(
         "secrets.unavailable",

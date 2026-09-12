@@ -63,9 +63,10 @@ class EnvelopeStore implements SecretsProvider {
 
   async resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined> {
     const name = scopeName(ref);
-    if (name === undefined || this.options.keyring === undefined) return undefined;
+    if (name === undefined) return undefined;
     const stored = await unwrap(this.stub(ref.scope).credentialGet(ref.scope, name));
     if (!stored?.envelope) return undefined;
+    // A stored credential the Deployment lost the ring for is an outage, never "missing" for a fallback to eat.
     const ring = await this.keyring();
     const value = await open(ring, this.aad(ring, ref.scope, name, stored.version), stored.envelope);
     return { ...info(stored), value: sensitive(value) };

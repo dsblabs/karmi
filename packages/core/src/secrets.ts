@@ -52,7 +52,7 @@ export const INSPECT: unique symbol = Symbol.for("nodejs.util.inspect.custom");
 const REDACTED = "[SensitiveValue]";
 const exposed = () =>
   new KarmiError(
-    "secret.exposed",
+    "secrets.exposed",
     "A SensitiveValue cannot be serialised or coerced; only an adapter may expose() it.",
   );
 
@@ -95,13 +95,17 @@ export function isSensitiveValue(value: unknown): value is SensitiveValue {
   return value instanceof SensitiveValue;
 }
 
-/** The same structure with every SensitiveValue replaced by a placeholder; what a Logger may print. */
+/**
+ * The same structure with every SensitiveValue replaced by a placeholder; what a Logger may print. Walks
+ * every own enumerable property, so a value tucked into a class instance or an Error is caught too.
+ */
 export function redact(value: unknown): unknown {
   if (isSensitiveValue(value)) return REDACTED;
   if (Array.isArray(value)) return value.map(redact);
-  if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype)
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redact(entry)]));
-  return value;
+  if (value === null || typeof value !== "object") return value;
+  // Anything that serialises itself (a Date, say) is left to do so.
+  if ("toJSON" in value && typeof value.toJSON === "function") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, redact(entry)]));
 }
 
 export function parseCredentialRef(ref: string): { source: CredentialSource; name: string } | undefined {
@@ -124,13 +128,18 @@ export function layerDeploymentCredentials(
     const parsed = parseCredentialRef(ref.ref);
     return parsed?.source === "deployment" ? held.get(parsed.name) : undefined;
   };
+  // Delegated method by method: a spread would drop the prototype methods of a class-based store.
+  const { put, revoke, rewrap, list } = store;
   return {
-    ...store,
     resolve: async (ref) => {
       const value = fromDeployment(ref);
       return value ? { ...info, value } : store.resolve(ref);
     },
     describe: async (ref) => (fromDeployment(ref) ? info : store.describe(ref)),
+    ...(put && { put: (ref, value) => put.call(store, ref, value) }),
+    ...(revoke && { revoke: (ref) => revoke.call(store, ref) }),
+    ...(rewrap && { rewrap: (scope) => rewrap.call(store, scope) }),
+    ...(list && { list: (scope) => list.call(store, scope) }),
   };
 }
 

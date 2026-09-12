@@ -9,7 +9,11 @@ import {
   redact,
   resolveProfileCredentials,
   sensitive,
+  type CredentialInfo,
+  type CredentialRef,
+  type ResolvedCredential,
   type SecretsProvider,
+  type SensitiveValue,
 } from "../src/secrets";
 import { memorySecrets } from "../src/testing/memory-secrets";
 
@@ -22,7 +26,7 @@ describe("SensitiveValue", () => {
 
   it("refuses JSON, string coercion and templating", () => {
     const refused = new KarmiError(
-      "secret.exposed",
+      "secrets.exposed",
       "A SensitiveValue cannot be serialised or coerced; only an adapter may expose() it.",
     );
     expect(() => JSON.stringify({ value })).toThrowError(refused);
@@ -35,10 +39,16 @@ describe("SensitiveValue", () => {
     expect(structuredClone(value)).toEqual({});
   });
 
-  it("is redacted wherever it sits in a structure", () => {
-    expect(redact({ a: value, nested: [1, { b: value }], keep: "x" })).toEqual({
+  it("is redacted wherever it sits in a structure, class instances included", () => {
+    class Holder {
+      constructor(readonly secret: SensitiveValue) {}
+    }
+    const when = new Date(0);
+    expect(redact({ a: value, nested: [1, { b: value }], held: new Holder(value), when, keep: "x" })).toEqual({
       a: "[SensitiveValue]",
       nested: [1, { b: "[SensitiveValue]" }],
+      held: { secret: "[SensitiveValue]" },
+      when,
       keep: "x",
     });
   });
@@ -66,6 +76,27 @@ describe("layerDeploymentCredentials", () => {
     });
     expect((await secrets.resolve({ scope: "s", ref: "scope:own" }))?.value.expose()).toBe("scope-value");
     expect(await secrets.resolve({ scope: "s", ref: "deployment:other" })).toBeUndefined();
+  });
+
+  it("keeps the optional methods of a class-based store", async () => {
+    class Store implements SecretsProvider {
+      puts: string[] = [];
+      async resolve(): Promise<ResolvedCredential | undefined> {
+        return undefined;
+      }
+      async describe(): Promise<CredentialInfo | undefined> {
+        return undefined;
+      }
+      async put(ref: CredentialRef): Promise<CredentialInfo> {
+        this.puts.push(ref.ref);
+        return { source: "scope", version: 1, updatedAt: 0 };
+      }
+    }
+    const store = new Store();
+    const secrets = layerDeploymentCredentials({ k: "v" }, store);
+    expect(await secrets.put?.({ scope: "s", ref: "scope:a" }, sensitive("x"))).toMatchObject({ version: 1 });
+    expect(store.puts).toEqual(["scope:a"]);
+    expect(secrets.revoke).toBeUndefined();
   });
 });
 

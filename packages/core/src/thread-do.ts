@@ -138,6 +138,13 @@ type ThreadRow = {
 
 type EventRow = { seq: number; turn: number; at: number; type: ThreadEventType; json: string };
 
+/** What one model call runs under: the profile, its credentials for this call only, and what `step.started` records. */
+interface StepCall {
+  profile: ProviderConfig;
+  credentials: ProviderCredentials;
+  started: StepCredentials;
+}
+
 /** A model Step outcome: the Provider finished, or it failed and the next fallback should try. */
 type StepResult = { ok: true; stopReason: StopReason; message: ContentBlock[] } | { ok: false; error: ProviderError };
 
@@ -1218,17 +1225,18 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     row: ThreadRow,
     snapshot: TurnSnapshot,
     engaged: FallbackEngaged | undefined,
-  ): Promise<
-    | { ok: true; profile: ProviderConfig; credentials: ProviderCredentials; started: StepCredentials }
-    | { ok: false; failure: TurnEnd }
-  > {
+  ): Promise<({ ok: true } & StepCall) | { ok: false; failure: TurnEnd }> {
     const missing = (ref: string) => ({
       ok: false as const,
       failure: failure("credential.missing", `Credential "${ref}" of Agent "${row.agent_id}" is missing or revoked.`),
     });
     const fallback = async (reason: FallbackReason) => {
       // `engaged` only ever holds a reason the snapshot opted into, so the fallback profile is there.
-      if (!snapshot.fallback) return missing(snapshot.profile.credential ?? "");
+      if (!snapshot.fallback)
+        return {
+          ok: false as const,
+          failure: failure("credential.missing", `Agent "${row.agent_id}" has no fallback profile to run on.`),
+        };
       const resolved = await resolveProfileCredentials(
         this.deployment.secrets,
         row.scope_id,
@@ -1529,7 +1537,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     n: number,
     trigger: CompactionTrigger,
     channelRef: unknown,
-  ): Promise<Awaited<ReturnType<ThreadDurableObject["stepCredentials"]>>> {
+  ): Promise<({ ok: true } & StepCall) | { ok: false; failure: TurnEnd }> {
     this.update({ step: n, attempt: 1 });
     const call = await this.stepCredentials(row, snapshot, decodeFallback(row.fallback_json));
     if (!call.ok) return call;
@@ -1578,7 +1586,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     dropped: ThreadEvent[],
     native: string,
     instructions: string | undefined,
-    { profile, credentials }: { profile: ProviderConfig; credentials: ProviderCredentials },
+    { profile, credentials }: StepCall,
   ): Promise<Outcome<Summary>> {
     const { spec } = snapshot;
     const provider = this.deployment.providers[profile.adapter];
@@ -1639,7 +1647,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     model: string,
     events: ThreadEvent[],
     channelRef: unknown,
-    { profile, credentials }: { profile: ProviderConfig; credentials: ProviderCredentials },
+    { profile, credentials }: StepCall,
   ): Promise<StepResult> {
     const provider = this.deployment.providers[profile.adapter];
     if (!provider) return stepError(`Provider adapter "${profile.adapter}" is not registered.`);
