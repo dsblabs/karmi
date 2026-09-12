@@ -16,6 +16,10 @@ export const keys = {
   r2Prefix(scope: ScopeId): string {
     return `${assertScope(scope)}/`;
   },
+  threadObjects(scope: ScopeId, threadId: string): string[] {
+    assertIdentifier("thread.id.invalid", "threadId", threadId);
+    return [`${assertScope(scope)}/media/${threadId}/`, `${assertScope(scope)}/threads/${threadId}/tool-output/`];
+  },
   toolOutput(scope: ScopeId, threadId: string, seq: number): string {
     assertIdentifier("thread.id.invalid", "threadId", threadId);
     return `${assertScope(scope)}/threads/${threadId}/tool-output/${seq}`;
@@ -30,4 +34,11 @@ export const keys = {
 function assertScope(scope: ScopeId): ScopeId {
   assertIdentifier("scope.id.invalid", "ScopeId", scope);
   return scope;
+}
+
+/** Accepts only Framework media/spill keys, including refs serialized before a restart. */
+export function mediaKeyScope(key: string): string | undefined {
+  return /^([A-Za-z0-9_-]{1,64})\/(?:media\/[A-Za-z0-9_-]{1,64}\/[A-Za-z0-9_-]{1,64}|threads\/[A-Za-z0-9_-]{1,64}\/tool-output\/\d+)$/.exec(
+    key,
+  )?.[1];
 }

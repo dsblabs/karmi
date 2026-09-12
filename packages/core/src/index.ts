@@ -149,3 +149,18 @@ export { loadedToolNames, type Loaded } from "./loading";
 export { transcriptFromEvents, renderEvent } from "./transcript";
 export { DEFAULT_WINDOW, type ContextLimits } from "./compaction";
 export type { DurableObjects, DurableObjectClass, KarmiDurableObject } from "./durable-objects";
+
+export {
+  hydrateMedia,
+  prepareMedia,
+  mediaPlaceholder,
+  mediaKind,
+  type RequestMedia,
+  type EncodedMedia,
+} from "./media-request";
+export type { MediaWriter, MediaBody, MediaOptions } from "./media";
+
+export type { MediaUrlOptions } from "./media-url";
+
+export { ingestProviderEvent } from "./media-ingress";
+export type { ToolOutputResult } from "./tool";

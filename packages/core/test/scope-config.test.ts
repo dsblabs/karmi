@@ -176,6 +176,11 @@ describe("parseScopeConfig", () => {
 
   it("exports JSON Schema for Platform editors", () => {
     expect(scopeConfigJsonSchema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
-    expect(Object.keys(scopeConfigJsonSchema.properties as object)).toEqual(["providers", "ceilings", "policy"]);
+    expect(Object.keys(scopeConfigJsonSchema.properties as object)).toEqual([
+      "media",
+      "providers",
+      "ceilings",
+      "policy",
+    ]);
   });
 });

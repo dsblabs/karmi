@@ -1,3 +1,7 @@
+import { ingestToolResult } from "./media-ingress";
+import type { ToolOutputResult } from "./tool";
+import { putMedia } from "./media";
+import type { ScopeConfigDocument } from "./scope-config";
 import * as z from "zod/mini";
 import type { AgentSpec } from "./agent";
 import type { Catalogue } from "./catalogue";
@@ -43,6 +47,7 @@ export interface ToolStepHost {
   /** What the model's context has loaded; a call to anything else is answered, never run. */
   loaded: Loaded;
   bucket: R2Bucket | undefined;
+  mediaLimits?: ScopeConfigDocument["media"];
   logger: Logger;
   /** The Turn's signal; the Step and each call derive their own from it. */
   signal: AbortSignal;
@@ -264,7 +269,14 @@ async function execute(
     ...(connection.value && { connection: connection.value }),
     attempt: host.attempt,
     callId: callId(host, seq),
-    media: { put: (body, opts) => putMedia(host, body, opts) },
+    media: {
+      put: (body, opts) =>
+        putMedia(
+          { bucket: host.bucket, scope: host.scope, threadId: host.threadId, limits: host.mediaLimits, signal },
+          body,
+          opts,
+        ),
+    },
     logger: host.logger,
     signal,
   };
@@ -275,7 +287,7 @@ async function execute(
       host.append({ type: "job.started", id: call.id, jobId: outcome.pending });
       return "pending";
     }
-    result = outcome;
+    result = await ingestToolResult(outcome, ctx.media);
   } catch (caught) {
     if (isPlatformFailure(caught)) throw caught;
     result = error(errorMessage(caught));
@@ -291,7 +303,7 @@ const notLoaded = ({ tool, skill }: AvailableTool): string =>
     : `Tool "${tool.name}" belongs to the skill "${skill}", which is not active. Activate it with use_skill first.`;
 const error = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
 
-function normalize(raw: ToolOutcome): ToolResult | { pending: string } {
+function normalize(raw: ToolOutcome): ToolOutputResult | { pending: string } {
   return typeof raw === "string" ? { content: [{ type: "text", text: raw }] } : raw;
 }
 
@@ -384,6 +396,7 @@ async function spill(
   seq: number,
   result: ToolResult,
 ): Promise<{ result: ToolResult; output?: MediaRef }> {
+  host.signal.throwIfAborted();
   const text = result.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
   const cut = truncateOutput(text, outputLimits(host.spec, tool));
   if (!cut.truncated) return { result };
@@ -393,6 +406,10 @@ async function spill(
     const bytes = new TextEncoder().encode(text);
     try {
       await host.bucket.put(key, bytes, { httpMetadata: { contentType: "text/plain; charset=utf-8" } });
+      if (host.signal.aborted) {
+        await host.bucket.delete(key);
+        host.signal.throwIfAborted();
+      }
       output = { id: String(seq), key, mimeType: "text/plain; charset=utf-8", bytes: bytes.byteLength };
     } catch (caught) {
       if (isPlatformFailure(caught)) throw caught;
@@ -412,18 +429,4 @@ async function spill(
     ...result.content.filter((block) => block.type !== "text"),
   ];
   return { result: { ...result, content }, ...(output && { output }) };
-}
-
-async function putMedia(
-  host: ToolStepHost,
-  body: ReadableStream | ArrayBuffer | string,
-  opts: { mimeType?: string; name?: string } = {},
-): Promise<MediaRef> {
-  if (!host.bucket) throw new Error("ctx.media.put needs the KARMI_MEDIA bucket.");
-  const id = crypto.randomUUID();
-  const key = keys.media(host.scope, host.threadId, id);
-  const mimeType =
-    opts.mimeType ?? (typeof body === "string" ? "text/plain; charset=utf-8" : "application/octet-stream");
-  const object = await host.bucket.put(key, body, { httpMetadata: { contentType: mimeType } });
-  return { id, key, mimeType, bytes: object.size, ...(opts.name !== undefined && { name: opts.name }) };
 }

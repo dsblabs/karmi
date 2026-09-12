@@ -7,7 +7,7 @@ import type { ToolContent, ToolResult } from "./tool";
 
 export type Part =
   | { type: "text"; text: string }
-  | { type: "image" | "video" | "audio" | "file"; media: MediaRef; mimeType: string; name?: string };
+  | { type: "image" | "video" | "audio" | "file"; media: MediaRef; mimeType?: string; name?: string };
 
 /** What drives one Turn: a User message or an Event. `channelRef` is echoed on every event of the Turn; `{ deliverer: { name, ref } }` also sets its offline route. */
 export type TurnInput =

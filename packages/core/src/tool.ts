@@ -1,3 +1,4 @@
+import type { MediaWriter } from "./media";
 import type { Logger, MediaRef, ScopeId, ThreadRef, UserId } from "./context";
 import type { Fragment } from "./fragment";
 import { assertName } from "./names";
@@ -38,9 +39,7 @@ export interface ToolContext<Settings = undefined> {
   attempt: number;
   /** Stable across re-runs; pass it upstream as an idempotency key. */
   callId: string;
-  media: {
-    put(body: ReadableStream | ArrayBuffer | string, opts?: { mimeType?: string; name?: string }): Promise<MediaRef>;
-  };
+  media: MediaWriter;
   logger: Logger;
   signal: AbortSignal;
 }
@@ -63,7 +62,11 @@ export interface ToolPending {
   pending: string;
 }
 
-export type ToolOutcome = string | ToolResult | ToolPending;
+export interface ToolOutputResult extends Omit<ToolResult, "content"> {
+  content: (ToolContent | { type: "image"; data: string; mimeType: string })[];
+}
+
+export type ToolOutcome = string | ToolOutputResult | ToolPending;
 
 export interface ToolInput<In extends Schema, Settings extends Schema | undefined> {
   name: string;

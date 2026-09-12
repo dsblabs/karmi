@@ -1,10 +1,20 @@
-import type { ContentBlock, Message, ProviderRequest, ToolDefinition } from "@karmi/core";
+import {
+  hydrateMedia,
+  mediaPlaceholder,
+  mediaKind,
+  type RequestMedia,
+  type ContentBlock,
+  type Message,
+  type ProviderRequest,
+  type ToolDefinition,
+} from "@karmi/core";
 import type {
   BetaCacheControlEphemeral,
   BetaContentBlockParam,
   BetaMessageParam,
   BetaServerToolUseBlockParam,
   BetaTextBlockParam,
+  BetaImageBlockParam,
   BetaTool,
   BetaToolChoice,
   BetaToolReferenceBlockParam,
@@ -40,10 +50,10 @@ const CACHEABLE = new Set([
   "tool_reference",
 ]);
 
-export function buildParams(request: ProviderRequest): MessageCreateParamsBase {
+export function buildParams(request: ProviderRequest, media: RequestMedia = new Map()): MessageCreateParamsBase {
   const options = anthropicOptions(request);
   const cache = options.cache === false ? undefined : cacheControl(options.cache?.ttl);
-  const messages = toMessages(request.messages, cache);
+  const messages = toMessages(request.messages, cache, media);
   const tools = toTools(request.tools, options, cache);
   const params: MessageCreateParamsBase = {
     model: request.model,
@@ -93,7 +103,7 @@ export function buildParams(request: ProviderRequest): MessageCreateParamsBase {
 }
 
 /** The subset of a request `count_tokens` accepts. */
-export function countTokensParams(request: ProviderRequest): MessageCountTokensParams {
+export function countTokensParams(request: ProviderRequest, media: RequestMedia = new Map()): MessageCountTokensParams {
   const {
     model,
     messages,
@@ -105,7 +115,7 @@ export function countTokensParams(request: ProviderRequest): MessageCountTokensP
     mcp_servers,
     betas,
     output_config,
-  } = buildParams(request);
+  } = buildParams(request, media);
   return {
     model,
     messages,
@@ -172,7 +182,11 @@ function toolChoice(choice: ProviderRequest["toolChoice"], parallel: boolean | u
 
 // Consecutive user-side messages (Tool results, then the next User message) merge into one user turn with
 // the results first, which is the only order Anthropic accepts.
-function toMessages(messages: Message[], cache: BetaCacheControlEphemeral | undefined): BetaMessageParam[] {
+function toMessages(
+  messages: Message[],
+  cache: BetaCacheControlEphemeral | undefined,
+  media: RequestMedia,
+): BetaMessageParam[] {
   const out: BetaMessageParam[] = [];
   const push = (role: BetaMessageParam["role"], content: BetaContentBlockParam[]) => {
     if (content.length === 0) return;
@@ -186,17 +200,23 @@ function toMessages(messages: Message[], cache: BetaCacheControlEphemeral | unde
         out.push({ role: "system", content: message.content });
         break;
       case "user":
-        push("user", message.content.flatMap(userBlock));
+        push(
+          "user",
+          message.content.flatMap((block) => userBlock(block, media)),
+        );
         break;
       case "assistant":
-        push("assistant", message.content.flatMap(assistantBlock));
+        push(
+          "assistant",
+          message.content.flatMap((block) => assistantBlock(block, media)),
+        );
         break;
       case "toolResult": {
         // A load point carries only its references; the API rejects them mixed with text, so any text follows as siblings.
         const references: BetaToolReferenceBlockParam[] = message.content.flatMap((block) =>
           block.type === "tool_reference" ? [{ type: "tool_reference", tool_name: block.name }] : [],
         );
-        const text = message.content.flatMap(userBlock);
+        const text = message.content.flatMap((block) => userBlock(block, media));
         const content: BetaToolResultBlockParam["content"] = references.length > 0 ? references : text;
         push("user", [
           {
@@ -220,25 +240,28 @@ function toMessages(messages: Message[], cache: BetaCacheControlEphemeral | unde
   return out;
 }
 
-function userBlock(block: ContentBlock): BetaTextBlockParam[] {
-  switch (block.type) {
-    case "text":
-      return block.text ? [{ type: "text", text: block.text }] : [];
-    // Bytes are re-inlined by the media pipeline; until it lands a ref is described, never dropped silently.
-    case "media":
-      return [
-        {
-          type: "text",
-          text: `[attachment omitted: ${block.media.name ?? block.media.id} (${block.media.mimeType}, ${block.media.bytes} bytes)]`,
-        },
-      ];
-    default:
-      return [];
-  }
+type UserBlock = BetaTextBlockParam | BetaImageBlockParam | Extract<BetaContentBlockParam, { type: "document" }>;
+function userBlock(block: ContentBlock, media: RequestMedia): UserBlock[] {
+  if (block.type === "text") return block.text ? [{ type: "text", text: block.text }] : [];
+  if (block.type !== "media") return [];
+  const encoded = media.get(block.media) ?? mediaPlaceholder(block.media);
+  if (encoded.type === "text") return [encoded];
+  const { mimeType } = block.media;
+  if (mimeType === "application/pdf")
+    return [{ type: "document", source: { type: "base64", media_type: mimeType, data: encoded.data } }];
+  if (mimeType === "image/png" || mimeType === "image/jpeg" || mimeType === "image/gif" || mimeType === "image/webp")
+    return [{ type: "image", source: { type: "base64", media_type: mimeType, data: encoded.data } }];
+  // The SDK types only list known modalities/MIMEs. Unknown models get the base64 source
+  // envelope optimistically; a definite capability denial was already replaced by text.
+  return [
+    { type: mediaKind(mimeType), source: { type: "base64", media_type: mimeType, data: encoded.data } } as UserBlock,
+  ];
 }
 
-function assistantBlock(block: ContentBlock): BetaContentBlockParam[] {
+function assistantBlock(block: ContentBlock, media: RequestMedia): BetaContentBlockParam[] {
   switch (block.type) {
+    case "media":
+      return userBlock(block, media);
     case "text":
       return block.text.trim() ? [{ type: "text", text: block.text }] : [];
     case "thinking":
@@ -256,12 +279,14 @@ function assistantBlock(block: ContentBlock): BetaContentBlockParam[] {
           name: block.name as BetaServerToolUseBlockParam["name"],
           input: block.input,
         },
-        ...(block.result ? [block.result.raw as BetaContentBlockParam] : []),
+        ...(block.result ? [hydrateMedia(block.result.raw, media) as BetaContentBlockParam] : []),
       ];
     case "compaction":
-      return block.raw ? [block.raw as BetaContentBlockParam] : [{ type: "text", text: block.summary }];
+      return block.raw
+        ? [hydrateMedia(block.raw, media) as BetaContentBlockParam]
+        : [{ type: "text", text: block.summary }];
     case "provider":
-      return [block.raw as BetaContentBlockParam];
+      return [hydrateMedia(block.raw, media) as BetaContentBlockParam];
     default:
       return [];
   }

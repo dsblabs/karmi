@@ -79,6 +79,10 @@ export async function* mapStream(
 }
 
 function* mapPart(part: LanguageModelV4StreamPart, blocks: Blocks): Iterable<ProviderEvent> {
+  if (part.type === "file") {
+    yield blocks.part({ type: "provider", raw: part });
+    return;
+  }
   if (part.type === "raw") {
     yield { type: "raw", raw: part.rawValue };
     return;

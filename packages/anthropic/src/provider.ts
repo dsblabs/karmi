@@ -2,6 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { BetaRawMessageStreamEvent } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import {
   retry,
+  prepareMedia,
+  ingestProviderEvent,
   type Provider,
   type ProviderCallOptions,
   type ProviderConfig,
@@ -54,7 +56,7 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
       let gateway: { provider: "cloudflare"; id: string } | undefined;
       try {
         const api = await client(request.config, call);
-        const params = buildParams(request);
+        const params = buildParams(request, await prepareMedia(request, call, capabilities(request.model)));
         // Retrying is only safe before the first byte: karmi retries the connection, never a stream.
         const attempts = request.config.gateway?.retry ? 1 : 3;
         const { data, response } = await retry(
@@ -69,7 +71,8 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
         return;
       }
       try {
-        yield* mapStream(events, { logger, raw: anthropicOptions(request).raw, gateway });
+        for await (const event of mapStream(events, { logger, raw: anthropicOptions(request).raw, gateway }))
+          yield await ingestProviderEvent(event, call);
       } catch (error) {
         yield { type: "error", error: failure(error) };
       }
@@ -77,9 +80,12 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
     async countTokens(request, call) {
       try {
         const api = await client(request.config, call);
-        const { input_tokens } = await api.beta.messages.countTokens(countTokensParams(request), {
-          signal: call.signal,
-        });
+        const { input_tokens } = await api.beta.messages.countTokens(
+          countTokensParams(request, await prepareMedia(request, call, capabilities(request.model))),
+          {
+            signal: call.signal,
+          },
+        );
         return { tokens: input_tokens };
       } catch (error) {
         return { error: failure(error) };

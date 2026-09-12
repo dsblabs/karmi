@@ -21,3 +21,5 @@ A Provider profile decides how the adapter reaches Anthropic:
 What streams back is karmi's own vocabulary: text, adaptive thinking with signatures, tool calls, server-tool calls joined with their byte-exact results, compaction and fallback blocks, `stop_details`, and cumulative usage including the 1h cache split. `providerOptions.anthropic` forwards `thinking`, `effort`, `fallbacks`, `contextManagement`, `taskBudget`, `serverTools`, `mcpServers`, `cache` and `betas`; the betas each feature needs are added for you. A Harness `compact` request becomes a forced `compact_20260112` edit that pauses with the block, so a Provider profile with `compaction: "provider"` delegates Compaction to the API.
 
 Every request goes through the `fetch` karmi injects, so a Scope's egress policy applies before the SDK sees a byte.
+
+Media refs are read through the call's `media` access and encoded as base64 image/PDF blocks, including in Tool results and token-count requests. Definite capability denials, oversized refs and missing R2 objects become text placeholders. Native MCP image content is stored before being emitted, then restored when replayed to Anthropic.

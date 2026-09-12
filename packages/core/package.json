@@ -5,7 +5,11 @@
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
-  "files": ["dist", "wrangler.baseline.jsonc", "LICENSE"],
+  "files": [
+    "dist",
+    "wrangler.baseline.jsonc",
+    "LICENSE"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -35,5 +39,10 @@
     "vitest": "^4.1.11",
     "wrangler": "^4.129.0",
     "zod": "^4.5.4"
+  },
+  "dependencies": {
+    "aws4fetch": "^1.0.20",
+    "file-type": "^22.1.0",
+    "ulid": "^3.0.2"
   }
 }

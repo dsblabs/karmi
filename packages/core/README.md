@@ -156,3 +156,21 @@ The Thread remembers the last supplied `channelRef.deliverer`; inputs without on
 Delivery uses the persisted event log at the Deliverer's granularity, including Approval events. Successive ranges in a Turn do not overlap. Without a Deliverer, output stays available through `events()` and `subscribe()`.
 
 Delivery is at-least-once, independent of Turn success; deduplicate side effects using the Thread key and event `seq` within your Channel's Scope. Queued delivery and late delivery alarms skip destroyed Scopes. Configure `KARMI_QUEUE` and export `karmi.queueHandler`; the published Wrangler baseline retries three times and routes exhausted messages to `my-karmi-dlq`. Create both queues when provisioning the deployment and operate the DLQ using [Cloudflare's dead-letter queue guidance](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/).
+
+Media travels as refs. Bind `KARMI_MEDIA` to R2, then upload through the owning Thread:
+
+```ts
+const media = await thread.uploads.put(request.body, {
+  mimeType: "application/pdf",
+  name: "report.pdf",
+});
+await thread.send({ kind: "message", parts: [{ type: "file", media }] });
+```
+
+A ref has `{ id, key, mimeType, bytes, name? }`. karmi sniffs the MIME (using the caller's claim when it cannot identify the bytes), measures the stream, and mints a ULID under `{scope}/media/{threadId}/`. `defaults.media` and `scope.config.set({ media })` accept `maxBytes` (100 MiB by default) and optional `allowedTypes` (MIME names or wildcards such as `image/*`). Scope limits can only tighten the Deployment limits. Overflow aborts the multipart upload. Tools use `ctx.media.put(body, { mimeType, name })` under the same limits; native Tool/MCP image blocks and generated model images become refs before persistence.
+
+Adapters read refs through `ProviderCallOptions.media` and inline base64 when building a request. Images and PDFs are supported; audio and video follow model capabilities, with unknowns sent optimistically. A non-PDF `file` Part is always described as text. Unsupported or oversized media and unavailable objects become placeholders. The test kit uses the Worker's local R2 binding.
+
+For read URLs, configure `createKarmi({ media: { accountId, bucket, accessKeyId, secretAccessKey } })` with R2 S3 credentials from Worker secrets. `await karmi.media.url(ref, { ttl: 300 })` returns a presigned GET; `ttl` is seconds, from 1 through 604800. Signing credentials stay outside Scope config and Thread state.
+
+`await thread.delete()` immediately tombstones the Thread and stops new work. Its scheduler removes media and Tool-output spill in batches, then clears conversation rows and the Scope's Thread index. Only the deletion marker remains, preventing reuse of that Thread identity. Media has no TTL. Forks share refs with their source Thread, so deleting the source makes those attachments unavailable in its forks.

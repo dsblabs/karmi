@@ -1,3 +1,4 @@
+import { DEFAULT_MEDIA_BYTES, matchesType } from "./media";
 import * as z from "zod/mini";
 import {
   CapabilityLimitSchemas,
@@ -90,6 +91,12 @@ const CeilingsSchema = z.strictObject({
 });
 
 export const ScopeConfigSchema = z.strictObject({
+  media: z.optional(
+    z.strictObject({
+      maxBytes: z.optional(positiveInt),
+      allowedTypes: z.optional(z.array(z.string().check(z.minLength(1)))),
+    }),
+  ),
   providers: z.optional(z.record(name, ProviderConfigSchema)),
   ceilings: z.optional(CeilingsSchema),
   policy: z.optional(z.array(PolicyRuleSchema)),
@@ -146,6 +153,7 @@ export interface Ceilings {
 
 /** One Scope's configuration, or the Deployment defaults: the same shape at both layers. */
 export interface ScopeConfigDocument {
+  media?: { maxBytes?: number; allowedTypes?: string[] };
   providers?: Record<string, ProviderConfig>;
   ceilings?: Ceilings;
   /** Scope-wide Permission Policy rules, consulted before an Agent Spec's own. */
@@ -198,6 +206,7 @@ const tierRank = (tier: unknown) => TIER_ORDER.findIndex((known) => known === ti
  */
 export function resolveScopeConfig(deployment: ScopeConfigDocument, scope: ScopeConfigDocument): ScopeConfigDocument {
   const resolved: ScopeConfigDocument = {};
+  if (deployment.media || scope.media) resolved.media = mergeMedia(deployment.media ?? {}, scope.media ?? {});
   if (deployment.providers || scope.providers) resolved.providers = { ...deployment.providers, ...scope.providers };
   if (deployment.ceilings || scope.ceilings)
     resolved.ceilings = mergeCeilings(deployment.ceilings ?? {}, scope.ceilings ?? {});
@@ -229,4 +238,24 @@ function tighten(a: Record<string, unknown>, b: Record<string, unknown>): Record
     else out[key] = tighten(x as Record<string, unknown>, y as Record<string, unknown>);
   }
   return out;
+}
+
+function mergeMedia(
+  a: NonNullable<ScopeConfigDocument["media"]>,
+  b: NonNullable<ScopeConfigDocument["media"]>,
+): NonNullable<ScopeConfigDocument["media"]> {
+  const allowedTypes =
+    a.allowedTypes && b.allowedTypes
+      ? [
+          ...new Set(
+            a.allowedTypes.flatMap(
+              (x) => b.allowedTypes?.flatMap((y) => (matchesType(x, y) ? [y] : matchesType(y, x) ? [x] : [])) ?? [],
+            ),
+          ),
+        ]
+      : (a.allowedTypes ?? b.allowedTypes);
+  return {
+    maxBytes: Math.min(a.maxBytes ?? DEFAULT_MEDIA_BYTES, b.maxBytes ?? a.maxBytes ?? DEFAULT_MEDIA_BYTES),
+    ...(allowedTypes && { allowedTypes }),
+  };
 }

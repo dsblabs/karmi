@@ -1,3 +1,4 @@
+import type { MediaWriter } from "./media";
 import type { Logger, MediaRef } from "./context";
 import type { JsonSchema } from "./schema";
 import type { ProviderConfig } from "./scope-config";
@@ -144,6 +145,7 @@ export interface ModelCapabilities {
 }
 
 export interface ProviderCallOptions {
+  media?: MediaWriter & { get(ref: MediaRef): Promise<ArrayBuffer | undefined> };
   /** The per-Scope `scopedFetch`; an adapter never reaches for the global. */
   fetch: typeof fetch;
   signal: AbortSignal;

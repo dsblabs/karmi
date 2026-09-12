@@ -195,7 +195,7 @@ describe("request building", () => {
         role: "user",
         content: [
           { type: "text", text: "Search and book" },
-          { type: "text", text: "[attachment omitted: pic.png (image/png, 10 bytes)]" },
+          { type: "text", text: "[media unavailable]" },
         ],
       },
       {
