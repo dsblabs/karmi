@@ -1,6 +1,14 @@
-import type { LanguageModelV4CallOptions, LanguageModelV4Message, LanguageModelV4TextPart } from "@ai-sdk/provider";
+import type {
+  LanguageModelV4CallOptions,
+  LanguageModelV4Message,
+  LanguageModelV4TextPart,
+  LanguageModelV4FilePart,
+} from "@ai-sdk/provider";
 import {
   loadedToolNames,
+  mediaPlaceholder,
+  hydrateMedia,
+  type RequestMedia,
   type ContentBlock,
   type Message,
   type ProviderRequest,
@@ -12,13 +20,17 @@ import { metadataSchema, providerOptions } from "./options";
 
 type AssistantPart = Extract<LanguageModelV4Message, { role: "assistant" }>["content"][number];
 
-export function buildRequest(request: ProviderRequest, call: ProviderCallOptions): LanguageModelV4CallOptions {
+export function buildRequest(
+  request: ProviderRequest,
+  call: ProviderCallOptions,
+  media: RequestMedia = new Map(),
+): LanguageModelV4CallOptions {
   const { reasoning, ...params } = request.params ?? {};
   const result: LanguageModelV4CallOptions = {
     ...params,
     prompt: [
       ...(request.system ? [{ role: "system" as const, content: request.system }] : []),
-      ...request.messages.map(message),
+      ...request.messages.map((value) => message(value, media)),
     ],
     abortSignal: call.signal,
     includeRawChunks: true,
@@ -41,14 +53,14 @@ export function buildRequest(request: ProviderRequest, call: ProviderCallOptions
   return result;
 }
 
-function message(value: Message): LanguageModelV4Message {
+function message(value: Message, media: RequestMedia): LanguageModelV4Message {
   switch (value.role) {
     case "system":
       return value;
     case "user":
-      return { role: "user", content: value.content.map(userPart) };
+      return { role: "user", content: value.content.map((block) => userPart(block, media)) };
     case "assistant":
-      return { role: "assistant", content: value.content.flatMap(assistantPart) };
+      return { role: "assistant", content: value.content.flatMap((block) => assistantPart(block, media)) };
     case "toolResult":
       return {
         role: "tool",
@@ -57,31 +69,30 @@ function message(value: Message): LanguageModelV4Message {
             type: "tool-result",
             toolCallId: value.toolCallId,
             toolName: value.toolName,
-            output: {
-              type: value.isError ? "error-text" : "text",
-              value: value.content
-                .map((block) => userPart(block))
-                .map((part) => part.text)
-                .join("\n"),
-            },
+            output: toolOutput(value, media),
           },
         ],
       };
   }
 }
 
-function userPart(block: ContentBlock): LanguageModelV4TextPart {
+function userPart(block: ContentBlock, media: RequestMedia): LanguageModelV4TextPart | LanguageModelV4FilePart {
   if (block.type === "text") return { type: "text", text: block.text };
   if (block.type === "tool_reference") return { type: "text", text: `Tool "${block.name}" is now loaded.` };
-  if (block.type === "media")
+  if (block.type === "media") {
+    const encoded = media.get(block.media) ?? mediaPlaceholder(block.media);
+    if (encoded.type === "text") return encoded;
     return {
-      type: "text",
-      text: `[attachment omitted: ${block.media.name ?? block.media.id} (${block.media.mimeType}, ${block.media.bytes} bytes)]`,
+      type: "file",
+      data: { type: "data", data: encoded.data },
+      mediaType: block.media.mimeType,
+      ...(block.media.name && { filename: block.media.name }),
     };
+  }
   throw new InvalidRequestError(`Unsupported user content: ${block.type}`);
 }
 
-function assistantPart(block: ContentBlock): AssistantPart[] {
+function assistantPart(block: ContentBlock, media: RequestMedia): AssistantPart[] {
   const providerOptions = block.providerMetadata ? metadataSchema.parse(block.providerMetadata) : undefined;
   const meta = providerOptions ? { providerOptions } : {};
   switch (block.type) {
@@ -94,18 +105,19 @@ function assistantPart(block: ContentBlock): AssistantPart[] {
     case "compaction":
       return [{ type: "text", text: block.summary, ...meta }];
     case "server_tool":
-      return serverTool(block, meta);
+      return serverTool(block, meta, media);
     case "provider":
       return [];
     case "media":
     case "tool_reference":
-      return [userPart(block)];
+      return [{ ...userPart(block, media), ...meta }];
   }
 }
 
 function serverTool(
   block: Extract<ContentBlock, { type: "server_tool" }>,
   meta: { providerOptions?: ReturnType<typeof metadataSchema.parse> },
+  media: RequestMedia,
 ): AssistantPart[] {
   const parts: AssistantPart[] = [
     {
@@ -118,7 +130,7 @@ function serverTool(
     },
   ];
   if (block.result) {
-    const result = resultSchema.parse(block.result.raw);
+    const result = resultSchema.parse(hydrateMedia(block.result.raw, media));
     parts.push({
       type: "tool-result",
       toolCallId: block.id,
@@ -136,3 +148,13 @@ const resultSchema = z.object({
   isError: z.boolean().optional(),
   providerMetadata: metadataSchema.optional(),
 });
+
+function toolOutput(value: Extract<Message, { role: "toolResult" }>, media: RequestMedia) {
+  const parts = value.content.map((block) => userPart(block, media));
+  if (parts.every((part) => part.type === "text"))
+    return {
+      type: value.isError ? ("error-text" as const) : ("text" as const),
+      value: parts.map((part) => part.text).join("\n"),
+    };
+  return { type: "content" as const, value: parts };
+}

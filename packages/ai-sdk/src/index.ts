@@ -1,5 +1,12 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
-import type { Provider, ProviderCallOptions, ProviderConfig, ModelCapabilities } from "@karmi/core";
+import {
+  prepareMedia,
+  ingestProviderEvent,
+  type Provider,
+  type ProviderCallOptions,
+  type ProviderConfig,
+  type ModelCapabilities,
+} from "@karmi/core";
 import { mapProviderOptions } from "./options";
 import { buildRequest } from "./request";
 import { mapStream } from "./stream";
@@ -20,14 +27,16 @@ export function aiSdk(model: ModelFactory): Provider {
     async *stream(request, call) {
       try {
         call.signal.throwIfAborted();
-        const params = buildRequest(request, call);
         const api = await model({ ...call, modelId: request.model, config: request.config });
-        known.set(request.model, capabilities(await api.supportedUrls));
+        const supported = capabilities(await api.supportedUrls);
+        known.set(request.model, supported);
+        const params = buildRequest(request, call, await prepareMedia(request, call, supported));
         params.providerOptions = mapProviderOptions(params.providerOptions ?? {}, request, api.provider);
         call.signal.throwIfAborted();
         const result = await api.doStream(params);
         const gatewayId = request.config.gateway ? result.response?.headers?.["cf-aig-log-id"] : undefined;
-        yield* mapStream(result.stream, api.modelId, api.provider, gatewayId);
+        for await (const event of mapStream(result.stream, api.modelId, api.provider, gatewayId))
+          yield await ingestProviderEvent(event, call);
       } catch (error) {
         yield {
           type: "error",

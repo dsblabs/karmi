@@ -1,3 +1,6 @@
+import { mediaAccess, putMedia, type MediaBody, type MediaOptions } from "./media";
+import { resolveScopeConfig, type ScopeConfigDocument } from "./scope-config";
+import type { MediaRef } from "./context";
 import { AGENT_SPEC_DEFAULTS } from "./agent-spec";
 import type { AgentSpec, Capabilities, PolicyRule } from "./agent";
 import type { KarmiBindings } from "./bindings";
@@ -59,6 +62,7 @@ import { resolveToolSet, toolDefinitions, toolsInContext, unloadedDeferred, type
 import { splitModelId, transcriptFromEvents } from "./transcript";
 
 const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS deleted (id INTEGER PRIMARY KEY CHECK (id = 1));
   CREATE TABLE IF NOT EXISTS thread (scope_id TEXT NOT NULL, agent_id TEXT NOT NULL, user_id TEXT, thread_id TEXT NOT NULL, created_at INTEGER NOT NULL, state TEXT NOT NULL, turn INTEGER NOT NULL, step INTEGER NOT NULL, attempt INTEGER NOT NULL, recoveries INTEGER NOT NULL, agent_version INTEGER, snapshot_json TEXT, usage_json TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, turn INTEGER NOT NULL, at INTEGER NOT NULL, type TEXT NOT NULL, json TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS events_turn_seq ON events (turn, seq);
@@ -84,6 +88,7 @@ const CANCELLED = Symbol("cancelled");
 
 /** What a Turn runs under, persisted locally at its first Step so a Spec change lands on the next Turn. */
 export interface TurnSnapshot {
+  media?: ScopeConfigDocument["media"];
   agentVersion: number;
   /** Stored normalized; a JSON round trip already dropped every explicit `undefined`. */
   spec: AgentSpec;
@@ -191,6 +196,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   // Every entry point: an explicit key creates the Thread on first touch, a bare key never does, and a
   // Thread answers only to the identity it was created with.
   private enter(address: ThreadAddress): Outcome<ThreadRow> {
+    if (this.sql.exec("SELECT id FROM deleted").toArray().length)
+      return fail(new KarmiError("thread.deleted", "This Thread has been deleted."));
     let row = this.sql.exec<ThreadRow>("SELECT * FROM thread").toArray()[0];
     if (!row) {
       if (!address.create)
@@ -234,6 +241,95 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       );
     }
     return ok(row);
+  }
+
+  async upload(address: ThreadAddress, body: MediaBody, options: MediaOptions): Promise<Outcome<MediaRef>> {
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    const config = await this.scopeStub(entered.value).configGet(address.scope);
+    if (!config.ok) return config;
+    const limits = resolveScopeConfig(this.deployment.defaults, config.value.document).media;
+    try {
+      const ref = await putMedia(
+        { bucket: this.env.KARMI_MEDIA, scope: address.scope, threadId: address.threadId, limits },
+        body,
+        options,
+      );
+      if (this.sql.exec("SELECT id FROM deleted").toArray().length) {
+        await this.env.KARMI_MEDIA?.delete(ref.key);
+        return fail(new KarmiError("thread.deleted", "This Thread has been deleted."));
+      }
+      return ok(ref);
+    } catch (error) {
+      if (error instanceof KarmiError) return fail(error);
+      throw error;
+    }
+  }
+
+  delete(address: ThreadAddress): Outcome<void> {
+    if (this.sql.exec("SELECT id FROM deleted").toArray().length) return ok(undefined);
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    this.sql.exec("INSERT INTO deleted (id) VALUES (1)");
+    this.turnAbort.abort();
+    this.sql.exec("DELETE FROM jobs");
+    this.scheduler.set({
+      id: "thread-cleanup",
+      kind: "thread-cleanup",
+      dueAt: this.deployment.clock.now(),
+      payload: address,
+    });
+    for (const wake of this.waiters.splice(0)) wake();
+    return ok(undefined);
+  }
+
+  private async cleanup(address: ThreadAddress): Promise<void> {
+    if (this.active) {
+      this.scheduler.set({
+        id: "thread-cleanup",
+        kind: "thread-cleanup",
+        dueAt: this.deployment.clock.now() + 1000,
+        payload: address,
+      });
+      return;
+    }
+    const bucket = this.env.KARMI_MEDIA;
+    if (bucket)
+      for (const prefix of keys.threadObjects(address.scope, address.threadId)) {
+        const batch = await bucket.list({ prefix, limit: 100 });
+        if (batch.objects.length) {
+          await bucket.delete(batch.objects.map((object) => object.key));
+          this.scheduler.set({
+            id: "thread-cleanup",
+            kind: "thread-cleanup",
+            dueAt: this.deployment.clock.now(),
+            payload: address,
+          });
+          return;
+        }
+      }
+    const forgotten = await remote<ScopeConfigDurableObject>(
+      this.env.KARMI_SCOPES,
+      keys.config(address.scope),
+    ).threadForget(address.scope, address.threadId);
+    if (!forgotten.ok) throw new KarmiError(forgotten.code, forgotten.message);
+    this.ctx.storage.transactionSync(() => {
+      for (const table of ["thread", "events", "inputs", "deliveries", "delivery_route", "jobs"])
+        this.sql.exec(`DELETE FROM ${table}`);
+    });
+    this.head = 0;
+  }
+
+  private media(row: ThreadRow, limits?: ScopeConfigDocument["media"]) {
+    const signal = this.turnAbort.signal;
+    return mediaAccess(this.env.KARMI_MEDIA, row.scope_id, {
+      put: (body, options) =>
+        putMedia(
+          { bucket: this.env.KARMI_MEDIA, scope: row.scope_id, threadId: row.thread_id, limits, signal },
+          body,
+          options,
+        ),
+    });
   }
 
   send(address: ThreadAddress, input: TurnInput, steer = false): Outcome<{ turn: number; seq: number }> {
@@ -608,6 +704,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   protected override async runJob(job: ScheduledJob): Promise<void> {
+    if (job.kind === "thread-cleanup") return this.cleanup(decodeCleanup(job.payload));
+    if (this.sql.exec("SELECT id FROM deleted").toArray().length) return;
     if (job.kind === "delivery") {
       const row = this.row();
       const { toSeq } = job.payload as { toSeq: number };
@@ -656,6 +754,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       // The Catalogue is fixed for the Deployment, so one fingerprint serves every Turn of this run.
       const toolsVersion = await this.deployment.catalogue.fingerprint();
       for (;;) {
+        if (this.sql.exec("SELECT id FROM deleted").toArray().length) return;
         let row = this.row();
         if (row.state !== "idle" && row.cancelled) {
           await this.cancelTurn(row);
@@ -900,6 +999,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         scope: row.scope_id,
         threadId: row.thread_id,
         bucket: this.env.KARMI_MEDIA,
+
         tools: current,
         fragmentContext: () => this.fragmentContext(row, snapshot, current()),
         append: (data) => void this.append(row.turn, data, channelRef),
@@ -1149,6 +1249,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         };
       const ceilings = source.value.config.ceilings ?? {};
       snapshot = {
+        media: source.value.config.media,
         agentVersion: version,
         spec,
         profile,
@@ -1389,7 +1490,13 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const parts: ContentBlock[] = [];
     let usage = ZERO_USAGE;
     try {
-      const stream = provider.stream(request, { fetch: egress, signal: this.turnAbort.signal, attribution, logger });
+      const stream = provider.stream(request, {
+        fetch: egress,
+        signal: this.turnAbort.signal,
+        attribution,
+        logger,
+        media: this.media(row, snapshot.media),
+      });
       for await (const event of stream) {
         if (event.type === "part") parts.push(event.block);
         else if (event.type === "error") return compactionFailed(event.error.message);
@@ -1430,7 +1537,13 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       const hosts = providerHosts(profile);
       const egress = scopedFetch({ ...(hosts && { hosts }), logger });
       const attribution = { scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn };
-      const stream = provider.stream(request, { fetch: egress, signal, attribution, logger });
+      const stream = provider.stream(request, {
+        fetch: egress,
+        signal,
+        attribution,
+        logger,
+        media: this.media(row, snapshot.media),
+      });
       return await this.recordStream(row, stream, signal, channelRef);
     } catch (error) {
       if (isPlatformFailure(error)) throw error;
@@ -1546,6 +1659,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         available: available.available,
         loaded: available.loaded,
         bucket: this.env.KARMI_MEDIA,
+        mediaLimits: snapshot.media,
         logger: this.logger(row),
         signal,
         append: (data) => {
@@ -1644,4 +1758,19 @@ function addUsage(total: Usage, usage: Usage): Usage {
     cacheRead: total.cacheRead + usage.cacheRead,
     cacheWrite: total.cacheWrite + usage.cacheWrite,
   };
+}
+
+function decodeCleanup(value: unknown): ThreadAddress {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("scope" in value) ||
+    typeof value.scope !== "string" ||
+    !("threadId" in value) ||
+    typeof value.threadId !== "string" ||
+    !("agent" in value) ||
+    typeof value.agent !== "string"
+  )
+    throw new Error("Invalid Thread cleanup job.");
+  return { scope: value.scope, threadId: value.threadId, agent: value.agent, create: false };
 }

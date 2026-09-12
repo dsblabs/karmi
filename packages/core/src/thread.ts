@@ -1,3 +1,4 @@
+import type { MediaWriter } from "./media";
 import type { KarmiBindings } from "./bindings";
 import type { ScopeId, UserId } from "./context";
 import { KarmiError } from "./errors";
@@ -81,6 +82,9 @@ export interface ThreadJobs {
 }
 
 export interface Thread {
+  readonly uploads: MediaWriter;
+  /** Tombstones the Thread immediately; durable cleanup runs in scheduler batches. */
+  delete(): Promise<void>;
   /** Opaque and serialisable; `scope.thread(key)` reopens this Thread but never creates it. */
   readonly key: string;
   /**
@@ -125,6 +129,8 @@ export function openThread(bindings: KarmiBindings, scope: ScopeId, target: Thre
   const stub = remote<ThreadDurableObject>(bindings.KARMI_THREADS, keys.thread(scope, identity.threadId));
   return {
     key: encodeKey(identity),
+    uploads: { put: (body, options) => unwrap(stub.upload(address, body, options ?? {})) },
+    delete: () => unwrap(stub.delete(address)),
     send: (input, options) => unwrap(stub.send(address, input, options?.steer === true)),
     approve: (seq, answer) => unwrap(stub.approve(address, seq, answer)),
     cancel: () => unwrap(stub.cancel(address)),

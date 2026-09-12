@@ -379,6 +379,13 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   }
 
   /** Threads of an Agent, most recently active first; `user` narrows to one User, `null` to user-less Threads. */
+  threadForget(scope: ScopeId, threadId: string): Outcome<void> {
+    const head = this.enter(scope, false);
+    if (!head.ok) return head;
+    this.sql.exec("DELETE FROM threads WHERE thread_id = ?", threadId);
+    return ok(undefined);
+  }
+
   threadsList(scope: ScopeId, agent: string, user?: string | null): Outcome<ThreadSummary[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;

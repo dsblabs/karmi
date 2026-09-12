@@ -81,3 +81,5 @@ invalid cost stays absent, including BYOK when the provider does not report it.
 Tests run in workerd with real model packages and deterministic SSE fixtures,
 plus V4 stream fixtures for replay, error and cost edge cases. They make no live
 provider requests.
+
+Media refs become V4 inline file parts at request-build, including Tool-result content. Missing media and non-viewable files become text placeholders; unknown model capabilities send optimistically. Generated files and nested Tool/MCP images are stored through the call's `media.put` before emitting refs. Generated file URLs are fetched through the call's scoped transport before storage.

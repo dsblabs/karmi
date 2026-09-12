@@ -21,3 +21,21 @@ export interface Logger {
   warn(message: string, fields?: Record<string, unknown>): void;
   error(message: string, fields?: Record<string, unknown>): void;
 }
+
+export function isMediaRef(value: unknown): value is MediaRef {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    "id" in value &&
+    "key" in value &&
+    "mimeType" in value &&
+    "bytes" in value &&
+    typeof value.id === "string" &&
+    typeof value.key === "string" &&
+    typeof value.mimeType === "string" &&
+    typeof value.bytes === "number" &&
+    Number.isSafeInteger(value.bytes) &&
+    value.bytes >= 0 &&
+    (!("name" in value) || value.name === undefined || typeof value.name === "string")
+  );
+}

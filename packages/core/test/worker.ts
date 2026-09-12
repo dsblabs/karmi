@@ -8,6 +8,7 @@ import {
   defineSkill,
   defineTool,
   type ToolContext,
+  type ToolOutcome,
   type ToolResult,
 } from "../src/index";
 import { createTestKarmi } from "../src/testing/index";
@@ -369,7 +370,7 @@ const librarian = defineAgent({
 const librarianWide = defineAgent({ ...librarianSpec, agentId: "librarian-wide" });
 
 export const recovery = {
-  execute: async (_input: { id: string }, _ctx: ToolContext): Promise<string> => "done",
+  execute: async (_input: { id: string }, _ctx: ToolContext): Promise<ToolOutcome> => "done",
   before: [] as string[],
   after: [] as ToolResult[],
 };
@@ -410,43 +411,53 @@ const recoveryAgent = defineAgent({
   hooks: { "before-tool": ["recovery-before"], "after-tool": ["recovery-after"] },
 });
 
-export const { karmi, clock, provider, scope } = createTestKarmi({
-  deliverers: [
-    receipt,
-    defineDeliverer({ name: "receipt-parts", deliver: receipt.deliver }),
-    defineDeliverer({ name: "receipt-deltas", granularity: "delta", deliver: receipt.deliver }),
-  ],
-  tools: [weather, lookup, book, bigOutput, whoami, failing, startJob, waitGate, ...recoveryTools, ...shelves],
-  fragments: [guest],
-  skills: [research, deploy],
-  hooks: [
-    recoveryBefore,
-    recoveryAfter,
-    rewriteCity,
-    denyBooking,
-    denyLookup,
-    observe,
-    turnLog,
-    turnEnd,
-    slowTurnEnd,
-    onError,
-    compactGate,
-    compactLog,
-  ],
-  agents: [
-    recoveryAgent,
-    concierge,
-    guarded,
-    asking,
-    hooked,
-    approver,
-    budgeted,
-    compactor,
-    providerCompactor,
-    librarian,
-    librarianWide,
-  ],
-});
+export const { karmi, clock, provider, scope } = createTestKarmi(
+  {
+    deliverers: [
+      receipt,
+      defineDeliverer({ name: "receipt-parts", deliver: receipt.deliver }),
+      defineDeliverer({ name: "receipt-deltas", granularity: "delta", deliver: receipt.deliver }),
+    ],
+    tools: [weather, lookup, book, bigOutput, whoami, failing, startJob, waitGate, ...recoveryTools, ...shelves],
+    fragments: [guest],
+    skills: [research, deploy],
+    hooks: [
+      recoveryBefore,
+      recoveryAfter,
+      rewriteCity,
+      denyBooking,
+      denyLookup,
+      observe,
+      turnLog,
+      turnEnd,
+      slowTurnEnd,
+      onError,
+      compactGate,
+      compactLog,
+    ],
+    agents: [
+      recoveryAgent,
+      concierge,
+      guarded,
+      asking,
+      hooked,
+      approver,
+      budgeted,
+      compactor,
+      providerCompactor,
+      librarian,
+      librarianWide,
+    ],
+  },
+  {
+    media: {
+      accountId: "test-account",
+      bucket: "karmi-test-media",
+      accessKeyId: "test-access",
+      secretAccessKey: "test-secret",
+    },
+  },
+);
 
 export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
 

@@ -1,3 +1,4 @@
+import { mediaUrls, type MediaUrlOptions } from "./media-url";
 import { env } from "cloudflare:workers";
 import { resolveBindings, type BindingsResolver } from "./bindings";
 import { assembleCatalogue, type Catalogue, type CatalogueInput } from "./catalogue";
@@ -12,6 +13,7 @@ import { openScope, type Scope } from "./scope";
 
 export interface KarmiOptions<Env = unknown> {
   catalogue: CatalogueInput;
+  media?: MediaUrlOptions;
   clock?: Clock;
   /** Deployment-wide layer every Scope inherits and may only tighten: the same shape as a Scope config. */
   defaults?: ScopeConfigDocument;
@@ -20,6 +22,7 @@ export interface KarmiOptions<Env = unknown> {
 }
 
 export interface Karmi {
+  readonly media: ReturnType<typeof mediaUrls>;
   readonly durableObjects: DurableObjects;
   readonly catalogue: Catalogue;
   readonly queueHandler: ExportedHandlerQueueHandler;
@@ -39,6 +42,7 @@ export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
   const durableObjects = makeDurableObjects(deployment);
   const bindings = resolveBindings(env as Env, options.bindings);
   return {
+    media: mediaUrls(options.media),
     durableObjects,
     catalogue: deployment.catalogue,
     queueHandler: deliveryQueueHandler(bindings, deployment.catalogue),

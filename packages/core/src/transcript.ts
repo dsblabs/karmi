@@ -1,3 +1,4 @@
+import { filePlaceholder } from "./media-request";
 import { summaryMessages } from "./compaction";
 import type { ContentBlock, Message } from "./provider";
 import type { ThreadEvent, TurnInput } from "./thread-events";
@@ -81,7 +82,11 @@ const userText = (text: string): Message => ({ role: "user", content: [{ type: "
 export function inputContent(input: TurnInput): ContentBlock[] {
   if (input.kind === "event") return [{ type: "text", text: renderEvent(input) }];
   return input.parts.map((part) =>
-    part.type === "text" ? { type: "text", text: part.text } : { type: "media", media: part.media },
+    part.type === "text"
+      ? { type: "text", text: part.text }
+      : part.type === "file" && part.media.mimeType !== "application/pdf"
+        ? filePlaceholder(part.media)
+        : { type: "media", media: part.media },
   );
 }
 
