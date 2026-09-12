@@ -24,6 +24,7 @@ export {
   type RecordingProvider,
 } from "./recording";
 export { createTestKarmi, type TestKarmi, type TestScope, type TestThread } from "./test-karmi";
+export { memorySecrets, type MemorySecrets } from "./memory-secrets";
 export { matchers, lastMessage, type EventPartial } from "./matchers";
 
 export type { TestClock } from "./clock";

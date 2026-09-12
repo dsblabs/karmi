@@ -17,14 +17,9 @@ import { anthropicOptions } from "./options";
 import { buildParams, countTokensParams } from "./request";
 import { mapStream } from "./stream";
 
-/** Resolves a profile's credential reference (`scope:<name>` or `deployment:<name>`) to its value. */
-export type CredentialResolver = (ref: string) => string | undefined | Promise<string | undefined>;
-
 export interface AnthropicProviderOptions {
-  /** The key for profiles that name no `credential`. */
+  /** The key for profiles that name no `credential`; a profile's own reference is resolved by karmi and handed to each call. */
   apiKey?: string;
-  /** How `credential` references resolve, as a map or a function; the secret store's seam until it lands. */
-  credentials?: Record<string, string> | CredentialResolver;
 }
 
 /** The SDK's default credential chain reads local config and environment; karmi always says where a key comes from. */
@@ -44,10 +39,7 @@ const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
 /** The Anthropic Provider: `createKarmi({ providers: { anthropic: anthropic({ apiKey }) } })`. */
 export function anthropic(options: AnthropicProviderOptions = {}): Provider {
-  const resolve = toResolver(options.credentials);
-
-  const client = (config: ProviderConfig, call: ProviderCallOptions) =>
-    createClient(config, call, resolve, options.apiKey);
+  const client = (config: ProviderConfig, call: ProviderCallOptions) => createClient(config, call, options.apiKey);
 
   return {
     async *stream(request, call): AsyncIterable<ProviderEvent> {
@@ -55,7 +47,7 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
       let events: AsyncIterable<BetaRawMessageStreamEvent>;
       let gateway: { provider: "cloudflare"; id: string } | undefined;
       try {
-        const api = await client(request.config, call);
+        const api = client(request.config, call);
         const params = buildParams(request, await prepareMedia(request, call, capabilities(request.model)));
         // Retrying is only safe before the first byte: karmi retries the connection, never a stream.
         const attempts = request.config.gateway?.retry ? 1 : 3;
@@ -79,7 +71,7 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
     },
     async countTokens(request, call) {
       try {
-        const api = await client(request.config, call);
+        const api = client(request.config, call);
         const { input_tokens } = await api.beta.messages.countTokens(
           countTokensParams(request, await prepareMedia(request, call, capabilities(request.model))),
           {
@@ -95,19 +87,15 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
   };
 }
 
-async function createClient(
-  config: ProviderConfig,
-  call: ProviderCallOptions,
-  resolve: CredentialResolver,
-  defaultKey: string | undefined,
-): Promise<Client> {
+// The credentials are exposed here and nowhere else: they go into the client for this one call.
+function createClient(config: ProviderConfig, call: ProviderCallOptions, defaultKey: string | undefined): Client {
   const byok = config.gateway?.byok === true;
-  const apiKey = byok ? undefined : config.credential ? await resolve(config.credential) : defaultKey;
+  const apiKey = byok ? undefined : config.credential ? call.credentials?.provider?.expose() : defaultKey;
   if (!byok && !apiKey)
     throw new ProviderFailure({
       code: "auth",
       message: config.credential
-        ? `Credential "${config.credential}" did not resolve.`
+        ? `Credential "${config.credential}" was not resolved for this call.`
         : "The Provider profile names no credential and the adapter has no apiKey.",
       retryable: false,
     });
@@ -116,11 +104,11 @@ async function createClient(
     if (name.toLowerCase() !== "anthropic-beta") headers[name] = value;
   let baseURL = config.baseUrl;
   if (config.gateway) {
-    const token = config.gateway.credential ? await resolve(config.gateway.credential) : undefined;
+    const token = config.gateway.credential ? call.credentials?.gateway?.expose() : undefined;
     if (config.gateway.credential && !token)
       throw new ProviderFailure({
         code: "auth",
-        message: `Gateway credential "${config.gateway.credential}" did not resolve.`,
+        message: `Gateway credential "${config.gateway.credential}" was not resolved for this call.`,
         retryable: false,
       });
     const gateway = gatewaySettings(config.gateway, token, call.attribution);
@@ -142,10 +130,4 @@ async function createClient(
 
 function failure(error: unknown): ProviderError {
   return error instanceof ProviderFailure ? error.error : toProviderError(error);
-}
-
-function toResolver(credentials: AnthropicProviderOptions["credentials"]): CredentialResolver {
-  if (credentials === undefined) return () => undefined;
-  if (typeof credentials === "function") return credentials;
-  return (ref) => credentials[ref];
 }

@@ -4,7 +4,7 @@ import type { AgentSpec, Capabilities, MemoryProfileProperty } from "./agent";
 import type { Catalogue } from "./catalogue";
 import { matchGlob } from "./glob";
 import { BUILT_IN_TOOL_NAMES, IDENTIFIER } from "./names";
-import type { Ceilings, ScopeConfigDocument } from "./scope-config";
+import { chooseProfile, type Ceilings, type ProviderConfig, type ScopeConfigDocument } from "./scope-config";
 import type { Schema } from "./schema";
 import type { Tool } from "./tool";
 
@@ -73,6 +73,8 @@ export type ValidationResult =
 export interface ScopeContext {
   config: ScopeConfigDocument;
   agents: readonly { agentId: string; spec: AgentSpec }[];
+  /** The Deployment's own profiles, where a profile's `fallback.profile` points; `config.providers` when absent. */
+  deploymentProviders?: Record<string, ProviderConfig>;
 }
 
 interface McpReference {
@@ -509,11 +511,18 @@ class ScopeChecker {
   private provider(): void {
     const { model } = this.spec;
     const providers = this.scope.config.providers ?? {};
-    // A Spec may leave the choice open only when the Scope has just one profile; there is no magic name.
-    const profileName =
-      model.providerProfile ?? (Object.keys(providers).length === 1 ? Object.keys(providers)[0] : undefined);
-    if (profileName === undefined) {
+    const chosen = chooseProfile(model.providerProfile, providers);
+    if (!chosen) {
       const profiles = Object.keys(providers);
+      if (model.providerProfile !== undefined) {
+        this.issues.error(
+          "provider.profile.unknown",
+          "/model/providerProfile",
+          `Provider profile "${model.providerProfile}" is not configured for this Scope.`,
+          { profile: model.providerProfile },
+        );
+        return;
+      }
       const hint =
         profiles.length === 0
           ? "the Scope has no Provider profiles"
@@ -521,25 +530,21 @@ class ScopeChecker {
       this.issues.error("provider.profile.required", "/model", `Set model.providerProfile: ${hint}.`, { profiles });
       return;
     }
-    const profile = providers[profileName];
-    if (!profile) {
-      this.issues.error(
-        "provider.profile.unknown",
-        "/model/providerProfile",
-        `Provider profile "${profileName}" is not configured for this Scope.`,
-        { profile: profileName },
-      );
-      return;
-    }
-    const globs = profile.models ?? [`${profile.adapter}/*`];
+    const { name: profileName, profile } = chosen;
+    // Every model the Spec may run must be served by the profile and, when it falls back, by that profile too.
+    const serving: [string, ProviderConfig][] = [[profileName, profile]];
+    const target = profile.fallback && (this.scope.deploymentProviders ?? providers)[profile.fallback.profile];
+    if (profile.fallback && target) serving.push([profile.fallback.profile, target]);
     const check = (id: string, path: string) => {
-      if (!globs.some((glob) => matchGlob(glob, id))) {
-        this.issues.error(
-          "provider.model.unsupported",
-          path,
-          `Provider profile "${profileName}" does not serve "${id}".`,
-          { profile: profileName, model: id, models: globs },
-        );
+      for (const [name, served] of serving) {
+        const globs = served.models ?? [`${served.adapter}/*`];
+        if (!globs.some((glob) => matchGlob(glob, id))) {
+          this.issues.error("provider.model.unsupported", path, `Provider profile "${name}" does not serve "${id}".`, {
+            profile: name,
+            model: id,
+            models: globs,
+          });
+        }
       }
     };
     check(model.id, "/model/id");

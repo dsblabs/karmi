@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderConfig } from "@karmi/core";
+import { sensitive, type ProviderConfig } from "@karmi/core";
 import { anthropic } from "../src/index";
 import text from "./fixtures/text.sse?raw";
 import { collect, request, serve } from "./helpers";
@@ -19,9 +19,13 @@ const gateway = (extra: Partial<ProviderConfig["gateway"] & object> = {}): Provi
 
 describe("AI Gateway", () => {
   it("routes to the gateway with the gateway token, BYOK sends no provider auth header, and captures cf-aig-log-id", async () => {
-    const provider = anthropic({ credentials: { "deployment:aig": "cf-token" } });
+    const provider = anthropic();
     const server = serve({ sse: text, headers: { "cf-aig-log-id": "log-123" } });
-    const events = await collect(provider, request({ config: gateway() }), { fetch: server.fetch, attribution });
+    const events = await collect(provider, request({ config: gateway() }), {
+      fetch: server.fetch,
+      attribution,
+      credentials: { gateway: sensitive("cf-token") },
+    });
     const call = server.calls[0]!;
     expect(call.url).toBe("https://gateway.ai.cloudflare.com/v1/acct/gw/anthropic/v1/messages?beta=true");
     expect(call.headers["cf-aig-authorization"]).toBe("Bearer cf-token");
@@ -40,19 +44,18 @@ describe("AI Gateway", () => {
   });
 
   it("forwards the provider key through the gateway when the profile holds its own credential", async () => {
-    const provider = anthropic({
-      credentials: (ref) => ({ "scope:anthropic": "sk-scope", "deployment:aig": "cf-token" })[ref],
-    });
+    const provider = anthropic();
     const server = serve({ sse: text });
     await collect(provider, request({ config: { ...gateway({ byok: false }), credential: "scope:anthropic" } }), {
       fetch: server.fetch,
+      credentials: { provider: sensitive("sk-scope"), gateway: sensitive("cf-token") },
     });
     expect(server.calls[0]!.headers["x-api-key"]).toBe("sk-scope");
     expect(server.calls[0]!.headers["cf-aig-authorization"]).toBe("Bearer cf-token");
   });
 
   it("stamps one Platform metadata slot beside karmi's four and the cache, retry and timeout headers", async () => {
-    const provider = anthropic({ credentials: { "deployment:aig": "cf-token" } });
+    const provider = anthropic();
     const server = serve({ sse: text });
     await collect(
       provider,
@@ -64,7 +67,7 @@ describe("AI Gateway", () => {
           timeoutMs: 5000,
         }),
       }),
-      { fetch: server.fetch, attribution },
+      { fetch: server.fetch, attribution, credentials: { gateway: sensitive("cf-token") } },
     );
     const { headers } = server.calls[0]!;
     expect(JSON.parse(headers["cf-aig-metadata"]!)).toEqual({ tenant: "t-9", ...attribution });
@@ -93,14 +96,18 @@ describe("AI Gateway", () => {
     expect(server.calls[0]!.headers["x-trace"]).toBe("abc");
   });
 
-  it("fails with an auth error, before any request, when a credential does not resolve", async () => {
+  it("fails with an auth error, before any request, when no credential reached the call", async () => {
     const server = serve({ sse: text });
     expect(
       await collect(anthropic({}), request({ config: { adapter: "anthropic", credential: "scope:missing" } }), server),
     ).toEqual([
       {
         type: "error",
-        error: { code: "auth", message: 'Credential "scope:missing" did not resolve.', retryable: false },
+        error: {
+          code: "auth",
+          message: 'Credential "scope:missing" was not resolved for this call.',
+          retryable: false,
+        },
       },
     ]);
     expect(await collect(anthropic({}), request(), server)).toEqual([
@@ -116,7 +123,11 @@ describe("AI Gateway", () => {
     expect(await collect(anthropic({}), request({ config: gateway() }), server)).toEqual([
       {
         type: "error",
-        error: { code: "auth", message: 'Gateway credential "deployment:aig" did not resolve.', retryable: false },
+        error: {
+          code: "auth",
+          message: 'Gateway credential "deployment:aig" was not resolved for this call.',
+          retryable: false,
+        },
       },
     ]);
     expect(server.calls).toEqual([]);

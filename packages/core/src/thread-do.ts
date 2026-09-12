@@ -1,5 +1,5 @@
 import { mediaAccess, putMedia, type MediaBody, type MediaOptions } from "./media";
-import { resolveScopeConfig, type ScopeConfigDocument } from "./scope-config";
+import { chooseProfile, resolveScopeConfig, type ScopeConfigDocument } from "./scope-config";
 import type { MediaRef } from "./context";
 import { AGENT_SPEC_DEFAULTS } from "./agent-spec";
 import type { AgentSpec, Capabilities, PolicyRule } from "./agent";
@@ -33,7 +33,15 @@ import type { ContentBlock, ProviderError, ProviderEvent, ProviderRequest, StopR
 import { prepareMessages } from "./replay";
 import { ScheduledDurableObject, type ScheduledJob } from "./scheduler";
 import { providerHosts, scopedFetch } from "./scoped-fetch";
-import type { ScopeConfigDurableObject } from "./scope-config-do";
+import type { ScopeConfigDurableObject, TurnSnapshotSource } from "./scope-config-do";
+import {
+  attemptTarget,
+  fallbackReason,
+  resolveProfileCredentials,
+  type FallbackEngaged,
+  type FallbackReason,
+  type ProviderCredentials,
+} from "./secrets";
 import type { Ceilings, ProviderConfig } from "./scope-config";
 import type {
   ApprovalAnswer,
@@ -43,6 +51,7 @@ import type {
   Granularity,
   PauseReason,
   ResumeReason,
+  StepCredentials,
   ThreadEvent,
   ThreadEventData,
   ThreadEventType,
@@ -92,8 +101,11 @@ export interface TurnSnapshot {
   agentVersion: number;
   /** Stored normalized; a JSON round trip already dropped every explicit `undefined`. */
   spec: AgentSpec;
-  /** The chosen Provider profile, secret-free. */
+  /** The chosen Provider profile, secret-free, and its name. */
   profile: ProviderConfig;
+  profileName: string;
+  /** The Deployment profile the chosen one falls back to, and on which reasons; absent without opt-in. */
+  fallback?: { name: string; profile: ProviderConfig; on: FallbackReason[] };
   /** Scope rules, then Deployment rules, then the Spec's own. */
   policy: PolicyRule[];
   /** The Spec's `approvals.timeout` under the Scope ceiling, in milliseconds. */
@@ -119,6 +131,8 @@ type ThreadRow = {
   cancelled: number;
   agent_version: number | null;
   snapshot_json: string | null;
+  /** A `FallbackEngaged` once a model Step of this Turn fell back after a Provider error. */
+  fallback_json: string | null;
   usage_json: string;
 };
 
@@ -186,6 +200,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       ctx.storage.sql.exec("ALTER TABLE thread ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0");
     if (!columns("inputs").has("steer"))
       ctx.storage.sql.exec("ALTER TABLE inputs ADD COLUMN steer INTEGER NOT NULL DEFAULT 0");
+    if (!columns("thread").has("fallback_json"))
+      ctx.storage.sql.exec("ALTER TABLE thread ADD COLUMN fallback_json TEXT");
     this.head = ctx.storage.sql.exec<{ seq: number | null }>("SELECT MAX(seq) AS seq FROM events").one().seq ?? 0;
   }
 
@@ -217,6 +233,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         cancelled: 0,
         agent_version: null,
         snapshot_json: null,
+        fallback_json: null,
         usage_json: JSON.stringify(ZERO_USAGE),
       };
       this.sql.exec(
@@ -805,6 +822,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       platform_failure: 0,
       cancelled: 0,
       snapshot_json: null,
+      fallback_json: null,
     });
     this.append(turn, { type: "turn.started", input: first, toolsVersion }, first.channelRef);
     for (const input of rest) this.append(turn, { type: "turn.input", input }, first.channelRef);
@@ -852,6 +870,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         platform_failure: 0,
         cancelled: 0,
         snapshot_json: null,
+        fallback_json: null,
       });
     if (end.type !== "turn.paused" && this.hasInputs()) this.armWatchdog();
     else this.scheduler.cancel("watchdog");
@@ -1092,16 +1111,14 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     turn: TurnState,
     context = this.contextLog(),
   ): Promise<Next> {
-    const modelAttempt = plan.fresh ? 1 : Math.max(row.attempt, 1);
-    const attempt = modelAttempt + (plan.fresh ? 0 : row.recoveries);
-    const model = [snapshot.spec.model.id, ...(snapshot.spec.model.fallbacks ?? [])][modelAttempt - 1];
-    if (model === undefined)
-      return stop(this.finish(this.row(), failure("provider", `Every model of Agent "${row.agent_id}" failed.`)));
-    if (attempt > MAX_STEP_ATTEMPTS) {
-      const message = `Step ${plan.n} of Turn ${row.turn} exhausted its three attempts.`;
-      return stop(this.finish(this.row(), failure("recovery", message)));
-    }
+    const gated = this.modelTarget(row, snapshot, plan);
+    if (!gated.ok) return stop(this.finish(this.row(), gated.failure));
+    const { modelAttempt, attempt, engaged, target } = gated;
+    const { model } = target;
     this.update({ step: plan.n, attempt: modelAttempt, ...(plan.fresh && { recoveries: 0, platform_failure: 0 }) });
+    // Resolved now, for this one call, and never written anywhere: only its source and version are logged.
+    const call = await this.stepCredentials(row, snapshot, target.fallback ? engaged : undefined);
+    if (!call.ok) return stop(this.finish(this.row(), call.failure));
     this.append(
       row.turn,
       {
@@ -1110,36 +1127,130 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         n: plan.n,
         attempt,
         model,
-        provider: snapshot.profile.adapter,
+        provider: call.profile.adapter,
         agentVersion: snapshot.agentVersion,
+        ...call.started,
       },
       channelRef,
     );
     this.armWatchdog();
-    const step = this.modelStep({ ...row, step: plan.n }, snapshot, available, model, context.events, channelRef);
+    const step = this.modelStep({ ...row, step: plan.n }, snapshot, available, model, context.events, channelRef, call);
     const result = await this.untilCancelled(step);
     if (result === CANCELLED) return stop(this.cancelTurn(this.row()));
-    // An overflow asks for a Compaction before anything else is tried; one that drops nothing (or a
-    // Compaction this Step already followed) leaves the failure to take its ordinary course.
     const overflow = result.ok
       ? result.stopReason === "context_window_exceeded"
       : result.error.code === "context_window_exceeded";
     if (overflow && turn.compaction !== "skipped") {
-      const compacted = await this.compactStep(
-        this.row(),
-        snapshot,
-        plan.n + 1,
-        "overflow",
-        undefined,
-        context,
-        channelRef,
-      );
-      if (!compacted.ok) return stop(this.finish(this.row(), failure("compaction", compacted.message)));
-      if (compacted.value === "compacted") return "continue";
+      const next = await this.compactOnOverflow(snapshot, plan, context, channelRef);
+      if (next !== undefined) return next;
     }
-    // The failed attempt stays in the log; the transcript ignores Steps that never completed.
-    if (!result.ok) this.update({ attempt: modelAttempt + 1 });
+    // The failed attempt stays in the log; the transcript ignores Steps that never completed. A failure
+    // the profile opted to fall back on moves the rest of the Turn to the Deployment profile.
+    if (!result.ok) {
+      const reason = fallbackReason(result.error.code);
+      const engage =
+        reason !== undefined && !engaged && !call.started.fallback && snapshot.fallback?.on.includes(reason);
+      this.update({
+        attempt: modelAttempt + 1,
+        ...(engage && { fallback_json: JSON.stringify({ step: plan.n, attempt: modelAttempt, reason }) }),
+      });
+    }
     return "continue";
+  }
+
+  /**
+   * An overflow asks for a Compaction before anything else is tried; one that drops nothing (or a
+   * Compaction this Step already followed) leaves the failure to take its ordinary course.
+   */
+  private async compactOnOverflow(
+    snapshot: TurnSnapshot,
+    plan: ModelPlan,
+    context: ContextLog,
+    channelRef: unknown,
+  ): Promise<Next | undefined> {
+    const compacted = await this.compactStep(
+      this.row(),
+      snapshot,
+      plan.n + 1,
+      "overflow",
+      undefined,
+      context,
+      channelRef,
+    );
+    if (!compacted.ok) return stop(this.finish(this.row(), failure("compaction", compacted.message)));
+    return compacted.value === "compacted" ? "continue" : undefined;
+  }
+
+  /** Which model and profile this attempt of a model Step tries, or why the Step is out of attempts. */
+  private modelTarget(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    plan: ModelPlan,
+  ):
+    | {
+        ok: true;
+        modelAttempt: number;
+        attempt: number;
+        engaged: FallbackEngaged | undefined;
+        target: { model: string; fallback: boolean };
+      }
+    | { ok: false; failure: TurnEnd } {
+    const modelAttempt = plan.fresh ? 1 : Math.max(row.attempt, 1);
+    const attempt = modelAttempt + (plan.fresh ? 0 : row.recoveries);
+    const engaged = decodeFallback(row.fallback_json);
+    const models = [snapshot.spec.model.id, ...(snapshot.spec.model.fallbacks ?? [])];
+    const target = attemptTarget(models, engaged, plan.n, modelAttempt);
+    if (target === undefined)
+      return { ok: false, failure: failure("provider", `Every model of Agent "${row.agent_id}" failed.`) };
+    if (attempt > MAX_STEP_ATTEMPTS) {
+      const message = `Step ${plan.n} of Turn ${row.turn} exhausted its three attempts.`;
+      return { ok: false, failure: failure("recovery", message) };
+    }
+    return { ok: true, modelAttempt, attempt, engaged, target };
+  }
+
+  /**
+   * The profile and credentials one model call runs under. On the fallback when a Provider error engaged
+   * it earlier in the Turn, or right away when the profile's own credential is missing and it opted into
+   * `missing`; a credential nobody can resolve fails the Turn rather than burning attempts.
+   */
+  private async stepCredentials(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    engaged: FallbackEngaged | undefined,
+  ): Promise<
+    | { ok: true; profile: ProviderConfig; credentials: ProviderCredentials; started: StepCredentials }
+    | { ok: false; failure: TurnEnd }
+  > {
+    const missing = (ref: string) => ({
+      ok: false as const,
+      failure: failure("credential.missing", `Credential "${ref}" of Agent "${row.agent_id}" is missing or revoked.`),
+    });
+    const fallback = async (reason: FallbackReason) => {
+      // `engaged` only ever holds a reason the snapshot opted into, so the fallback profile is there.
+      if (!snapshot.fallback) return missing(snapshot.profile.credential ?? "");
+      const resolved = await resolveProfileCredentials(
+        this.deployment.secrets,
+        row.scope_id,
+        snapshot.fallback.profile,
+      );
+      if (!resolved.ok) return missing(resolved.missing);
+      const started: StepCredentials = {
+        profile: snapshot.fallback.name,
+        ...(resolved.use && { credential: resolved.use }),
+        fallback: { from: snapshot.profileName, reason },
+      };
+      return { ok: true as const, profile: snapshot.fallback.profile, credentials: resolved.credentials, started };
+    };
+    if (engaged) return fallback(engaged.reason);
+    const resolved = await resolveProfileCredentials(this.deployment.secrets, row.scope_id, snapshot.profile);
+    if (!resolved.ok)
+      return snapshot.fallback?.on.includes("missing") ? fallback("missing") : missing(resolved.missing);
+    const started: StepCredentials = {
+      profile: snapshot.profileName,
+      ...(resolved.use && { credential: resolved.use }),
+    };
+    return { ok: true, profile: snapshot.profile, credentials: resolved.credentials, started };
   }
 
   private async startToolStep(
@@ -1239,28 +1350,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         ...(title !== undefined && { title }),
       });
       if (!source.ok) return { ok: false, failure: failure(source.code, source.message) };
-      const { version } = source.value.agent;
-      const spec = source.value.agent.spec as AgentSpec;
-      const profile = resolveProfile(spec, source.value.config.providers ?? {});
-      if (!profile)
-        return {
-          ok: false,
-          failure: failure("provider.profile.unknown", `Agent "${row.agent_id}" names no configured Provider profile.`),
-        };
-      const ceilings = source.value.config.ceilings ?? {};
-      snapshot = {
-        media: source.value.config.media,
-        agentVersion: version,
-        spec,
-        profile,
-        policy: [...(source.value.config.policy ?? []), ...(spec.policy ?? [])],
-        approvalTimeout: Math.min(
-          spec.approvals?.timeout ?? AGENT_SPEC_DEFAULTS.approvals.timeout,
-          ceilings.approvals?.timeout ?? UNBOUNDED,
-        ),
-        budget: resolveBudget(spec.capabilities?.longRunning, ceilings.longRunning),
-        context: resolveContext(spec, ceilings),
-      };
+      const built = buildSnapshot(source.value, this.deployment.defaults.providers ?? {}, row.agent_id);
+      if (!built.ok) return built;
+      snapshot = built.snapshot;
       const json = JSON.stringify(snapshot);
       const bytes = new TextEncoder().encode(json).byteLength;
       if (bytes > SNAPSHOT_LIMIT)
@@ -1268,7 +1360,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           ok: false,
           failure: failure("snapshot.too-large", `Turn snapshot is ${bytes} bytes; the limit is ${SNAPSHOT_LIMIT}.`),
         };
-      this.update({ snapshot_json: json, agent_version: version });
+      this.update({ snapshot_json: json, agent_version: snapshot.agentVersion });
       state = source.value.state;
     }
     if (state === "suspended") return { ok: false, failure: { type: "turn.paused", reason: "scope_suspended" } };
@@ -1391,19 +1483,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     channelRef: unknown,
   ): Promise<Outcome<CompactResult>> {
     const { spec, profile } = snapshot;
-    this.update({ step: n, attempt: 1 });
-    const started: ThreadEventData = {
-      type: "step.started",
-      kind: "compact",
-      n,
-      attempt: row.recoveries + 1,
-      model: spec.model.id,
-      provider: profile.adapter,
-      agentVersion: snapshot.agentVersion,
-      trigger,
-    };
-    this.append(row.turn, started, channelRef);
-    this.armWatchdog();
+    const call = await this.startCompact(row, snapshot, n, trigger, channelRef);
+    if (!call.ok) return compactionFailed(turnEndMessage(call.failure));
     const completed = () => this.append(row.turn, { type: "step.completed", kind: "compact", n }, channelRef);
     const tokensBefore = contextTokens(events);
     const cut = chooseCut(events, this.limits(snapshot), floor);
@@ -1422,7 +1503,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     let summary: Summary;
     if (hookSummary !== undefined) summary = { strategy: "hook", summary: hookSummary, usage: ZERO_USAGE };
     else {
-      const written = await this.untilCancelled(this.summarise(row, snapshot, dropped, native, instructions));
+      const written = await this.untilCancelled(this.summarise(row, snapshot, dropped, native, instructions, call));
       if (written === CANCELLED) return compactionFailed("The Turn was cancelled.");
       if (!written.ok) return written;
       summary = written.value;
@@ -1439,6 +1520,36 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       attachments: attachmentsOf(dropped),
     };
     return this.recordCompaction(row, snapshot, compacted, completed, channelRef);
+  }
+
+  /** Opens a compact Step: its credentials resolved for the summarising call and its `step.started` logged. */
+  private async startCompact(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    n: number,
+    trigger: CompactionTrigger,
+    channelRef: unknown,
+  ): Promise<Awaited<ReturnType<ThreadDurableObject["stepCredentials"]>>> {
+    this.update({ step: n, attempt: 1 });
+    const call = await this.stepCredentials(row, snapshot, decodeFallback(row.fallback_json));
+    if (!call.ok) return call;
+    this.append(
+      row.turn,
+      {
+        type: "step.started",
+        kind: "compact",
+        n,
+        attempt: row.recoveries + 1,
+        model: snapshot.spec.model.id,
+        provider: call.profile.adapter,
+        agentVersion: snapshot.agentVersion,
+        trigger,
+        ...call.started,
+      },
+      channelRef,
+    );
+    this.armWatchdog();
+    return call;
   }
 
   /** The summary lands in one breath: its usage, the event and the Step's end, then the observing Hooks. */
@@ -1467,8 +1578,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     dropped: ThreadEvent[],
     native: string,
     instructions: string | undefined,
+    { profile, credentials }: { profile: ProviderConfig; credentials: ProviderCredentials },
   ): Promise<Outcome<Summary>> {
-    const { profile, spec } = snapshot;
+    const { spec } = snapshot;
     const provider = this.deployment.providers[profile.adapter];
     if (!provider) return compactionFailed(`Provider adapter "${profile.adapter}" is not registered.`);
     const { messages } = prepareMessages(transcriptFromEvents(dropped), { provider: profile.adapter, model: native });
@@ -1496,6 +1608,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         attribution,
         logger,
         media: this.media(row, snapshot.media),
+        credentials,
       });
       for await (const event of stream) {
         if (event.type === "part") parts.push(event.block);
@@ -1526,14 +1639,14 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     model: string,
     events: ThreadEvent[],
     channelRef: unknown,
+    { profile, credentials }: { profile: ProviderConfig; credentials: ProviderCredentials },
   ): Promise<StepResult> {
-    const { profile } = snapshot;
     const provider = this.deployment.providers[profile.adapter];
     if (!provider) return stepError(`Provider adapter "${profile.adapter}" is not registered.`);
     const signal = this.turnAbort.signal;
     const logger = this.logger(row);
     try {
-      const request = await this.modelRequest(row, snapshot, available, model, events);
+      const request = await this.modelRequest(row, snapshot, available, model, events, profile);
       const hosts = providerHosts(profile);
       const egress = scopedFetch({ ...(hosts && { hosts }), logger });
       const attribution = { scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn };
@@ -1543,6 +1656,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         attribution,
         logger,
         media: this.media(row, snapshot.media),
+        credentials,
       });
       return await this.recordStream(row, stream, signal, channelRef);
     } catch (error) {
@@ -1558,8 +1672,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     available: ToolSet,
     model: string,
     events: ThreadEvent[],
+    profile: ProviderConfig,
   ): Promise<ProviderRequest> {
-    const { spec, profile } = snapshot;
+    const { spec } = snapshot;
     const [, native] = splitModelId(model);
     const tools = toolDefinitions(available);
     const system = await evaluatePrompt(
@@ -1714,10 +1829,49 @@ const stepError = (message: string): StepResult => ({
   error: { code: "unknown", message, retryable: false },
 });
 
-function resolveProfile(spec: AgentSpec, providers: Record<string, ProviderConfig>): ProviderConfig | undefined {
-  const name =
-    spec.model.providerProfile ?? (Object.keys(providers).length === 1 ? Object.keys(providers)[0] : undefined);
-  return name === undefined ? undefined : providers[name];
+/** The secret-free snapshot of one Turn from what the Scope resolved; the fallback target is the Deployment's profile by that name, whatever the Scope calls its own. */
+function buildSnapshot(
+  source: TurnSnapshotSource,
+  deploymentProfiles: Record<string, ProviderConfig>,
+  agentId: string,
+): { ok: true; snapshot: TurnSnapshot } | { ok: false; failure: TurnEnd } {
+  const { version } = source.agent;
+  const spec = source.agent.spec as AgentSpec;
+  const chosen = chooseProfile(spec.model.providerProfile, source.config.providers ?? {});
+  if (!chosen)
+    return {
+      ok: false,
+      failure: failure("provider.profile.unknown", `Agent "${agentId}" names no configured Provider profile.`),
+    };
+  const { profile } = chosen;
+  const target = profile.fallback && deploymentProfiles[profile.fallback.profile];
+  const ceilings = source.config.ceilings ?? {};
+  return {
+    ok: true,
+    snapshot: {
+      media: source.config.media,
+      agentVersion: version,
+      spec,
+      profile,
+      profileName: chosen.name,
+      ...(profile.fallback &&
+        target && {
+          fallback: { name: profile.fallback.profile, profile: target, on: profile.fallback.on ?? ["missing"] },
+        }),
+      policy: [...(source.config.policy ?? []), ...(spec.policy ?? [])],
+      approvalTimeout: Math.min(
+        spec.approvals?.timeout ?? AGENT_SPEC_DEFAULTS.approvals.timeout,
+        ceilings.approvals?.timeout ?? UNBOUNDED,
+      ),
+      budget: resolveBudget(spec.capabilities?.longRunning, ceilings.longRunning),
+      context: resolveContext(spec, ceilings),
+    },
+  };
+}
+
+/** The one decode point for `thread.fallback_json`; a row from before the column reads as not engaged. */
+function decodeFallback(json: string | null): FallbackEngaged | undefined {
+  return json === null ? undefined : JSON.parse(json);
 }
 
 /** A grant lifts each bound it names and leaves the others open; the Scope ceiling caps all of them. */

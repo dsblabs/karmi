@@ -37,6 +37,7 @@ function log() {
     model(chars: number, input: number, calls = 0) {
       push({
         type: "step.started",
+        profile: "default",
         kind: "model",
         n: ++n,
         attempt: 1,
@@ -185,7 +186,7 @@ describe("chooseCut", () => {
     expect([s1 + 1, s2 + 1]).toContain(cut?.firstKeptSeq);
     expect(cut?.tokensKept).toBeLessThanOrEqual(900);
     const kept = l.events.filter((e) => e.seq >= cut!.firstKeptSeq);
-    expect(kept[0]).toMatchObject({ type: "step.started", kind: "model" });
+    expect(kept[0]).toMatchObject({ type: "step.started", profile: "default", kind: "model" });
   });
 });
 

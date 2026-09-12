@@ -411,14 +411,47 @@ const recoveryAgent = defineAgent({
   hooks: { "before-tool": ["recovery-before"], "after-tool": ["recovery-after"] },
 });
 
-export const { karmi, clock, provider, scope } = createTestKarmi(
+// Credentials fixtures: an Agent on the Scope's own profile that can revoke its credential mid-Turn.
+export const revocations: string[] = [];
+const revokeCredential = defineTool({
+  name: "revoke_credential",
+  description: "Revokes a Scope credential",
+  input: z.object({ scope: z.string(), name: z.string() }),
+  execute: async ({ scope: id, name }) => {
+    await secrets.revoke({ scope: id, ref: `scope:${name}` });
+    revocations.push(name);
+    return "revoked";
+  },
+});
+const byok = defineAgent({
+  agentId: "byok",
+  name: "BYOK",
+  instructions: [{ text: "Use your own key." }],
+  model: { id: "fake/m", fallbacks: ["fake/n"], providerProfile: "own" },
+  tools: ["revoke_credential", "weather"],
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+});
+
+export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
   {
     deliverers: [
       receipt,
       defineDeliverer({ name: "receipt-parts", deliver: receipt.deliver }),
       defineDeliverer({ name: "receipt-deltas", granularity: "delta", deliver: receipt.deliver }),
     ],
-    tools: [weather, lookup, book, bigOutput, whoami, failing, startJob, waitGate, ...recoveryTools, ...shelves],
+    tools: [
+      weather,
+      lookup,
+      book,
+      bigOutput,
+      whoami,
+      failing,
+      startJob,
+      waitGate,
+      revokeCredential,
+      ...recoveryTools,
+      ...shelves,
+    ],
     fragments: [guest],
     skills: [research, deploy],
     hooks: [
@@ -447,9 +480,14 @@ export const { karmi, clock, provider, scope } = createTestKarmi(
       providerCompactor,
       librarian,
       librarianWide,
+      byok,
     ],
   },
   {
+    credentials: { shared: "deployment-key" },
+    defaults: {
+      providers: { shared: { adapter: "fake", models: ["*"], credential: "deployment:shared" } },
+    },
     media: {
       accountId: "test-account",
       bucket: "karmi-test-media",

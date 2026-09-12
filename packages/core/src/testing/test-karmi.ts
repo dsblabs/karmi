@@ -8,6 +8,7 @@ import { isTurnEnd } from "../thread-do";
 import type { SendOptions, Thread, ThreadIdentity } from "../thread";
 import type { ThreadEvent, TurnInput } from "../thread-events";
 import { fakeProvider, type FakeProvider } from "./fake-provider";
+import { memorySecrets, type MemorySecrets } from "./memory-secrets";
 
 export interface TestThread extends Omit<Thread, "send"> {
   /** Resolves when the Turn ends or parks (completed, failed or paused) with everything it logged from this call on. */
@@ -23,13 +24,15 @@ export interface TestKarmi {
   clock: TestClock;
   /** Every Agent runs against this one; script it per test with `provider.script(...)`. */
   provider: FakeProvider;
+  /** The in-memory SecretsProvider every `scope:<name>` reference resolves through, unless `options.secrets` replaced it. */
+  secrets: MemorySecrets;
   /** The Scope `test`, ready to use. */
   scope: TestScope;
 }
 
 /**
  * A karmi for the test Worker: the Catalogue under test, a fake Provider named `fake` that serves every
- * model id, and the Scope `test`. Export `karmi.durableObjects` from the same module.
+ * model id, an in-memory SecretsProvider, and the Scope `test`. Export `karmi.durableObjects` from the same module.
  */
 export function createTestKarmi(
   catalogue: CatalogueInput,
@@ -37,6 +40,7 @@ export function createTestKarmi(
 ): TestKarmi {
   const clock = testClock(resolveBindings(env, options.bindings));
   const provider = fakeProvider(["OK"]);
+  const secrets = memorySecrets();
   const defaults = {
     ...options.defaults,
     providers: { default: { adapter: "fake", models: ["*"] }, ...options.defaults?.providers },
@@ -47,9 +51,16 @@ export function createTestKarmi(
     catalogue,
     defaults,
     providers: { ...options.providers, fake: provider },
+    secrets: options.secrets ?? secrets,
   });
   const scope = karmi.scope("test");
-  return { karmi, clock, provider, scope: { ...scope, thread: (target) => testThread(scope.thread(target)) } };
+  return {
+    karmi,
+    clock,
+    provider,
+    secrets,
+    scope: { ...scope, thread: (target) => testThread(scope.thread(target)) },
+  };
 }
 
 function testThread(thread: Thread): TestThread {

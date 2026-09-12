@@ -11,13 +11,13 @@ import {
 import type { PolicyRule, ProviderToolName } from "./agent";
 import { KarmiError } from "./errors";
 import { toJsonSchema, type JsonSchema } from "./schema";
+import { CREDENTIAL_REF, FALLBACK_REASONS, type FallbackReason } from "./secrets";
 import { firstIssue, pointer } from "./validate";
 
 // The secret-free Scope document: what `scope.config.set` stores as one immutable revision, and what
 // `createKarmi({ defaults })` supplies as the Deployment layer every Scope inherits and may only tighten.
 
 // A credential is always a reference into a secret store; a value here is the one thing this schema exists to refuse.
-const CREDENTIAL_REF = /^(scope|deployment):[A-Za-z0-9_-]{1,64}$/;
 const SECRET_LOOKING_KEY = /key|secret|token|password|authorization/i;
 
 const credentialRef = z
@@ -68,6 +68,14 @@ const ProviderConfigSchema = z.strictObject({
   /** Adapter-namespaced options forwarded verbatim, e.g. `{ anthropic: { effort: "high" } }`. */
   providerOptions: z.optional(z.record(z.string(), z.unknown())),
   headers: z.optional(z.record(z.string(), z.string())),
+  /** Opt-in: run under the named Deployment profile when this one's credential is missing or fails as listed. */
+  fallback: z.optional(
+    z.strictObject({
+      profile: name,
+      /** Defaults to `["missing"]`. */
+      on: z.optional(z.array(z.enum(FALLBACK_REASONS)).check(z.minLength(1))),
+    }),
+  ),
 });
 
 // `false` switches a Capability off for the Scope; an absent block leaves it unbounded.
@@ -125,6 +133,12 @@ export interface ProviderConfig {
   media?: { strategy: "inline" };
   providerOptions?: Record<string, unknown>;
   headers?: Record<string, string>;
+  fallback?: ProfileFallback;
+}
+
+export interface ProfileFallback {
+  profile: string;
+  on?: FallbackReason[];
 }
 
 /** Upper bounds on what an Agent Spec in this Scope may ask for; `false` makes the Capability unavailable. */
@@ -163,17 +177,29 @@ export interface ScopeConfigDocument {
 /** The document's shape as JSON Schema (draft 2020-12), for Platform editors. */
 export const scopeConfigJsonSchema: JsonSchema = toJsonSchema(ScopeConfigSchema);
 
-/** Checks the document's shape and, when the registered Providers are given, that every profile names one of them. */
-export function parseScopeConfig(document: unknown, providers?: Record<string, unknown>): ScopeConfigDocument {
+/**
+ * Checks the document's shape and, when the registered Providers are given, that every profile names one of
+ * them. Fallback targets must be Deployment profiles: `deploymentProfiles` for a Scope document, the
+ * document's own for the Deployment defaults.
+ */
+export function parseScopeConfig(
+  document: unknown,
+  providers?: Record<string, unknown>,
+  deploymentProfiles?: Record<string, ProviderConfig>,
+): ScopeConfigDocument {
   const result = z.safeParse(ScopeConfigSchema, document);
   if (!result.success) {
     const issue = firstIssue(result.error);
     const path = pointer(issue.path);
     if (issue.code === "unrecognized_keys" && issue.keys.some((key) => SECRET_LOOKING_KEY.test(key)))
       throw secretValue(path);
+    // A `credential` that is not a reference is a value someone pasted in.
+    if (issue.code === "invalid_format" && path.endsWith("/credential")) throw secretValue(path);
     throw invalid(path, issue.message);
   }
-  for (const [profile, { adapter, headers }] of Object.entries(result.data.providers ?? {})) {
+  const profiles = result.data.providers ?? {};
+  const targets = deploymentProfiles ?? profiles;
+  for (const [profile, { adapter, headers, fallback }] of Object.entries(profiles)) {
     if (providers && !(adapter in providers))
       throw invalid(
         `/providers/${profile}/adapter`,
@@ -182,6 +208,15 @@ export function parseScopeConfig(document: unknown, providers?: Record<string, u
     // A header that authenticates is a credential like any other.
     const secret = Object.keys(headers ?? {}).find((key) => SECRET_LOOKING_KEY.test(key));
     if (secret) throw secretValue(`/providers/${profile}/headers/${secret}`);
+    if (fallback) {
+      const target = targets[fallback.profile];
+      const path = `/providers/${profile}/fallback/profile`;
+      if (!target) throw invalid(path, `"${fallback.profile}" is not a Deployment Provider profile.`);
+      if (target.fallback)
+        throw invalid(path, `"${fallback.profile}" has a fallback of its own; fallbacks do not chain.`);
+      if (target.credential !== undefined && !target.credential.startsWith("deployment:"))
+        throw invalid(path, `"${fallback.profile}" must hold a deployment:<name> credential.`);
+    }
   }
   return result.data as ScopeConfigDocument;
 }
@@ -195,6 +230,20 @@ function secretValue(path: string): KarmiError {
 
 function invalid(path: string, message: string): KarmiError {
   return new KarmiError("config.invalid", `Scope config is invalid at "${path}": ${message}`);
+}
+
+/**
+ * The profile an Agent Spec runs under: the one it names, else `default` when the Scope has one, else the
+ * Scope's only profile. Anything else is a validation error, never a guess.
+ */
+export function chooseProfile(
+  providerProfile: string | undefined,
+  providers: Record<string, ProviderConfig>,
+): { name: string; profile: ProviderConfig } | undefined {
+  const names = Object.keys(providers);
+  const name = providerProfile ?? ("default" in providers ? "default" : names.length === 1 ? names[0] : undefined);
+  const profile = name === undefined ? undefined : providers[name];
+  return name !== undefined && profile ? { name, profile } : undefined;
 }
 
 const TIER_ORDER = ["isolate", "container"] as const;

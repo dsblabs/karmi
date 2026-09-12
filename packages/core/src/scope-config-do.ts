@@ -6,7 +6,9 @@ import type { ScopeId } from "./context";
 import type { Deployment } from "./deployment";
 import { KarmiError } from "./errors";
 import { fail, ok, type Outcome } from "./outcome";
+import type { Envelope } from "./envelope";
 import { parseScopeConfig, resolveScopeConfig, type ScopeConfigDocument } from "./scope-config";
+import type { CredentialInfo } from "./secrets";
 import { encodeKey, type ThreadSummary } from "./thread";
 import { validateAgentSpec, type ValidationResult } from "./validate";
 
@@ -22,6 +24,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS threads (thread_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL, last_active_at INTEGER NOT NULL, title TEXT);
   CREATE INDEX IF NOT EXISTS threads_by_agent_user ON threads (agent_id, user_id, last_active_at);
   CREATE TABLE IF NOT EXISTS connections (agent_id TEXT NOT NULL, name TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (agent_id, name));
+  CREATE TABLE IF NOT EXISTS provider_credentials (name TEXT PRIMARY KEY, version INTEGER NOT NULL, kek TEXT, dek TEXT, ciphertext TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, revoked_at INTEGER);
 `;
 
 /** Versions kept per Agent; older ones are dropped on put. */
@@ -83,6 +86,12 @@ export interface TurnSnapshotSource {
   config: ScopeConfigDocument;
 }
 
+/** A stored Scope credential as the envelope store reads it: metadata plus the envelope, gone once revoked. */
+export interface StoredCredential extends CredentialInfo {
+  name: string;
+  envelope?: Envelope;
+}
+
 export type { Outcome } from "./outcome";
 
 // The one decode point for each JSON column this Durable Object writes; both are validated before they are stored.
@@ -108,6 +117,27 @@ type ThreadRow = {
   last_active_at: number;
   title: string | null;
 };
+
+type CredentialRow = {
+  name: string;
+  version: number;
+  kek: string | null;
+  dek: string | null;
+  ciphertext: string | null;
+  updated_at: number;
+  revoked_at: number | null;
+};
+
+const decodeCredential = (row: CredentialRow): StoredCredential => ({
+  name: row.name,
+  source: "scope",
+  version: row.version,
+  updatedAt: row.updated_at,
+  ...(row.revoked_at !== null && { revokedAt: row.revoked_at }),
+  ...(row.kek !== null &&
+    row.dek !== null &&
+    row.ciphertext !== null && { envelope: { kek: row.kek, dek: row.dek, ciphertext: row.ciphertext } }),
+});
 
 type AgentHeadRow = {
   agent_id: string;
@@ -172,7 +202,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     if (!head.ok) return head;
     let parsed: ScopeConfigDocument;
     try {
-      parsed = parseScopeConfig(document, this.deployment.providers);
+      parsed = parseScopeConfig(document, this.deployment.providers, this.deployment.defaults.providers ?? {});
     } catch (error) {
       if (error instanceof KarmiError) return fail(error);
       throw error;
@@ -206,7 +236,11 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       .toArray()
       .map((row) => ({ agentId: row.agent_id, spec: decodeSpec(row.spec_json) }));
     const config = resolveScopeConfig(this.deployment.defaults, this.document(head.current_revision));
-    return validateAgentSpec(spec, this.deployment.catalogue, { config, agents });
+    return validateAgentSpec(spec, this.deployment.catalogue, {
+      config,
+      agents,
+      deploymentProviders: this.deployment.defaults.providers ?? {},
+    });
   }
 
   agentsValidate(scope: ScopeId, spec: unknown): Outcome<ValidationResult> {
@@ -461,6 +495,78 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok(row ? JSON.parse(row.value_json) : undefined);
   }
 
+  // The envelope store's rows: ciphertext and wrapped keys only. Sealing and opening happen in the
+  // envelope SecretsProvider, so this object never sees a value or the keyring.
+  credentialGet(scope: ScopeId, name: string): Outcome<StoredCredential | undefined> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    const row = this.sql.exec<CredentialRow>("SELECT * FROM provider_credentials WHERE name = ?", name).toArray()[0];
+    return ok(row && decodeCredential(row));
+  }
+
+  /** Stores `version`, which must follow the stored one, so a put sealed against a stale version never lands. */
+  credentialPut(scope: ScopeId, name: string, version: number, envelope: Envelope): Outcome<CredentialInfo> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    const now = this.deployment.clock.now();
+    return this.ctx.storage.transactionSync(() => {
+      const current =
+        this.sql.exec<{ version: number }>("SELECT version FROM provider_credentials WHERE name = ?", name).toArray()[0]
+          ?.version ?? 0;
+      if (version !== current + 1)
+        return fail(
+          new KarmiError("credential.conflict", `Credential "${name}" is at version ${current}; retry the put.`),
+        );
+      this.sql.exec(
+        "INSERT INTO provider_credentials (name, version, kek, dek, ciphertext, created_at, updated_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL) ON CONFLICT (name) DO UPDATE SET version = excluded.version, kek = excluded.kek, dek = excluded.dek, ciphertext = excluded.ciphertext, updated_at = excluded.updated_at, revoked_at = NULL",
+        name,
+        version,
+        envelope.kek,
+        envelope.dek,
+        envelope.ciphertext,
+        now,
+        now,
+      );
+      return ok({ source: "scope", version, updatedAt: now });
+    });
+  }
+
+  /** Drops the wrapped DEK and ciphertext; the row stays so the version keeps counting and `describe` says revoked. */
+  credentialRevoke(scope: ScopeId, name: string): Outcome<void> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    this.sql.exec(
+      "UPDATE provider_credentials SET kek = NULL, dek = NULL, ciphertext = NULL, revoked_at = ? WHERE name = ? AND revoked_at IS NULL",
+      this.deployment.clock.now(),
+      name,
+    );
+    return ok(undefined);
+  }
+
+  credentialList(scope: ScopeId): Outcome<StoredCredential[]> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    return ok(
+      this.sql.exec<CredentialRow>("SELECT * FROM provider_credentials ORDER BY name").toArray().map(decodeCredential),
+    );
+  }
+
+  /** Swaps the envelope of one version in place; a concurrent put or revoke makes it a no-op. */
+  credentialRewrap(scope: ScopeId, name: string, version: number, envelope: Envelope): Outcome<boolean> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    const changed = this.sql.exec(
+      "UPDATE provider_credentials SET kek = ?, dek = ?, ciphertext = ? WHERE name = ? AND version = ? AND revoked_at IS NULL AND kek != ?",
+      envelope.kek,
+      envelope.dek,
+      envelope.ciphertext,
+      name,
+      version,
+      envelope.kek,
+    ).rowsWritten;
+    return ok(changed > 0);
+  }
+
   status(scope: ScopeId): Outcome<ScopeStatus> {
     const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;
@@ -481,7 +587,8 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok(undefined);
   }
 
-  // The tombstone and the operation row land in one transaction, so a destroy can never half-happen.
+  // The tombstone, the operation row and the credential wipe land in one transaction, so a destroy can
+  // never half-happen: once the Scope is destroying, no credential of its own can be opened again.
   destroy(scope: ScopeId): Outcome<{ operationId: string }> {
     const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;
@@ -500,6 +607,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         now,
         now,
       );
+      this.sql.exec("DELETE FROM provider_credentials");
     });
     return ok({ operationId });
   }

@@ -9,6 +9,8 @@ export interface KarmiBindings {
   KARMI_LOADER?: WorkerLoader;
   KARMI_VECTORIZE?: VectorizeIndex;
   KARMI_AI?: Ai;
+  /** The envelope store's key ring, a Worker secret; see `envelopeSecrets`. */
+  KARMI_KEYRING?: string;
 }
 
 const BINDING_NAMES = [
@@ -19,6 +21,7 @@ const BINDING_NAMES = [
   "KARMI_LOADER",
   "KARMI_VECTORIZE",
   "KARMI_AI",
+  "KARMI_KEYRING",
 ] as const;
 const REQUIRED = ["KARMI_THREADS", "KARMI_SCOPES"] as const;
 

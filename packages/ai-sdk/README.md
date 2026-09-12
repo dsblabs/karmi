@@ -7,17 +7,18 @@ Install the model packages you use; they are optional peers.
 import { aiSdk } from "@karmi/ai-sdk";
 import { createOpenAI } from "@ai-sdk/openai";
 
-const provider = aiSdk(async ({ modelId, config, fetch }) => {
-  const apiKey = await resolveCredential(config.credential);
+const provider = aiSdk(({ modelId, config, fetch, credentials }) => {
+  const apiKey = credentials?.provider?.expose();
   return createOpenAI({ apiKey, fetch, baseURL: config.baseUrl })(modelId);
 });
 // createKarmi({ providers: { openai: provider }, ... })
 ```
 
 The factory runs for each call and receives `modelId`, the resolved `config`,
-`fetch` (the Scope's scopedFetch), `signal`, attribution and logger. Construct the
-client there so credentials and transport belong to that call. Credential
-resolution belongs to your factory; references are never treated as API keys.
+`fetch` (the Scope's scopedFetch), `signal`, attribution, logger and
+`credentials`: the profile's `credential` and `gateway.credential` references,
+resolved by karmi for this one call as `SensitiveValue`s. Construct the client
+there and `expose()` the value into it; never keep it beyond the call.
 
 The same factory works with `createGoogleGenerativeAI`, `createAnthropic`,
 `createOpenAICompatible`, `createGateway` and `createWorkersAI`. For OpenRouter,

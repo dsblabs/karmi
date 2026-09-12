@@ -1,5 +1,5 @@
 import type { KarmiBindings } from "./bindings";
-import type { Catalogue } from "./catalogue";
+import type { Deployment } from "./deployment";
 import { KarmiError } from "./errors";
 import { keys } from "./keys";
 import { remote, unwrap } from "./outcome";
@@ -7,13 +7,14 @@ import { openScope } from "./scope";
 import type { ThreadDurableObject } from "./thread-do";
 import { decodeKey } from "./thread";
 
-export function deliveryQueueHandler(bindings: KarmiBindings, catalogue: Catalogue): ExportedHandlerQueueHandler {
+export function deliveryQueueHandler(deployment: Deployment, bindings: KarmiBindings): ExportedHandlerQueueHandler {
+  const { catalogue } = deployment;
   return async (batch) => {
     for (const message of batch.messages) {
       try {
         const body = message.body as { kind: string; scope: string; threadKey: string; fromSeq: number; toSeq: number };
         if (body.kind !== "delivery") throw new KarmiError("queue.unhandled", `Unknown Queue job "${body.kind}".`);
-        const scope = openScope(bindings, body.scope);
+        const scope = openScope(deployment, bindings, body.scope);
         const status = await scope.status();
         if (status.state !== "destroying" && status.state !== "destroyed") {
           const identity = decodeKey(body.threadKey);

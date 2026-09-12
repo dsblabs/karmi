@@ -10,6 +10,8 @@ import { deliveryQueueHandler } from "./delivery-queue";
 import type { Provider } from "./provider";
 import { parseScopeConfig, type ScopeConfigDocument } from "./scope-config";
 import { openScope, type Scope } from "./scope";
+import { envelopeSecrets } from "./envelope-secrets";
+import { layerDeploymentCredentials, type SecretsProvider } from "./secrets";
 
 export interface KarmiOptions<Env = unknown> {
   catalogue: CatalogueInput;
@@ -18,6 +20,10 @@ export interface KarmiOptions<Env = unknown> {
   /** Deployment-wide layer every Scope inherits and may only tighten: the same shape as a Scope config. */
   defaults?: ScopeConfigDocument;
   providers?: Record<string, Provider>;
+  /** Deployment credentials by name, referenced as `deployment:<name>`; pass Worker secrets, never literals. */
+  credentials?: Record<string, string>;
+  /** Where `scope:<name>` credentials live; the envelope store over `KARMI_KEYRING` unless a Platform brings its own. */
+  secrets?: SecretsProvider;
   bindings?: BindingsResolver<Env>;
 }
 
@@ -33,19 +39,26 @@ export interface Karmi {
 export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
   assertCompatibilityBaseline();
   const providers = options.providers ?? {};
+  const bindings = resolveBindings(env as Env, options.bindings);
+  const store =
+    options.secrets ??
+    envelopeSecrets({
+      scopes: bindings.KARMI_SCOPES,
+      ...(bindings.KARMI_KEYRING !== undefined && { keyring: bindings.KARMI_KEYRING }),
+    });
   const deployment: Deployment = {
     clock: options.clock ?? wallClock,
     catalogue: assembleCatalogue(options.catalogue),
     defaults: parseScopeConfig(options.defaults ?? {}, providers),
     providers,
+    secrets: layerDeploymentCredentials(options.credentials, store),
   };
   const durableObjects = makeDurableObjects(deployment);
-  const bindings = resolveBindings(env as Env, options.bindings);
   return {
     media: mediaUrls(options.media),
     durableObjects,
     catalogue: deployment.catalogue,
-    queueHandler: deliveryQueueHandler(bindings, deployment.catalogue),
-    scope: (id) => openScope(bindings, id),
+    queueHandler: deliveryQueueHandler(deployment, bindings),
+    scope: (id) => openScope(deployment, bindings, id),
   };
 }

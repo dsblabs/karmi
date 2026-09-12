@@ -51,7 +51,37 @@ Start from [`wrangler.baseline.jsonc`](./wrangler.baseline.jsonc): `compatibilit
 
 ## Providers
 
-A Provider is an adapter registered by name; a Provider profile in the Scope config (or `defaults`) picks one and says how to reach it — gateway, `compaction: harness | provider`, `providerOptions`, `headers`. Credentials are always references, never values. The seam is small and plain JSON: `stream(request, { fetch, signal })` yields `ProviderEvent`s, `capabilities(modelId)` reports what media a model takes, and `prepareMessages()` applies the cross-provider replay rules to a transcript before any adapter sees it.
+A Provider is an adapter registered by name; a Provider profile in the Scope config (or `defaults`) picks one and says how to reach it — gateway, `compaction: harness | provider`, `providerOptions`, `headers`. Credentials are always references, never values. The seam is small and plain JSON: `stream(request, { fetch, signal, credentials })` yields `ProviderEvent`s, `capabilities(modelId)` reports what media a model takes, and `prepareMessages()` applies the cross-provider replay rules to a transcript before any adapter sees it.
+
+## Credentials
+
+A profile names its credential as `scope:<name>` (the Scope's own, BYOK) or `deployment:<name>` (yours). Values never enter a Spec, a config revision, an event or a Turn snapshot: the Thread resolves the reference through the `SecretsProvider` seam right before each model Step, hands the adapter a `SensitiveValue` (which refuses JSON, string coercion and inspection) and drops it after the call. A revocation is effective at the next Step, even mid-Turn. `step.started` records the profile, the credential's source and version, and any fallback taken.
+
+```ts
+export const karmi = createKarmi({
+  catalogue,
+  providers: { anthropic: anthropic() },
+  credentials: { anthropic: env.ANTHROPIC_API_KEY }, // deployment:anthropic
+  defaults: {
+    providers: { shared: { adapter: "anthropic", credential: "deployment:anthropic" } },
+  },
+});
+
+// A tenant brings its own key: write-only, stored envelope-encrypted under the Scope.
+await scope.credentials.put("anthropic", tenantKey);
+await scope.config.set({
+  providers: {
+    default: {
+      adapter: "anthropic",
+      credential: "scope:anthropic",
+      fallback: { profile: "shared", on: ["missing", "auth"] }, // opt-in; default reasons: ["missing"]
+    },
+  },
+});
+await scope.providers.test("default", { model: "anthropic/claude-sonnet-5" }); // the explicit network check
+```
+
+The default store envelope-encrypts each credential with its own data key, wrapped by the active key of the `KARMI_KEYRING` Worker secret: `{ "active": "v2", "keys": { "v1": "<base64>", "v2": "<base64>" } }` (`generateKeyringKey()` makes one). Rotate by adding a key, making it active and running `scope.credentials.rewrap()` per Scope; old keys are decrypt-only until every Scope is rewrapped, and `revoke` deletes the wrapped key. `createKarmi({ secrets })` swaps in a Platform's own `SecretsProvider`; the test kit's `createTestKarmi` uses an in-memory one.
 
 ## Testing
 
