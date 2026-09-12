@@ -423,6 +423,34 @@ describe("validateAgentSpec against a Scope", () => {
     expect(diagnostics(validate(base, two))).toEqual([
       expect.objectContaining({ code: "provider.profile.required", path: "/model", context: { profiles: ["a", "b"] } }),
     ]);
+    const withDefault = {
+      config: { providers: { default: { adapter: "anthropic" }, b: { adapter: "anthropic", models: ["openai/*"] } } },
+      agents: [],
+    };
+    expect(diagnostics(validate(base, withDefault))).toEqual([]);
+  });
+
+  it("checks every model against the profile's fallback target too", () => {
+    const ctx: ScopeContext = {
+      config: {
+        providers: {
+          own: { adapter: "anthropic", credential: "scope:k", fallback: { profile: "shared" } },
+          shared: { adapter: "anthropic", models: ["anthropic/claude-sonnet-5"], credential: "deployment:k" },
+        },
+      },
+      agents: [],
+      deploymentProviders: {
+        shared: { adapter: "anthropic", models: ["anthropic/claude-opus-5"], credential: "deployment:k" },
+      },
+    };
+    const model = { id: "anthropic/claude-sonnet-5", providerProfile: "own", fallbacks: ["anthropic/claude-opus-5"] };
+    expect(diagnostics(validate(spec({ model }), ctx))).toEqual([
+      expect.objectContaining({
+        code: "provider.model.unsupported",
+        path: "/model/id",
+        context: expect.objectContaining({ profile: "shared" }),
+      }),
+    ]);
   });
 
   it("bounds tier, cron and Provider Tools by the ceiling", () => {

@@ -21,5 +21,6 @@
     "producers": [{ "binding": "KARMI_QUEUE", "queue": "my-karmi-queue" }],
     "consumers": [{ "queue": "my-karmi-queue", "max_retries": 3, "dead_letter_queue": "my-karmi-dlq" }]
   },
+  // Secrets are set with `wrangler secret put`, never here: KARMI_KEYRING (the credential store's key ring, see README).
   "observability": { "enabled": true }
 }

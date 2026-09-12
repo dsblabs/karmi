@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sensitive } from "@karmi/core";
 import { anthropic } from "../src/index";
 import text from "./fixtures/text.sse?raw";
 import { collect, request, serve } from "./helpers";
@@ -108,7 +109,7 @@ describe("retry", () => {
   it("leaves retrying to the gateway when the profile configures gateway retries", async () => {
     const server = serve(failure(529, "overloaded_error", "busy"));
     await collect(
-      anthropic({ credentials: { "deployment:aig": "t" } }),
+      anthropic(),
       request({
         config: {
           adapter: "anthropic",
@@ -122,7 +123,7 @@ describe("retry", () => {
           },
         },
       }),
-      server,
+      { fetch: server.fetch, credentials: { gateway: sensitive("t") } },
     );
     expect(server.calls).toHaveLength(1);
   });

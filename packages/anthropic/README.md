@@ -15,7 +15,7 @@ export const karmi = createKarmi({
 
 A Provider profile decides how the adapter reaches Anthropic:
 
-- **Direct**: `credential: "scope:<name>"` (resolved through the `credentials` option) or the adapter's `apiKey`.
+- **Direct**: `credential: "scope:<name>"` or `"deployment:<name>"`, which karmi resolves through its `SecretsProvider` right before each call and hands over as `credentials.provider`; or the adapter's `apiKey` for profiles that name no credential.
 - **AI Gateway**: `gateway: { kind: "cloudflare", accountId, gatewayId, credential, byok: true }` sends `cf-aig-authorization`, stamps `cf-aig-metadata { scope, agent, thread, turn }` plus one Platform entry, and records `cf-aig-log-id` on the call's Usage. With `byok` no provider auth header leaves the Worker.
 
 What streams back is karmi's own vocabulary: text, adaptive thinking with signatures, tool calls, server-tool calls joined with their byte-exact results, compaction and fallback blocks, `stop_details`, and cumulative usage including the 1h cache split. `providerOptions.anthropic` forwards `thinking`, `effort`, `fallbacks`, `contextManagement`, `taskBudget`, `serverTools`, `mcpServers`, `cache` and `betas`; the betas each feature needs are added for you. A Harness `compact` request becomes a forced `compact_20260112` edit that pauses with the block, so a Provider profile with `compaction: "provider"` delegates Compaction to the API.

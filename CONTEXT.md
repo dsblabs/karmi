@@ -65,11 +65,23 @@ One installation of the Framework — a Worker with its Catalogue and deployment
 _Avoid_: environment, instance, app
 
 **Provider credential**:
-A secret that authorises model-provider calls for one Scope. The Platform is its authority; the Framework may hold it in its default secret store or resolve it from a Platform-supplied secret store, but it is never part of an Agent Spec or Thread.
+A secret that authorises model-provider calls for one Scope, referenced from a Provider profile as `scope:<name>` (Scope-owned, put write-only through `scope.credentials`) or `deployment:<name>` (Deployment-owned, from `createKarmi({ credentials })`). The Platform is its authority; the Framework holds it in the default envelope store or resolves it from a Platform-supplied Secrets provider, but it is never part of an Agent Spec, a config revision, an event or a Turn snapshot. Resolved just in time before each model Step and discarded after the request is built, so a revocation lands at the next Step.
 _Avoid_: API key, BYOK key, provider config, Connection
 
+**Secrets provider**:
+The seam a Provider credential resolves through: `resolve(ref)` to a Sensitive value, `describe(ref)` for metadata, optional `put`, `revoke`, `rewrap` and `list`. The default is the envelope store: one data key per credential, wrapped by the active key of a versioned Deployment key ring (`KARMI_KEYRING`), rows in the Scope's ScopeConfig, ciphertext bound to deployment, Scope, name and version. The Test kit's is in-memory.
+_Avoid_: vault, key store, secret manager (for the seam)
+
+**Sensitive value**:
+The only form in which a credential travels inside the Framework: a wrapper that refuses JSON, string coercion and inspection, loses its value under structured clone, and yields it only through `expose()` in a Provider adapter's request builder. Loggers redact it.
+_Avoid_: secret string, credential value, token (for the wrapper)
+
+**Credential fallback**:
+A Provider profile's opt-in to run under a named Deployment profile instead of its own when its credential is `missing` (the default reason) or a call fails with `auth`, `quota`, `rate_limit` or `unavailable`. Missing is decided at each Step start; a Provider error engages the fallback for the rest of the Turn, retrying the same model first. Every fallback is recorded on `step.started` with its reason and the credential source and version used.
+_Avoid_: key rotation (for this), retry, model fallback (that is `model.fallbacks`)
+
 **Provider profile**:
-A named provider account available to a Scope, combining an adapter, gateway settings, model compatibility and a reference to either a Scope-owned or Deployment-owned Provider credential. An Agent selects a profile; `default` is only a conventional name, never an implicit fallback.
+A named provider account available to a Scope, combining an adapter, gateway settings, model compatibility and a reference to either a Scope-owned or Deployment-owned Provider credential. An Agent selects a profile by name; a Spec that names none runs under `default` when the Scope has one, or the Scope's only profile. `default` is a conventional name, never a fallback for a profile that does not exist.
 _Avoid_: provider, account, API-key config, credential
 
 **User**:

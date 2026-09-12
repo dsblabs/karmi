@@ -2,6 +2,7 @@ import type { MediaWriter } from "./media";
 import type { Logger, MediaRef } from "./context";
 import type { JsonSchema } from "./schema";
 import type { ProviderConfig } from "./scope-config";
+import type { ProviderCredentials } from "./secrets";
 
 // The Provider seam: karmi's own message, event and usage vocabulary. Everything here is plain JSON —
 // the Thread DO persists it and rebuilds requests from it after eviction — so nothing may depend on a
@@ -152,6 +153,8 @@ export interface ProviderCallOptions {
   /** Who the call is for: what an adapter may stamp on its own gateway, never on a third party. */
   attribution?: CallAttribution;
   logger?: Logger;
+  /** The profile's credentials, resolved for this one call; an adapter `expose()`s them while building the request. */
+  credentials?: ProviderCredentials;
 }
 
 export interface CallAttribution {

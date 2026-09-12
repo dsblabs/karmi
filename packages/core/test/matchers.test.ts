@@ -16,6 +16,7 @@ const events: ThreadEvent[] = [
     turn: 1,
     at: 0,
     type: "step.started",
+    profile: "default",
     kind: "model",
     n: 1,
     attempt: 1,

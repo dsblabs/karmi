@@ -1,6 +1,7 @@
 import type { MediaRef } from "./context";
 import type { ContentBlock, StopReason, Usage } from "./provider";
 import type { ToolContent, ToolResult } from "./tool";
+import type { CredentialUse, FallbackReason } from "./secrets";
 
 // The Thread's outbound vocabulary: Turn inputs going in, Thread events coming out. Everything is plain
 // JSON — the event log is the only state a Thread has, and every client reads the same shape.
@@ -50,6 +51,13 @@ export interface ApprovalAnswer {
   by?: string;
 }
 
+/** How a model call was authenticated: the Provider profile, its credential's source and version, and any fallback taken. */
+export interface StepCredentials {
+  profile: string;
+  credential?: CredentialUse;
+  fallback?: { from: string; reason: FallbackReason };
+}
+
 export type ThreadEventData =
   | { type: "turn.started"; input: TurnInput; toolsVersion: string }
   /** A further input of the same Turn: coalesced at Turn start, or steered in at a batch boundary. */
@@ -76,8 +84,12 @@ export type ThreadEventData =
   | { type: "job.completed"; jobId: string; result: ToolResult }
   | { type: "job.failed"; jobId: string; message: string }
   | { type: "job.cancelled"; jobId: string }
-  /** `provider` is the adapter serving `model`; replay keys provider-opaque blocks on it, not on the id's prefix. */
-  | {
+  /**
+   * `provider` is the adapter serving `model`; replay keys provider-opaque blocks on it, not on the id's prefix.
+   * `credential` says which credential version authenticated the call and `fallback` when it was not the
+   * profile's own; the value itself never enters the log.
+   */
+  | ({
       type: "step.started";
       kind: "model";
       n: number;
@@ -85,11 +97,11 @@ export type ThreadEventData =
       model: string;
       provider: string;
       agentVersion: number;
-    }
+    } & StepCredentials)
   /** `attempt` counts recovery re-runs of the same tool batch. */
   | { type: "step.started"; kind: "tool"; n: number; attempt: number; agentVersion: number }
   /** A compact Step: one summarising call by `model`, ending in `thread.compacted`. */
-  | {
+  | ({
       type: "step.started";
       kind: "compact";
       n: number;
@@ -98,7 +110,7 @@ export type ThreadEventData =
       provider: string;
       agentVersion: number;
       trigger: CompactionTrigger;
-    }
+    } & StepCredentials)
   | { type: "step.completed"; kind: "model"; n: number; stopReason: StopReason; usage: Usage }
   | { type: "step.completed"; kind: "tool" | "compact"; n: number }
   /**

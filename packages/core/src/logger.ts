@@ -1,9 +1,10 @@
 import type { Logger } from "./context";
+import { redact } from "./secrets";
 
-/** The default Logger: structured lines on the Worker console, each carrying the fields it was opened with. */
+/** The default Logger: structured lines on the Worker console, each carrying the fields it was opened with; SensitiveValues print redacted. */
 export function consoleLogger(fields: Record<string, unknown>): Logger {
   const line = (level: keyof Logger, message: string, extra?: Record<string, unknown>) =>
-    console[level](JSON.stringify({ level, message, ...fields, ...extra }));
+    console[level](JSON.stringify(redact({ level, message, ...fields, ...extra })));
   return {
     debug: (message, extra) => line("debug", message, extra),
     info: (message, extra) => line("info", message, extra),

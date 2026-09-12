@@ -30,9 +30,28 @@ export {
   resolveScopeConfig,
   type ScopeConfigDocument,
   type ProviderConfig,
+  type ProfileFallback,
   type GatewayConfig,
   type Ceilings,
 } from "./scope-config";
+export {
+  SensitiveValue,
+  sensitive,
+  isSensitiveValue,
+  redact,
+  parseCredentialRef,
+  FALLBACK_REASONS,
+  type SecretsProvider,
+  type CredentialRef,
+  type CredentialInfo,
+  type CredentialSource,
+  type CredentialUse,
+  type ResolvedCredential,
+  type ProviderCredentials,
+  type FallbackReason,
+} from "./secrets";
+export { envelopeSecrets, type EnvelopeSecretsOptions } from "./envelope-secrets";
+export { generateKeyringKey } from "./envelope";
 export {
   validateAgentSpec,
   ISSUE_CODES,
@@ -111,6 +130,7 @@ export { resolveBindings, type KarmiBindings, type BindingsResolver } from "./bi
 export { assertCompatibilityBaseline, COMPATIBILITY_DATE_FLOOR } from "./compat";
 export type {
   Scope,
+  ProviderTest,
   ScopeState,
   ScopeStatus,
   ConfigRecord,
@@ -143,6 +163,7 @@ export type {
   ApprovalSource,
   CompactionTrigger,
   CompactionStrategy,
+  StepCredentials,
 } from "./thread-events";
 export { evaluatePrompt, type PromptSections } from "./prompt";
 export { loadedToolNames, type Loaded } from "./loading";

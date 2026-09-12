@@ -96,7 +96,45 @@ describe("parseScopeConfig", () => {
     ).toThrowError(/scope\.credentials\.put/);
     expect(() =>
       parseScopeConfig({ providers: { default: { adapter: "anthropic", credential: "sk-ant-123" } } }),
-    ).toThrowError(/scope:<name> or deployment:<name>/);
+    ).toThrowError(
+      new KarmiError(
+        "config.secret-value",
+        'Secret values never enter the Scope config (at "/providers/default/credential"); store them with scope.credentials.put and reference them as scope:<name>.',
+      ),
+    );
+  });
+
+  describe("fallback", () => {
+    const shared = { adapter: "anthropic", credential: "deployment:anthropic" };
+    const own = (fallback: unknown) => ({
+      providers: { default: { adapter: "anthropic", credential: "scope:anthropic", fallback } },
+    });
+
+    it("accepts a Deployment profile as the target and the closed reason list", () => {
+      const parsed = parseScopeConfig(own({ profile: "shared", on: ["missing", "auth"] }), undefined, { shared });
+      expect(parsed.providers?.default?.fallback).toEqual({ profile: "shared", on: ["missing", "auth"] });
+    });
+
+    it("rejects an unknown reason, a Scope-only target, a chained target and a Scope-owned credential", () => {
+      expect(() => parseScopeConfig(own({ profile: "shared", on: ["timeout"] }), undefined, { shared })).toThrowError(
+        /\/providers\/default\/fallback\/on\/0/,
+      );
+      expect(() => parseScopeConfig(own({ profile: "nope" }), undefined, { shared })).toThrowError(
+        '"nope" is not a Deployment Provider profile.',
+      );
+      expect(() =>
+        parseScopeConfig(own({ profile: "shared" }), undefined, {
+          shared: { ...shared, fallback: { profile: "other" } },
+        }),
+      ).toThrowError("fallbacks do not chain");
+      expect(() =>
+        parseScopeConfig(own({ profile: "shared" }), undefined, { shared: { ...shared, credential: "scope:k" } }),
+      ).toThrowError('"shared" must hold a deployment:<name> credential.');
+    });
+
+    it("lets Deployment defaults target one of their own profiles", () => {
+      expect(() => parseScopeConfig({ providers: { ...own({ profile: "shared" }).providers, shared } })).not.toThrow();
+    });
   });
 
   it("accepts credential references", () => {

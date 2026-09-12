@@ -16,6 +16,7 @@ describe("transcriptFromEvents", () => {
       }),
       ev(1, {
         type: "step.started",
+        profile: "default",
         kind: "model",
         n: 1,
         attempt: 1,
@@ -49,6 +50,7 @@ describe("transcriptFromEvents", () => {
       }),
       ev(1, {
         type: "step.started",
+        profile: "default",
         kind: "model",
         n: 1,
         attempt: 1,
@@ -59,6 +61,7 @@ describe("transcriptFromEvents", () => {
       ev(1, { type: "message.part", index: 0, block: { type: "text", text: "partial" } }),
       ev(1, {
         type: "step.started",
+        profile: "default",
         kind: "model",
         n: 1,
         attempt: 2,
@@ -75,6 +78,7 @@ describe("transcriptFromEvents", () => {
       }),
       ev(2, {
         type: "step.started",
+        profile: "default",
         kind: "model",
         n: 1,
         attempt: 1,
@@ -151,6 +155,7 @@ describe("transcriptFromEvents", () => {
       }),
       ev(2, {
         type: "step.started",
+        profile: "default",
         kind: "model",
         n: 2,
         attempt: 1,

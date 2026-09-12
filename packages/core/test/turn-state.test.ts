@@ -6,6 +6,7 @@ let seq = 0;
 const logged = (event: ThreadEventData) => ({ seq: ++seq, at: 0, event });
 const started = (n: number, attempt: number): ThreadEventData => ({
   type: "step.started",
+  profile: "default",
   kind: "compact",
   n,
   attempt,
@@ -21,6 +22,7 @@ describe("foldTurn with compact Steps", () => {
       logged({ type: "turn.started", input: { kind: "message", parts: [] }, toolsVersion: "v" }),
       logged({
         type: "step.started",
+        profile: "default",
         kind: "model",
         n: 1,
         attempt: 1,
