@@ -7,6 +7,7 @@ import { assertIdentifier } from "./names";
 import { remote, type Remote, unwrap } from "./outcome";
 import type { Usage } from "./provider";
 import type { ThreadDurableObject } from "./thread-do";
+import type { ScheduleSummary } from "./schedule";
 import type { ToolContent, ToolResult } from "./tool";
 import type { ApprovalAnswer, Budget, Granularity, PauseReason, ThreadEvent, TurnInput } from "./thread-events";
 
@@ -58,7 +59,16 @@ export interface ThreadStatus {
   usage: Usage;
   /** The last `seq` in the log; `subscribe({ after: seq })` streams only what comes next. */
   seq: number;
+  /** When the soonest pending Schedule of this Thread fires. */
+  nextScheduleAt?: number;
 }
+
+/** A future Event for this Thread: once, at a time or after a delay, or on a cron in an IANA zone (UTC by default). */
+export type ScheduleInput = (
+  | { at: number | string; delay?: never; cron?: never; tz?: never }
+  | { delay: number | string; at?: never; cron?: never; tz?: never }
+  | { cron: string; tz?: string; at?: never; delay?: never }
+) & { input: Extract<TurnInput, { kind: "event" }> };
 
 export interface ThreadSummary extends ThreadIdentity {
   parent?: import("./delegation").ParentLink;
@@ -117,6 +127,14 @@ export interface Thread {
   subscribe(options?: { after?: number; granularity?: Granularity }): AsyncIterable<ThreadEvent>;
   events(options?: { after?: number }): Promise<ThreadEvent[]>;
   status(): Promise<ThreadStatus>;
+  /**
+   * Wakes this Thread later with `input` as an ordinary Turn input. A cron keeps at most one undelivered
+   * firing. At most 100 pending Schedules per Thread, none further than a year ahead.
+   */
+  schedule(input: ScheduleInput): Promise<{ scheduleId: string; nextAt: number }>;
+  cancelSchedule(scheduleId: string): Promise<void>;
+  /** Pending Schedules, soonest first. */
+  schedules(): Promise<ScheduleSummary[]>;
 }
 
 const TITLE_LENGTH = 80;
@@ -163,6 +181,9 @@ export function openThread(bindings: KarmiBindings, scope: ScopeId, target: Thre
     },
     events: (options) => unwrap(stub.events(address, options?.after ?? 0)),
     status: () => unwrap(stub.status(address)),
+    schedule: (input) => unwrap(stub.schedule(address, input)),
+    cancelSchedule: (scheduleId) => unwrap(stub.cancelSchedule(address, scheduleId)),
+    schedules: () => unwrap(stub.schedules(address)),
     subscribe: (options) => subscribe(stub, address, options?.after ?? 0, options?.granularity ?? "delta"),
   };
 }

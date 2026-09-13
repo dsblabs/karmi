@@ -12,6 +12,22 @@ import {
   type DelegationRecord,
 } from "./delegation";
 import type { ToolResult } from "./tool";
+import {
+  API_LIMITS,
+  overLimit as overScheduleLimit,
+  resolveSchedule,
+  resolveSchedulingLimits,
+  ScheduleStore,
+  scheduleJobId,
+  schedulingTools,
+  summarise,
+  type ScheduleFailure,
+  type ScheduleRecord,
+  type ScheduleRequest,
+  type ScheduleSummary,
+  type SchedulingLimits,
+} from "./schedule";
+import { nextCronTime } from "./cron";
 import { mediaAccess, putMedia, type MediaBody, type MediaOptions } from "./media";
 import { chooseProfile, resolveScopeConfig, type ScopeConfigDocument } from "./scope-config";
 import type { MediaRef } from "./context";
@@ -131,6 +147,8 @@ export interface TurnSnapshot {
   /** The `longRunning` grant under the Scope ceiling, or the small defaults without one. */
   budget: Budget;
   delegation?: NonNullable<Capabilities["delegation"]>;
+  /** The `scheduling` grant under the Scope ceiling and the Deployment caps; absent without the grant. */
+  scheduling?: SchedulingLimits;
   /** The Spec's `context` with the Framework defaults filled in; `window` stays open for the model's own. */
   context: { window?: number; windowCeiling?: number; reserveTokens: number; keepRecentTokens: number };
   /** The MCP servers the Spec references, as registered, and the egress globs they run under; absent without references. */
@@ -207,6 +225,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   abstract readonly deployment: Deployment;
 
   private readonly delegations: DelegationStore;
+  private readonly scheduleStore: ScheduleStore;
   private syncWork: Promise<void> | undefined;
   private syncAgain = false;
   private head = 0;
@@ -224,6 +243,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     super(ctx, env);
     ctx.storage.sql.exec(SCHEMA);
     this.delegations = new DelegationStore(ctx.storage.sql);
+    this.scheduleStore = new ScheduleStore(ctx.storage.sql);
     const columns = (table: string) =>
       new Set(
         ctx.storage.sql
@@ -384,6 +404,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         "delegation_origin",
         "delegation_children",
         "delegation_reservations",
+        "schedules",
       ])
         this.sql.exec(`DELETE FROM ${table}`);
     });
@@ -456,6 +477,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       usage: decodeUsage(row.usage_json),
       seq: this.head,
     };
+    const nextScheduleAt = this.scheduleStore.nextAt();
+    if (nextScheduleAt !== undefined) status.nextScheduleAt = nextScheduleAt;
     if (row.state === "idle") return ok(status);
     const turn = this.readTurn(row);
     status.turn = row.turn;
@@ -877,6 +900,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       return;
     }
     if (job.kind === "park-timeout") return this.expire(job.payload as { seq: number });
+    if (job.kind === "schedule") return this.fireSchedule(decodeScheduleJob(job.payload));
     if (job.kind !== "watchdog") return super.runJob(job);
     const row = this.sql.exec<ThreadRow>("SELECT * FROM thread").toArray()[0];
     if (!row || row.state === "parked" || (row.state === "idle" && !this.hasInputs())) {
@@ -1209,6 +1233,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
                 ),
               ]
             : []),
+          ...(snapshot.scheduling ? schedulingTools(this.schedulingHost(row, snapshot.scheduling, channelRef)) : []),
         ],
         remembered: this.remembered(),
         ...(mcp && { mcp }),
@@ -2029,6 +2054,121 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return remote<ThreadDurableObject>(this.env.KARMI_THREADS, keys.thread(address.scope, address.threadId));
   }
 
+  // Schedules: rows in this DO, one alarm job each. A firing is a plain `send`, so it coalesces like any
+  // other input; the built-ins address this Thread and nothing else.
+  schedule(address: ThreadAddress, request: unknown): Outcome<{ scheduleId: string; nextAt: number }> {
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    const created = this.createSchedule(entered.value, request, crypto.randomUUID(), API_LIMITS, undefined);
+    if (!created.ok) return fail(new KarmiError(created.code, created.message));
+    return ok({ scheduleId: created.record.id, nextAt: created.record.nextAt });
+  }
+
+  cancelSchedule(address: ThreadAddress, scheduleId: string): Outcome<void> {
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    if (!this.removeSchedule(entered.value, scheduleId, undefined))
+      return fail(new KarmiError("schedule.notFound", `No Schedule "${scheduleId}" on this Thread.`));
+    return ok(undefined);
+  }
+
+  schedules(address: ThreadAddress): Outcome<ScheduleSummary[]> {
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    return ok(this.scheduleStore.list().map(summarise));
+  }
+
+  private schedulingHost(row: ThreadRow, limits: SchedulingLimits, channelRef: unknown) {
+    return {
+      create: (request: ScheduleRequest, id: string) => {
+        const created = this.createSchedule(row, request, id, limits, channelRef);
+        return created.ok ? { ok: true as const, summary: summarise(created.record) } : created;
+      },
+      cancel: (id: string) => this.removeSchedule(row, id, channelRef),
+      list: () => this.scheduleStore.list().map(summarise),
+    };
+  }
+
+  /** Validates, caps, stores and arms one Schedule; an existing id is returned as is, so a re-run creates nothing twice. */
+  private createSchedule(
+    row: ThreadRow,
+    request: unknown,
+    id: string,
+    limits: SchedulingLimits,
+    channelRef: unknown,
+  ): { ok: true; record: ScheduleRecord } | ({ ok: false } & ScheduleFailure) {
+    const existing = this.scheduleStore.get(id);
+    if (existing) return { ok: true, record: existing };
+    const now = this.deployment.clock.now();
+    const resolved = resolveSchedule(request, now);
+    if (!resolved.ok) return resolved;
+    const limit =
+      resolved.timing.kind === "cron" && !limits.cron
+        ? "cron"
+        : overScheduleLimit(limits, this.scheduleStore.count(), resolved.nextAt, now);
+    if (limit) return { ok: false, code: "schedule.limit", message: `limit_exceeded: ${limit}` };
+    // Parsed above: `input` is the event as given.
+    const { input, delay } = request as ScheduleRequest;
+    const record: ScheduleRecord = { id, timing: resolved.timing, input, createdAt: now, nextAt: resolved.nextAt };
+    this.scheduleStore.save(record);
+    this.scheduler.set({ id: scheduleJobId(id), kind: "schedule", dueAt: record.nextAt, payload: { scheduleId: id } });
+    this.append(
+      row.turn,
+      {
+        type: "schedule.created",
+        scheduleId: id,
+        ...(resolved.timing.kind === "once" && delay === undefined && { at: resolved.timing.at }),
+        ...(delay !== undefined && { delay: resolved.nextAt - now }),
+        ...(resolved.timing.kind === "cron" && { cron: resolved.timing.cron, tz: resolved.timing.tz }),
+        nextAt: record.nextAt,
+        input,
+      },
+      channelRef ?? input.channelRef,
+    );
+    return { ok: true, record };
+  }
+
+  private removeSchedule(row: ThreadRow, id: string, channelRef: unknown): boolean {
+    if (!this.scheduleStore.get(id)) return false;
+    this.scheduleStore.delete(id);
+    this.scheduler.cancel(scheduleJobId(id));
+    this.append(row.turn, { type: "schedule.cancelled", scheduleId: id }, channelRef);
+    return true;
+  }
+
+  /**
+   * The alarm for one Schedule. The firing is queued as an input and coalesces if a Turn is running or
+   * parked; a cron whose last firing is still queued drops this tick instead of stacking a second one.
+   */
+  private fireSchedule(scheduleId: string): void {
+    const record = this.scheduleStore.get(scheduleId);
+    if (!record) return;
+    const row = this.row();
+    const undelivered =
+      record.pendingInput !== undefined &&
+      this.sql.exec("SELECT id FROM inputs WHERE id = ?", record.pendingInput).toArray().length > 0;
+    const now = this.deployment.clock.now();
+    const nextAt = record.timing.kind === "cron" ? nextCronTime(record.timing.cron, now, record.timing.tz) : undefined;
+    if (undelivered && nextAt !== undefined) {
+      this.append(row.turn, { type: "schedule.skipped", scheduleId, nextAt }, record.input.channelRef);
+    } else {
+      const sent = this.send(this.address(row), record.input);
+      if (!sent.ok) this.logger(row).warn("Schedule firing refused", { scheduleId, code: sent.code });
+      else {
+        record.pendingInput = this.sql.exec<{ id: number }>("SELECT MAX(id) AS id FROM inputs").one().id;
+        this.append(
+          row.turn,
+          { type: "schedule.fired", scheduleId, ...(nextAt !== undefined && { nextAt }) },
+          record.input.channelRef,
+        );
+      }
+    }
+    if (nextAt === undefined) return this.scheduleStore.delete(scheduleId);
+    record.nextAt = nextAt;
+    this.scheduleStore.save(record);
+    this.scheduler.set({ id: scheduleJobId(scheduleId), kind: "schedule", dueAt: nextAt, payload: { scheduleId } });
+  }
+
   delegationReserve(ancestor: Ancestor, id: string): string | undefined {
     const entered = this.enter(ancestor.address);
     if (
@@ -2439,6 +2579,9 @@ function buildSnapshot(
       ...(spec.capabilities?.delegation && {
         delegation: resolveDelegationLimits(spec.capabilities.delegation, ceilings.delegation),
       }),
+      ...(spec.capabilities?.scheduling && {
+        scheduling: resolveSchedulingLimits(spec.capabilities.scheduling, ceilings.scheduling),
+      }),
       budget: resolveBudget(spec.capabilities?.longRunning, ceilings.longRunning),
       context: resolveContext(spec, ceilings),
       ...mcpSnapshot(spec, source.config),
@@ -2502,6 +2645,12 @@ function addUsage(total: Usage, usage: Usage): Usage {
     cacheRead: total.cacheRead + usage.cacheRead,
     cacheWrite: total.cacheWrite + usage.cacheWrite,
   };
+}
+
+function decodeScheduleJob(value: unknown): string {
+  if (!value || typeof value !== "object" || !("scheduleId" in value) || typeof value.scheduleId !== "string")
+    throw new Error("Invalid Schedule job.");
+  return value.scheduleId;
 }
 
 function decodeCleanup(value: unknown): ThreadAddress {

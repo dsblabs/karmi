@@ -60,6 +60,22 @@ export interface StepCredentials {
 }
 
 type EventData =
+  /** A Schedule of this Thread: how it was asked for (`delay` already in milliseconds), and when it first fires. */
+  | {
+      type: "schedule.created";
+      scheduleId: string;
+      at?: number;
+      delay?: number;
+      cron?: string;
+      tz?: string;
+      nextAt: number;
+      input: Extract<TurnInput, { kind: "event" }>;
+    }
+  /** The firing is queued as a Turn input; `nextAt` is the cron's next tick, absent for a one-shot. */
+  | { type: "schedule.fired"; scheduleId: string; nextAt?: number }
+  /** A cron tick dropped because its previous firing is still waiting for a Turn. */
+  | { type: "schedule.skipped"; scheduleId: string; nextAt: number }
+  | { type: "schedule.cancelled"; scheduleId: string }
   | { type: "delegation.started"; id: string; childKey: string }
   | { type: "delegation.completed"; id: string; childKey: string; result: ToolResult }
   | { type: "turn.started"; input: TurnInput; toolsVersion: string }

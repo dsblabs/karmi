@@ -196,6 +196,7 @@ export const agentSpecJsonSchema: JsonSchema = toJsonSchema(AgentSpecSchema);
  */
 export const AGENT_SPEC_DEFAULTS = Object.freeze({
   delegation: Object.freeze({ maxDepth: 4, maxConcurrent: 8, maxChildren: 32 }),
+  scheduling: Object.freeze({ maxPending: 100, maxHorizonMs: 366 * 24 * 60 * 60 * 1000 }),
   context: Object.freeze({
     reserveTokens: 16_384,
     keepRecentTokens: 20_000,

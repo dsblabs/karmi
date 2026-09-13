@@ -31,3 +31,13 @@ function matchesRule(rule: PolicyRule, tool: { name: string; annotations: ToolAn
   }
   return true;
 }
+
+/** The effect of the first rule that names the Tool, or a remembered allow; undefined when no rule matches. */
+export function explicitEffect(
+  rules: readonly PolicyRule[],
+  tool: { name: string; annotations: ToolAnnotations },
+  remembered?: ReadonlySet<string>,
+): PolicyEffect | undefined {
+  if (remembered?.has(tool.name)) return "allow";
+  return rules.find((rule) => matchesRule(rule, tool))?.effect;
+}

@@ -169,7 +169,10 @@ export type {
   SendOptions,
   CompactOptions,
   ThreadSummary,
+  ScheduleInput,
 } from "./thread";
+export { SCHEDULE_CAPS, type ScheduleSummary, type SchedulingLimits } from "./schedule";
+export { parseCron, nextCronTime, type CronExpression } from "./cron";
 export type {
   TurnInput,
   Part,
