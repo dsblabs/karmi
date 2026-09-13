@@ -7,6 +7,7 @@ import type { Deployment } from "./deployment";
 import { KarmiError } from "./errors";
 import { fail, ok, type Outcome } from "./outcome";
 import type { Envelope } from "./envelope";
+import type { McpCatalog } from "./mcp-catalog";
 import { parseScopeConfig, resolveScopeConfig, type ScopeConfigDocument } from "./scope-config";
 import type { CredentialInfo } from "./secrets";
 import { encodeKey, type ThreadSummary } from "./thread";
@@ -25,6 +26,7 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS threads_by_agent_user ON threads (agent_id, user_id, last_active_at);
   CREATE TABLE IF NOT EXISTS connections (agent_id TEXT NOT NULL, name TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (agent_id, name));
   CREATE TABLE IF NOT EXISTS provider_credentials (name TEXT PRIMARY KEY, version INTEGER NOT NULL, kek TEXT, dek TEXT, ciphertext TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, revoked_at INTEGER);
+  CREATE TABLE IF NOT EXISTS mcp_catalog (server_id TEXT NOT NULL, partition TEXT NOT NULL, catalog_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (server_id, partition));
 `;
 
 /** Versions kept per Agent; older ones are dropped on put. */
@@ -98,6 +100,13 @@ export type { Outcome } from "./outcome";
 const decodeConfig = (json: string): ScopeConfigDocument => JSON.parse(json);
 /** JSON carries no explicit `undefined`, so a stored normalized Spec is also a plain `AgentSpec`. */
 const decodeSpec = (json: string): NormalizedAgentSpec & AgentSpec => JSON.parse(json);
+const decodeCatalog = (json: string): McpCatalog => JSON.parse(json);
+
+/** Which cached MCP catalogue: one server, one credential partition. */
+export interface McpCatalogKey {
+  serverId: string;
+  partition: string;
+}
 
 const notFound = (agentId: string) =>
   fail(new KarmiError("agent.notFound", `Agent "${agentId}" does not exist in this Scope.`));
@@ -567,6 +576,38 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok(changed > 0);
   }
 
+  // The MCP catalogue cache: one `tools/list` per (server, partition), refreshed by whoever holds the
+  // credentials to fetch it; this object only stores what it is handed.
+  mcpCatalogGet(scope: ScopeId, keys: McpCatalogKey[]): Outcome<(McpCatalog | undefined)[]> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    return ok(
+      keys.map(({ serverId, partition }) => {
+        const row = this.sql
+          .exec<{ catalog_json: string }>(
+            "SELECT catalog_json FROM mcp_catalog WHERE server_id = ? AND partition = ?",
+            serverId,
+            partition,
+          )
+          .toArray()[0];
+        return row && decodeCatalog(row.catalog_json);
+      }),
+    );
+  }
+
+  mcpCatalogPut(scope: ScopeId, key: McpCatalogKey, catalog: McpCatalog): Outcome<void> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    this.sql.exec(
+      "INSERT INTO mcp_catalog (server_id, partition, catalog_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (server_id, partition) DO UPDATE SET catalog_json = excluded.catalog_json, updated_at = excluded.updated_at",
+      key.serverId,
+      key.partition,
+      JSON.stringify(catalog),
+      this.deployment.clock.now(),
+    );
+    return ok(undefined);
+  }
+
   status(scope: ScopeId): Outcome<ScopeStatus> {
     const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;
@@ -608,6 +649,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         now,
       );
       this.sql.exec("DELETE FROM provider_credentials");
+      this.sql.exec("DELETE FROM mcp_catalog");
     });
     return ok({ operationId });
   }

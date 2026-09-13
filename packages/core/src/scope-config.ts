@@ -10,7 +10,9 @@ import {
 } from "./agent-spec";
 import type { PolicyRule, ProviderToolName } from "./agent";
 import { KarmiError } from "./errors";
+import { IDENTIFIER } from "./names";
 import { toJsonSchema, type JsonSchema } from "./schema";
+import { isBlockedUrl, matchesHost } from "./scoped-fetch";
 import { CREDENTIAL_REF, FALLBACK_REASONS, type FallbackReason } from "./secrets";
 import { firstIssue, pointer } from "./validate";
 
@@ -98,7 +100,42 @@ const CeilingsSchema = z.strictObject({
   context: z.optional(z.strictObject({ window: z.optional(positiveInt) })),
 });
 
+const HOST_PATTERN = /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)*$/i;
+const hostPattern = z.string().check(z.regex(HOST_PATTERN, "must be a hostname or a *.domain glob"));
+const toolName = z.string().check(z.minLength(1));
+
+// A remote MCP server this Scope's Agents may reference as `mcp:<id>`. Static auth headers are credential
+// references, so the values sit encrypted in the credential store and never in a revision.
+const McpServerSchema = z.strictObject({
+  url: z.url(),
+  auth: z.optional(
+    z.union([
+      z.strictObject({ type: z.literal("none") }),
+      z.strictObject({
+        type: z.literal("static"),
+        headers: z.record(z.string().check(z.minLength(1)), credentialRef),
+      }),
+    ]),
+  ),
+  /** Non-secret headers sent on every request; a header that authenticates belongs under `auth`. */
+  headers: z.optional(z.record(z.string(), z.string())),
+  /** Tool names (the server's own) an Agent may see; absent means every tool. */
+  allow: z.optional(z.array(toolName)),
+  deny: z.optional(z.array(toolName)),
+  /** Let the server's annotations drive gating; otherwise its tools count as destructive. */
+  trustAnnotations: z.optional(z.boolean()),
+  catalog: z.optional(z.strictObject({ ttlMs: z.optional(positiveInt) })),
+});
+
 export const ScopeConfigSchema = z.strictObject({
+  mcp: z.optional(
+    z.strictObject({
+      servers: z.optional(
+        z.record(z.string().check(z.regex(IDENTIFIER, "must match [A-Za-z0-9_-]{1,64}")), McpServerSchema),
+      ),
+    }),
+  ),
+  egress: z.optional(z.strictObject({ mcpHosts: z.optional(z.array(hostPattern)) })),
   media: z.optional(
     z.strictObject({
       maxBytes: z.optional(positiveInt),
@@ -165,8 +202,28 @@ export interface Ceilings {
   context?: { window?: number };
 }
 
+export type McpAuthConfig = { type: "none" } | { type: "static"; headers: Record<string, string> };
+
+/** One registered remote MCP server; `auth.headers` values are credential references, never values. */
+export interface McpServerConfig {
+  url: string;
+  auth?: McpAuthConfig;
+  headers?: Record<string, string>;
+  allow?: string[];
+  deny?: string[];
+  trustAnnotations?: boolean;
+  catalog?: { ttlMs?: number };
+}
+
+export interface EgressConfig {
+  /** Hostnames or `*.` globs MCP traffic may reach; absent means any registered server. */
+  mcpHosts?: string[];
+}
+
 /** One Scope's configuration, or the Deployment defaults: the same shape at both layers. */
 export interface ScopeConfigDocument {
+  mcp?: { servers?: Record<string, McpServerConfig> };
+  egress?: EgressConfig;
   media?: { maxBytes?: number; allowedTypes?: string[] };
   providers?: Record<string, ProviderConfig>;
   ceilings?: Ceilings;
@@ -194,7 +251,8 @@ export function parseScopeConfig(
     if (issue.code === "unrecognized_keys" && issue.keys.some((key) => SECRET_LOOKING_KEY.test(key)))
       throw secretValue(path);
     // A `credential` that is not a reference is a value someone pasted in.
-    if (issue.code === "invalid_format" && path.endsWith("/credential")) throw secretValue(path);
+    if (issue.code === "invalid_format" && (path.endsWith("/credential") || path.includes("/auth/headers/")))
+      throw secretValue(path);
     throw invalid(path, issue.message);
   }
   const profiles = result.data.providers ?? {};
@@ -218,7 +276,21 @@ export function parseScopeConfig(
         throw invalid(path, `"${fallback.profile}" must hold a deployment:<name> credential.`);
     }
   }
+  for (const [id, server] of Object.entries(result.data.mcp?.servers ?? {})) checkServer(id, server);
   return result.data as ScopeConfigDocument;
+}
+
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+// The SSRF guard runs at registration, before a URL can ever reach a transport.
+function checkServer(id: string, server: { url: string; headers?: Record<string, string> | undefined }): void {
+  const path = `/mcp/servers/${id}`;
+  const secret = Object.keys(server.headers ?? {}).find((key) => SECRET_LOOKING_KEY.test(key));
+  if (secret) throw secretValue(`${path}/headers/${secret}`);
+  if (isBlockedUrl(server.url)) throw invalid(`${path}/url`, "private, reserved or malformed address.");
+  const { protocol, hostname } = new URL(server.url);
+  if (protocol !== "https:" && !LOOPBACK.has(hostname))
+    throw invalid(`${path}/url`, "must be https (http only on loopback).");
 }
 
 function secretValue(path: string): KarmiError {
@@ -260,7 +332,19 @@ export function resolveScopeConfig(deployment: ScopeConfigDocument, scope: Scope
   if (deployment.ceilings || scope.ceilings)
     resolved.ceilings = mergeCeilings(deployment.ceilings ?? {}, scope.ceilings ?? {});
   if (deployment.policy || scope.policy) resolved.policy = [...(scope.policy ?? []), ...(deployment.policy ?? [])];
+  if (deployment.mcp?.servers || scope.mcp?.servers)
+    resolved.mcp = { servers: { ...deployment.mcp?.servers, ...scope.mcp?.servers } };
+  const hosts = intersectHosts(deployment.egress?.mcpHosts, scope.egress?.mcpHosts);
+  if (hosts) resolved.egress = { mcpHosts: hosts };
   return resolved;
+}
+
+// Deployment ∩ Scope: a pattern survives only when the other side covers it, so a Scope can only narrow.
+function intersectHosts(a: string[] | undefined, b: string[] | undefined): string[] | undefined {
+  if (!a || !b) return a ?? b;
+  const covers = (pattern: string, other: string) => matchesHost(other.replace(/^\*\./, "x."), pattern);
+  const kept = [...a.filter((x) => b.some((y) => covers(y, x))), ...b.filter((y) => a.some((x) => covers(x, y)))];
+  return [...new Set(kept.map((host) => host.toLowerCase()))];
 }
 
 function mergeCeilings(a: Ceilings, b: Ceilings): Ceilings {

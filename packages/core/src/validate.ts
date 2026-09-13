@@ -3,14 +3,15 @@ import { AGENT_SPEC_DEFAULTS, AgentSpecSchema, type NormalizedAgentSpec } from "
 import type { AgentSpec, Capabilities, MemoryProfileProperty } from "./agent";
 import type { Catalogue } from "./catalogue";
 import { matchGlob } from "./glob";
-import { BUILT_IN_TOOL_NAMES, IDENTIFIER } from "./names";
+import { parseMcpReference, type McpReference } from "./mcp-catalog";
+import { BUILT_IN_TOOL_NAMES } from "./names";
 import { chooseProfile, type Ceilings, type ProviderConfig, type ScopeConfigDocument } from "./scope-config";
 import type { Schema } from "./schema";
 import type { Tool } from "./tool";
 
 // The three layers of Agent Spec validation: shape (zod), references (Catalogue), Scope-resolved (ceilings,
-// Provider profiles, the other Agents in the Scope). MCP registry and Connection-value checks join the
-// Scope layer with the MCP tickets.
+// Provider profiles, registered MCP servers, the other Agents in the Scope). Connection-value checks join
+// the Scope layer with the OAuth ticket.
 
 export const ISSUE_CODES = [
   "shape.invalid-type",
@@ -21,6 +22,7 @@ export const ISSUE_CODES = [
   "ref.tool.unknown",
   "ref.tool.built-in",
   "ref.mcp.invalid",
+  "ref.mcp.unknown",
   "ref.skill.unknown",
   "ref.retriever.unknown",
   "ref.fragment.unknown",
@@ -75,17 +77,6 @@ export interface ScopeContext {
   agents: readonly { agentId: string; spec: AgentSpec }[];
   /** The Deployment's own profiles, where a profile's `fallback.profile` points; `config.providers` when absent. */
   deploymentProviders?: Record<string, ProviderConfig>;
-}
-
-interface McpReference {
-  server: string;
-  tool?: string;
-}
-
-function parseMcpReference(name: string): McpReference | undefined {
-  const [server = "", tool, ...rest] = name.slice("mcp:".length).split("/");
-  if (rest.length > 0 || !IDENTIFIER.test(server) || (tool !== undefined && !IDENTIFIER.test(tool))) return undefined;
-  return tool === undefined ? { server } : { server, tool };
 }
 
 function toList<T>(value: T | T[]): T[] {
@@ -503,9 +494,25 @@ class ScopeChecker {
 
   run(): void {
     this.provider();
+    this.mcp();
     this.ceilings();
     this.delegates();
     this.memoryProfile();
+  }
+
+  /** Every `mcp:` reference names a server registered for this Scope (or the Deployment). */
+  private mcp(): void {
+    const servers = this.scope.config.mcp?.servers ?? {};
+    (this.spec.tools ?? []).forEach((ref, i) => {
+      const mcp: McpReference | undefined = parseMcpReference(ref.name);
+      if (mcp && !(mcp.server in servers))
+        this.issues.error(
+          "ref.mcp.unknown",
+          `/tools/${i}/name`,
+          `No MCP server "${mcp.server}" is registered in this Scope's config.`,
+          { server: mcp.server },
+        );
+    });
   }
 
   private provider(): void {

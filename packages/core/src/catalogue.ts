@@ -8,6 +8,7 @@ import type { Retriever } from "./retriever";
 import { toJsonSchema, type JsonSchema } from "./schema";
 import type { Skill } from "./skill";
 import type { Tool, ToolAnnotations } from "./tool";
+import { sha256Hex } from "./digest";
 import { validateAgentSpec } from "./validate";
 
 /** Everything a developer defines in code; registration is only by listing here. */
@@ -120,7 +121,7 @@ export function assembleCatalogue(input: CatalogueInput): Catalogue {
     hooks,
     agents,
     describe: () => describe(catalogue),
-    fingerprint: () => (fingerprint ??= digest(JSON.stringify(catalogue.describe()))),
+    fingerprint: () => (fingerprint ??= sha256Hex(JSON.stringify(catalogue.describe()))),
   };
   assertAgentsResolve(catalogue);
   return catalogue;
@@ -185,9 +186,4 @@ function describe(c: Omit<Catalogue, "describe">): CatalogueDescription {
       ...optional("description", a.spec.description),
     })),
   };
-}
-
-async function digest(text: string): Promise<string> {
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }

@@ -37,7 +37,8 @@ export function providerHosts(profile: ProviderConfig): string[] | undefined {
   return undefined;
 }
 
-function matchesHost(host: string, pattern: string): boolean {
+/** `host` equals `pattern`, or `pattern` is a `*.domain` glob covering it. */
+export function matchesHost(host: string, pattern: string): boolean {
   if (pattern.startsWith("*.")) return host.endsWith(pattern.slice(1)) && host.length > pattern.length - 1;
   return host === pattern;
 }

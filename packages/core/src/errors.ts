@@ -23,6 +23,8 @@ export type KarmiErrorCode =
   | "deliverer.notFound"
   | "destroy.notFound"
   | "job.notFound"
+  | "mcp.discovery.failed"
+  | "mcp.server.unknown"
   | "media.id.invalid"
   | "media.tooLarge"
   | "media.typeDenied"

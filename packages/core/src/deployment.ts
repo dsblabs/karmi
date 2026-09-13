@@ -13,4 +13,6 @@ export interface Deployment {
   readonly providers: Readonly<Record<string, Provider>>;
   /** Where Provider credentials resolve from, with `createKarmi({ credentials })` layered in front. */
   readonly secrets: SecretsProvider;
+  /** The transport under every `scopedFetch`: the global `fetch` unless a test supplies one. */
+  readonly fetch: typeof fetch;
 }

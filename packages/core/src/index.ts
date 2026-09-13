@@ -29,6 +29,9 @@ export {
   parseScopeConfig,
   resolveScopeConfig,
   type ScopeConfigDocument,
+  type McpServerConfig,
+  type McpAuthConfig,
+  type EgressConfig,
   type ProviderConfig,
   type ProfileFallback,
   type GatewayConfig,
@@ -103,7 +106,7 @@ export { KarmiError, SpecInvalidError } from "./errors";
 export type { KarmiErrorCode } from "./errors";
 export { BUILT_IN_TOOL_NAMES, type CatalogueKind } from "./names";
 export type { Logger, MediaRef, ScopeId, ThreadRef, UserId } from "./context";
-export type { Schema, JsonSchema } from "./schema";
+export { rawJsonSchema, type Schema, type JsonSchema } from "./schema";
 export { assembleCatalogue, type Catalogue, type CatalogueInput, type CatalogueDescription } from "./catalogue";
 export { createKarmi, type Karmi, type KarmiOptions } from "./karmi";
 export type { Deployment } from "./deployment";
@@ -125,6 +128,9 @@ export type {
 } from "./provider";
 export { prepareMessages, normalizeToolCallId, type ReplayTarget, type ReplayResult } from "./replay";
 export { scopedFetch, providerHosts, isBlockedUrl, GATEWAY_HOST, type EgressPolicy } from "./scoped-fetch";
+export type { McpSnapshot, McpSnapshotInput, McpServerSnapshot } from "./mcp-registry";
+export type { McpCatalog, McpEra, McpTool, McpReference } from "./mcp-catalog";
+export { parseMcpReference } from "./mcp-catalog";
 export { retry, type RetryOptions } from "./retry";
 export { resolveBindings, type KarmiBindings, type BindingsResolver } from "./bindings";
 export { assertCompatibilityBaseline, COMPATIBILITY_DATE_FLOOR } from "./compat";

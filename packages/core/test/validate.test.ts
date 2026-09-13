@@ -83,6 +83,7 @@ const scope: ScopeContext = {
   config: {
     providers: { default: { adapter: "anthropic" } },
     ceilings: { scheduling: false, longRunning: { maxSteps: 100 }, approvals: { timeout: 60_000 } },
+    mcp: { servers: { github: { url: "https://mcp.github.com/mcp" }, linear: { url: "https://mcp.linear.app/mcp" } } },
   },
   agents: [helper({ profile: { properties: { tier: { type: "number" } } } })],
 };
@@ -108,6 +109,7 @@ const cases: Record<IssueCode, { spec: unknown; path: string; severity: Issue["s
   "ref.tool.unknown": { spec: spec({ tools: ["nope"] }), path: "/tools/0/name", severity: "error" },
   "ref.tool.built-in": { spec: spec({ tools: ["run_script"] }), path: "/tools/0/name", severity: "error" },
   "ref.mcp.invalid": { spec: spec({ tools: ["mcp:bad/server/tool"] }), path: "/tools/0/name", severity: "error" },
+  "ref.mcp.unknown": { spec: spec({ tools: ["mcp:nope"] }), path: "/tools/0/name", severity: "error" },
   "ref.skill.unknown": { spec: spec({ skills: ["nope"] }), path: "/skills/0/name", severity: "error" },
   "ref.retriever.unknown": {
     spec: spec({ knowledge: [{ name: "faq", retriever: "nope" }] }),
@@ -261,7 +263,10 @@ describe("validateAgentSpec", () => {
 
   it("accepts a full Spec and normalises references to objects", () => {
     const loose: ScopeContext = {
-      config: { providers: { default: { adapter: "anthropic", models: ["anthropic/*", "openai/*"] } } },
+      config: {
+        providers: { default: { adapter: "anthropic", models: ["anthropic/*", "openai/*"] } },
+        ...(scope.config.mcp && { mcp: scope.config.mcp }),
+      },
       agents: [helper()],
     };
     const result = validate(

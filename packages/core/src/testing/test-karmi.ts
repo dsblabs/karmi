@@ -8,6 +8,7 @@ import { isTurnEnd } from "../thread-do";
 import type { SendOptions, Thread, ThreadIdentity } from "../thread";
 import type { ThreadEvent, TurnInput } from "../thread-events";
 import { fakeProvider, type FakeProvider } from "./fake-provider";
+import { routeFetch, type FakeMcpServer } from "./fake-mcp-server";
 import { memorySecrets, type MemorySecrets } from "./memory-secrets";
 
 export interface TestThread extends Omit<Thread, "send"> {
@@ -34,10 +35,12 @@ export interface TestKarmi {
  * A karmi for the test Worker: the Catalogue under test, a fake Provider named `fake` that serves every
  * model id, an in-memory SecretsProvider, and the Scope `test`. Export `karmi.durableObjects` from the same module.
  */
-export function createTestKarmi(
-  catalogue: CatalogueInput,
-  options: Omit<KarmiOptions, "catalogue" | "clock"> = {},
-): TestKarmi {
+export interface TestKarmiOptions extends Omit<KarmiOptions, "catalogue" | "clock"> {
+  /** In-process MCP servers the Scope's `scopedFetch` reaches by their `url`; register them in the Scope config. */
+  mcpServers?: FakeMcpServer[];
+}
+
+export function createTestKarmi(catalogue: CatalogueInput, options: TestKarmiOptions = {}): TestKarmi {
   const clock = testClock(resolveBindings(env, options.bindings));
   const provider = fakeProvider(["OK"]);
   const secrets = memorySecrets();
@@ -45,8 +48,10 @@ export function createTestKarmi(
     ...options.defaults,
     providers: { default: { adapter: "fake", models: ["*"] }, ...options.defaults?.providers },
   };
+  const { mcpServers, ...rest } = options;
   const karmi = createKarmi({
-    ...options,
+    ...rest,
+    ...(mcpServers && { fetch: routeFetch(mcpServers, options.fetch) }),
     clock,
     catalogue,
     defaults,
