@@ -41,6 +41,8 @@
     "zod": "^4.5.4"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/core": "2.0.0",
     "aws4fetch": "^1.0.20",
     "file-type": "^22.1.0",
     "ulid": "^3.0.2"

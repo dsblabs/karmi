@@ -23,7 +23,18 @@ export {
   type RecordingOptions,
   type RecordingProvider,
 } from "./recording";
-export { createTestKarmi, type TestKarmi, type TestScope, type TestThread } from "./test-karmi";
+export { createTestKarmi, type TestKarmi, type TestKarmiOptions, type TestScope, type TestThread } from "./test-karmi";
+export {
+  fakeMcpServer,
+  routeFetch,
+  type FakeMcpServer,
+  type FakeMcpServerOptions,
+  type FakeMcpTool,
+  type FakeMcpResult,
+  type FakeMcpContent,
+  type FakeMcpCall,
+  type FakeMcpEra,
+} from "./fake-mcp-server";
 export { memorySecrets, type MemorySecrets } from "./memory-secrets";
 export { matchers, lastMessage, type EventPartial } from "./matchers";
 

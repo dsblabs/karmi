@@ -116,6 +116,14 @@ _Avoid_: job, cron job, timer, alarm (for the public thing), reminder (as the co
 A named, typed credential grant a Tool acts through, held at one of two levels: agent-level (Scope, Agent, name) — shared by every User of that Agent — or user-level (Scope, User, name) — granted by the User so the Agent acts on their behalf, usable across every Agent in the Scope. A Tool requires a Connection by name; user-level resolves before agent-level. An MCP server declares its level in ScopeConfig (`auth: none | static | oauth { level }`); an OAuth grant is the Connection `mcp:<serverId>`, its refresh token never leaves ScopeConfig, and a missing grant surfaces as an `approval.requested { kind: "connect" }` pause.
 _Avoid_: credential, integration, token, secret (for the grant itself)
 
+**MCP server**:
+A remote Model Context Protocol server registered in ScopeConfig under `mcp.servers.<id>` (the Deployment defaults may register some for every Scope): its URL (checked by the SSRF guard at registration), `auth: none | static` with static headers as credential references, allow/deny lists of its tool names, whether its annotations are trusted for gating, and a catalogue `ttlMs` for servers that send no freshness hint. A Spec references it as `mcp:<id>` (every allowed tool) or `mcp:<id>/<tool>`; its tools reach the model as `id__tool`, grouped by server in id order after the Catalogue Tools.
+_Avoid_: MCP connection, integration, plugin, connector
+
+**Catalogue cache**:
+The `tools/list` of one MCP server, stored in ScopeConfig per (server, credential partition) with its `catalogVersion` (a digest of the ordered definitions), `ttlMs`, `cacheScope` and the server's protocol era. Refreshed at Turn start when stale, after a `-32602` from a call, or by `scope.mcp.refreshCatalog()`; never polled in the background. A server that cannot be reached serves its stale catalogue. `turn.started { toolsVersion }` digests the Catalogue fingerprint with every server's `catalogVersion`, so the model's tool prefix changes only when a catalogue does.
+_Avoid_: tool cache, discovery cache, registry (for the cache)
+
 **Prompt**:
 An Agent's instructions, composed from ordered Fragments evaluated at the start of every turn. Never a static string, never persisted.
 _Avoid_: system prompt (as the definition), template, instructions (for the whole)

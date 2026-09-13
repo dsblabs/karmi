@@ -26,6 +26,10 @@ import type { Compacted, HookContextBase, HookContexts, HookResults, TurnEnd } f
 import { hooksAt } from "./hooks";
 import { keys } from "./keys";
 import { consoleLogger } from "./logger";
+import { sha256Hex } from "./digest";
+import { parseMcpReference } from "./mcp-catalog";
+import { McpRegistry, type McpServerSnapshot } from "./mcp-registry";
+import { McpTurnSource } from "./mcp-source";
 import { fail, ok, remote, type Outcome } from "./outcome";
 import { isPlatformFailure } from "./platform-failure";
 import { evaluatePrompt } from "./prompt";
@@ -33,7 +37,7 @@ import type { ContentBlock, ProviderError, ProviderEvent, ProviderRequest, StopR
 import { prepareMessages } from "./replay";
 import { ScheduledDurableObject, type ScheduledJob } from "./scheduler";
 import { providerHosts, scopedFetch } from "./scoped-fetch";
-import type { ScopeConfigDurableObject, TurnSnapshotSource } from "./scope-config-do";
+import type { ScopeConfigDurableObject, ScopeState, TurnSnapshotSource } from "./scope-config-do";
 import {
   attemptTarget,
   fallbackReason,
@@ -42,7 +46,7 @@ import {
   type FallbackReason,
   type ProviderCredentials,
 } from "./secrets";
-import type { Ceilings, ProviderConfig } from "./scope-config";
+import type { Ceilings, McpServerConfig, ProviderConfig } from "./scope-config";
 import type {
   ApprovalAnswer,
   ApprovalSource,
@@ -114,6 +118,15 @@ export interface TurnSnapshot {
   budget: Budget;
   /** The Spec's `context` with the Framework defaults filled in; `window` stays open for the model's own. */
   context: { window?: number; windowCeiling?: number; reserveTokens: number; keepRecentTokens: number };
+  /** The MCP servers the Spec references, as registered, and the egress globs they run under; absent without references. */
+  mcp?: { servers: Record<string, McpServerConfig>; hosts?: string[] };
+}
+
+/** What `prepare` works out before a Turn starts: its snapshot when the Scope answered, and its Tool sources. */
+interface PreparedTurn {
+  snapshot?: TurnSnapshot;
+  mcp?: McpTurnSource;
+  toolsVersion: string;
 }
 
 type ThreadRow = {
@@ -184,6 +197,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private waiters: (() => void)[] = [];
   /** Root of the Turn's AbortSignal tree; aborted when the Turn ends or is cancelled. */
   private turnAbort = new AbortController();
+  /** The running Turn's MCP servers: catalogues and lazily opened sessions, dropped when the Turn ends. */
+  private mcp: { turn: number; source: McpTurnSource | undefined } | undefined;
+  /** The Turn whose snapshot and catalogues are being fetched; an input arriving meanwhile is for the one after. */
+  private preparing: number | undefined;
 
   constructor(ctx: DurableObjectState, env: KarmiBindings) {
     super(ctx, env);
@@ -376,18 +393,20 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         "INSERT INTO delivery_route (id, json) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json",
         JSON.stringify(binding),
       );
-    // A steer joins the Turn in flight; anything else coalesces into the one next Turn.
+    // A steer joins the Turn in flight; anything else coalesces into the one next Turn, which is the one
+    // after the Turn being prepared right now.
     const joins = steer && row.state !== "idle";
+    const next = this.preparing === undefined ? row.turn + 1 : this.preparing + 1;
     this.sql.exec(
       "INSERT INTO inputs (turn, json, steer) VALUES (?, ?, ?)",
-      joins ? row.turn : row.turn + 1,
+      joins ? row.turn : next,
       JSON.stringify(input),
       joins ? 1 : 0,
     );
     if (this.active) this.armWatchdog();
     else if (row.state === "idle" || row.state === "running") this.kick(row.state === "running");
     else if (!joins && this.readTurn(row).paused === "scope_suspended") this.wake(row, "input");
-    return ok({ turn: joins ? row.turn : row.turn + 1, seq: this.head });
+    return ok({ turn: joins ? row.turn : next, seq: this.head });
   }
 
   events(address: ThreadAddress, after: number): Outcome<ThreadEvent[]> {
@@ -775,8 +794,6 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (this.active) return;
     this.active = true;
     try {
-      // The Catalogue is fixed for the Deployment, so one fingerprint serves every Turn of this run.
-      const toolsVersion = await this.deployment.catalogue.fingerprint();
       for (;;) {
         if (this.sql.exec("SELECT id FROM deleted").toArray().length) return;
         let row = this.row();
@@ -789,7 +806,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           this.wake(row, "input", false);
           row = this.row();
         } else if (row.state === "idle") {
-          if (!this.startTurn(row, toolsVersion)) {
+          if (!(await this.startNextTurn(row))) {
             this.scheduler.cancel("watchdog");
             return;
           }
@@ -812,14 +829,46 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     }
   }
 
-  /** Starts the next Turn from the queued inputs; false when nothing is queued. */
-  private startTurn(row: ThreadRow, toolsVersion: string): boolean {
+  /**
+   * Everything a Turn needs before its first event: the Scope snapshot and the MCP catalogues (refreshed
+   * when stale), so `turn.started` can carry the version of the whole Tool set. A Scope that refuses
+   * leaves the snapshot out; the first Step takes it again and ends the Turn with the reason.
+   */
+  private async prepare(row: ThreadRow): Promise<PreparedTurn> {
+    const fingerprint = await this.deployment.catalogue.fingerprint();
+    const turn = row.turn + 1;
+    const first = this.sql.exec<{ json: string }>("SELECT json FROM inputs ORDER BY id LIMIT 1").toArray()[0];
+    const source = await this.scopeSnapshot({ ...row, turn }, first ? decodeInput(first.json) : undefined);
+    if (!source.ok) return { toolsVersion: fingerprint };
+    const mcp = await this.openMcp({ ...row, turn }, source.snapshot);
+    const versions = mcp?.versions() ?? {};
+    const toolsVersion =
+      Object.keys(versions).length === 0 ? fingerprint : await sha256Hex(JSON.stringify([fingerprint, versions]));
+    return { snapshot: source.snapshot, ...(mcp && { mcp }), toolsVersion };
+  }
+
+  /** Prepares and starts the next Turn from the queued inputs; false when nothing is queued. */
+  private async startNextTurn(row: ThreadRow): Promise<boolean> {
+    if (!this.hasInputs()) return false;
+    // The new Turn's signal tree starts here: the catalogue refreshes below already run under it.
+    this.turnAbort = new AbortController();
+    this.preparing = row.turn + 1;
+    try {
+      return this.startTurn(row, await this.prepare(row));
+    } finally {
+      this.preparing = undefined;
+    }
+  }
+
+  private startTurn(row: ThreadRow, prepared: PreparedTurn): boolean {
+    const turn = row.turn + 1;
     // Nothing may yield between taking the inputs and logging them, or an eviction would lose them.
-    const queued = this.sql.exec<{ json: string }>("SELECT json FROM inputs ORDER BY id").toArray();
+    const queued = this.sql
+      .exec<{ json: string }>("SELECT json FROM inputs WHERE turn <= ? ORDER BY id", turn)
+      .toArray();
     const [first, ...rest] = queued.map((next) => decodeInput(next.json));
     if (!first) return false;
-    const turn = row.turn + 1;
-    this.sql.exec("DELETE FROM inputs");
+    this.sql.exec("DELETE FROM inputs WHERE turn <= ?", turn);
     this.update({
       state: "running",
       turn,
@@ -828,10 +877,12 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       recoveries: 0,
       platform_failure: 0,
       cancelled: 0,
-      snapshot_json: null,
+      snapshot_json: prepared.snapshot ? JSON.stringify(prepared.snapshot) : null,
+      agent_version: prepared.snapshot?.agentVersion ?? null,
       fallback_json: null,
     });
-    this.append(turn, { type: "turn.started", input: first, toolsVersion }, first.channelRef);
+    this.mcp = { turn, source: prepared.mcp };
+    this.append(turn, { type: "turn.started", input: first, toolsVersion: prepared.toolsVersion }, first.channelRef);
     for (const input of rest) this.append(turn, { type: "turn.input", input }, first.channelRef);
     return true;
   }
@@ -889,6 +940,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       await this.turnHooks(row, snapshot, "after-turn", { end });
     }
     this.turnAbort.abort();
+    // Sessions never outlive the Turn, parked or not; a woken Turn opens fresh ones from the cached catalogues.
+    const mcp = this.mcp;
+    this.mcp = undefined;
+    await mcp?.source?.close();
   }
 
   // Approvals: one request per asked call or per exhausted budget, answered once, by a human, the
@@ -961,7 +1016,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   // Step ends without tool calls. `attempt` on a model Step indexes the fallback list, so an eviction
   // re-runs the same model and only a Provider failure rotates; on a tool Step it counts recoveries.
   private async turn(row: ThreadRow): Promise<void> {
-    this.turnAbort = new AbortController();
+    if (this.turnAbort.signal.aborted) this.turnAbort = new AbortController();
     try {
       await this.steps(row);
     } catch (caught) {
@@ -986,7 +1041,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       const { snapshot } = boundary;
       if (row.step === 0) {
         if ((await this.beforeTurn(row, snapshot)) === "stop") return;
-        if ((await this.activateCommand(row, snapshot, available(snapshot), channelRef)) === "stop") return;
+        if ((await this.activateCommand(row, snapshot, await available(snapshot), channelRef)) === "stop") return;
       }
       const turn = this.joinSteers(row, this.readTurn(row), channelRef);
       const { plan } = turn;
@@ -1003,8 +1058,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       else if (context && turn.compaction === undefined && overLimit(contextTokens(context.events), limits))
         next = await this.runCompactStep(row, snapshot, plan.n, "auto", context, channelRef);
       else if (plan.kind === "model")
-        next = await this.startModelStep(row, snapshot, plan, available(snapshot), channelRef, turn, context);
-      else next = await this.startToolStep(row, snapshot, plan, available(snapshot), channelRef);
+        next = await this.startModelStep(row, snapshot, plan, await available(snapshot), channelRef, turn, context);
+      else next = await this.startToolStep(row, snapshot, plan, await available(snapshot), channelRef);
       if (next === "stop") return;
       row = this.row();
     }
@@ -1014,8 +1069,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
    * The Tool set of one Step: the snapshot's references under the Thread's remembered allows and what
    * the context has loaded so far. Resolved per Step, since a Step may load Tools for the next one.
    */
-  private toolSet(row: ThreadRow, channelRef: unknown): (snapshot: TurnSnapshot) => ToolSet {
-    return (snapshot) => {
+  private toolSet(row: ThreadRow, channelRef: unknown): (snapshot: TurnSnapshot) => Promise<ToolSet> {
+    return async (snapshot) => {
+      const mcp = await this.mcpSource(row, snapshot);
       let set: ToolSet | undefined;
       const current = (): ToolSet => {
         if (!set) throw new Error("A built-in Tool ran before its Tool set was resolved.");
@@ -1036,11 +1092,46 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         policy: snapshot.policy,
         builtIns: builtInTools(host),
         remembered: this.remembered(),
+        ...(mcp && { mcp }),
         loaded: this.loaded(),
         window: this.limits(snapshot).window,
       });
       return set;
     };
+  }
+
+  /** This Turn's MCP source, opened once per Turn; a recovered or resumed Turn rebuilds it from the cached catalogues. */
+  private async mcpSource(row: ThreadRow, snapshot: TurnSnapshot): Promise<McpTurnSource | undefined> {
+    if (this.mcp?.turn !== row.turn) this.mcp = { turn: row.turn, source: await this.openMcp(row, snapshot) };
+    return this.mcp.source;
+  }
+
+  private async openMcp(row: ThreadRow, snapshot: TurnSnapshot): Promise<McpTurnSource | undefined> {
+    if (!snapshot.mcp) return undefined;
+    const registry = new McpRegistry(this.deployment, this.env.KARMI_SCOPES);
+    const config: ScopeConfigDocument = {
+      mcp: { servers: snapshot.mcp.servers },
+      ...(snapshot.mcp.hosts && { egress: { mcpHosts: snapshot.mcp.hosts } }),
+    };
+    const { servers } = await registry.snapshot(row.scope_id, config, {
+      agent: row.agent_id,
+      ...(row.user_id !== null && { user: row.user_id }),
+    });
+    const missing = servers.filter(
+      (server): server is McpServerSnapshot & { missing: string } => server.missing !== undefined,
+    );
+    for (const server of missing)
+      this.logger(row).warn("MCP credential missing", { server: server.id, credential: server.missing });
+    return McpTurnSource.open(
+      {
+        scope: row.scope_id,
+        registry,
+        egress: registry.egress(config, servers),
+        logger: this.logger(row),
+        signal: this.turnAbort.signal,
+      },
+      servers,
+    );
   }
 
   /** What every Fragment of this Turn sees; `model` is the one in use when a model Step names it. */
@@ -1348,33 +1439,41 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       snapshot = decodeSnapshot(row.snapshot_json);
       state = status.value.state;
     } else {
-      const input = this.turnInput(row.turn);
-      const title = input ? titleOf(input) : undefined;
-      const source = await stub.turnSnapshot(row.scope_id, row.agent_id, {
-        threadId: row.thread_id,
-        ...(row.user_id !== null && { userId: row.user_id }),
-        createdAt: row.created_at,
-        activeAt: this.deployment.clock.now(),
-        ...(title !== undefined && { title }),
-      });
-      if (!source.ok) return { ok: false, failure: failure(source.code, source.message) };
-      const built = buildSnapshot(source.value, this.deployment.defaults.providers ?? {}, row.agent_id);
-      if (!built.ok) return built;
-      snapshot = built.snapshot;
-      const json = JSON.stringify(snapshot);
-      const bytes = new TextEncoder().encode(json).byteLength;
-      if (bytes > SNAPSHOT_LIMIT)
-        return {
-          ok: false,
-          failure: failure("snapshot.too-large", `Turn snapshot is ${bytes} bytes; the limit is ${SNAPSHOT_LIMIT}.`),
-        };
-      this.update({ snapshot_json: json, agent_version: snapshot.agentVersion });
-      state = source.value.state;
+      const taken = await this.scopeSnapshot(row, this.turnInput(row.turn));
+      if (!taken.ok) return taken;
+      snapshot = taken.snapshot;
+      this.update({ snapshot_json: JSON.stringify(snapshot), agent_version: snapshot.agentVersion });
+      state = taken.state;
     }
     if (state === "suspended") return { ok: false, failure: { type: "turn.paused", reason: "scope_suspended" } };
     if (state !== "active")
       return { ok: false, failure: failure("scope.destroyed", `Scope "${row.scope_id}" has been destroyed.`) };
     return { ok: true, snapshot };
+  }
+
+  /** Asks the Scope for this Turn's snapshot and builds it; nothing is persisted here. */
+  private async scopeSnapshot(
+    row: ThreadRow,
+    input: TurnInput | undefined,
+  ): Promise<{ ok: true; snapshot: TurnSnapshot; state: ScopeState } | { ok: false; failure: TurnEnd }> {
+    const title = input ? titleOf(input) : undefined;
+    const source = await this.scopeStub(row).turnSnapshot(row.scope_id, row.agent_id, {
+      threadId: row.thread_id,
+      ...(row.user_id !== null && { userId: row.user_id }),
+      createdAt: row.created_at,
+      activeAt: this.deployment.clock.now(),
+      ...(title !== undefined && { title }),
+    });
+    if (!source.ok) return { ok: false, failure: failure(source.code, source.message) };
+    const built = buildSnapshot(source.value, this.deployment.defaults.providers ?? {}, row.agent_id);
+    if (!built.ok) return built;
+    const bytes = new TextEncoder().encode(JSON.stringify(built.snapshot)).byteLength;
+    if (bytes > SNAPSHOT_LIMIT)
+      return {
+        ok: false,
+        failure: failure("snapshot.too-large", `Turn snapshot is ${bytes} bytes; the limit is ${SNAPSHOT_LIMIT}.`),
+      };
+    return { ok: true, snapshot: built.snapshot, state: source.value.state };
   }
 
   private scopeStub(row: ThreadRow) {
@@ -1605,7 +1704,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     };
     const logger = this.logger(row);
     const hosts = providerHosts(profile);
-    const egress = scopedFetch({ ...(hosts && { hosts }), logger });
+    const egress = scopedFetch({ ...(hosts && { hosts }), logger, fetch: this.deployment.fetch });
     const attribution = { scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn };
     const parts: ContentBlock[] = [];
     let usage = ZERO_USAGE;
@@ -1656,7 +1755,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     try {
       const request = await this.modelRequest(row, snapshot, available, model, events, profile);
       const hosts = providerHosts(profile);
-      const egress = scopedFetch({ ...(hosts && { hosts }), logger });
+      const egress = scopedFetch({ ...(hosts && { hosts }), logger, fetch: this.deployment.fetch });
       const attribution = { scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn };
       const stream = provider.stream(request, {
         fetch: egress,
@@ -1873,8 +1972,22 @@ function buildSnapshot(
       ),
       budget: resolveBudget(spec.capabilities?.longRunning, ceilings.longRunning),
       context: resolveContext(spec, ceilings),
+      ...mcpSnapshot(spec, source.config),
     },
   };
+}
+
+/** Only the servers the Spec references travel in the snapshot; a Spec that names none carries nothing. */
+function mcpSnapshot(spec: AgentSpec, config: ScopeConfigDocument): Pick<TurnSnapshot, "mcp"> {
+  const servers: Record<string, McpServerConfig> = {};
+  for (const ref of spec.tools ?? []) {
+    const mcp = parseMcpReference(typeof ref === "string" ? ref : ref.name);
+    const server = mcp && config.mcp?.servers?.[mcp.server];
+    if (mcp && server) servers[mcp.server] = server;
+  }
+  if (Object.keys(servers).length === 0) return {};
+  const hosts = config.egress?.mcpHosts;
+  return { mcp: { servers, ...(hosts && { hosts }) } };
 }
 
 /** The one decode point for `thread.fallback_json`; a row from before the column reads as not engaged. */

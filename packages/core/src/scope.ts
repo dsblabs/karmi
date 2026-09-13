@@ -4,6 +4,7 @@ import type { ScopeId } from "./context";
 import type { Deployment } from "./deployment";
 import { KarmiError } from "./errors";
 import { keys } from "./keys";
+import { McpRegistry, type McpSnapshot, type McpSnapshotInput } from "./mcp-registry";
 import { remote, unwrap as call } from "./outcome";
 import type { ProviderError, ProviderRequest } from "./provider";
 import { providerHosts, scopedFetch } from "./scoped-fetch";
@@ -79,6 +80,16 @@ export interface Scope {
     /** The explicit network check: resolves the profile's credentials and makes one small call. */
     test(profile: string, options?: { model?: string }): Promise<ProviderTest>;
   };
+  /** The MCP registry: what a Turn takes for its servers, and the catalogue cache behind it. */
+  readonly mcp: {
+    /**
+     * Transport config, resolved static headers (as Sensitive values) and the cached catalogue of each
+     * server, for one Turn in memory; nothing here is persisted or logged.
+     */
+    snapshot(input: McpSnapshotInput): Promise<McpSnapshot>;
+    /** Fetches `tools/list` again for one server (or every registered one); returns each new `catalogVersion`. */
+    refreshCatalog(serverId?: string): Promise<Record<string, string>>;
+  };
   /** An identity creates the Thread on first use; a key from `thread.key` reopens one and never creates. */
   thread(target: ThreadIdentity | string): Thread;
   readonly threads: {
@@ -105,6 +116,7 @@ export function openScope(deployment: Deployment, bindings: KarmiBindings, id: S
   const ref = (name: string) => ({ scope: id, ref: credentialRef("scope", name) });
   const readOnly = () =>
     new KarmiError("credential.readOnly", "The configured SecretsProvider does not accept writes from karmi.");
+  const resolved = async () => resolveScopeConfig(deployment.defaults, (await call(stub.configGet(id))).document);
   return {
     id,
     config: {
@@ -127,6 +139,7 @@ export function openScope(deployment: Deployment, bindings: KarmiBindings, id: S
         return testProfile(deployment, id, profile, config, options?.model);
       },
     },
+    mcp: mcpHandle(new McpRegistry(deployment, bindings.KARMI_SCOPES), id, resolved),
     agents: {
       put: (spec, options) => call(stub.agentsPut(id, spec, options?.ifVersion)),
       get: (agentId, options) => call(stub.agentsGet(id, agentId, options?.version)),
@@ -147,6 +160,21 @@ export function openScope(deployment: Deployment, bindings: KarmiBindings, id: S
     resume: () => call(stub.resume(id)),
     destroy: () => call(stub.destroy(id)),
     destroyStatus: (operationId) => call(stub.destroyStatus(id, operationId)),
+  };
+}
+
+function mcpHandle(registry: McpRegistry, id: ScopeId, resolved: () => Promise<ScopeConfigDocument>): Scope["mcp"] {
+  return {
+    snapshot: async (input) => registry.snapshot(id, await resolved(), input),
+    refreshCatalog: async (serverId) => {
+      const config = await resolved();
+      const { servers } = await registry.snapshot(id, config, serverId === undefined ? {} : { serverIds: [serverId] });
+      const egress = registry.egress(config, servers);
+      const versions: Record<string, string> = {};
+      for (const server of servers)
+        versions[server.id] = (await registry.refresh(id, server, egress, AbortSignal.timeout(30_000))).catalogVersion;
+      return versions;
+    },
   };
 }
 
@@ -184,7 +212,7 @@ async function testProfile(
   };
   const hosts = providerHosts(config);
   const options = {
-    fetch: scopedFetch({ ...(hosts && { hosts }) }),
+    fetch: scopedFetch({ ...(hosts && { hosts }), fetch: deployment.fetch }),
     signal: AbortSignal.timeout(30_000),
     credentials: resolved.credentials,
   };

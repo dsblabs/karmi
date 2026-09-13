@@ -11,7 +11,7 @@ import {
   type ToolOutcome,
   type ToolResult,
 } from "../src/index";
-import { createTestKarmi } from "../src/testing/index";
+import { createTestKarmi, fakeMcpServer } from "../src/testing/index";
 
 /** What the Tools and Hooks below saw, in order; tests read and reset it. */
 export const trace: string[] = [];
@@ -432,6 +432,85 @@ const byok = defineAgent({
   policy: [{ match: { tool: "*" }, effect: "allow" }],
 });
 
+// MCP fixtures: a modern (2026-07-28) server behind a static bearer, and a legacy (2025) one.
+const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+export const github = fakeMcpServer({
+  name: "github",
+  ttlMs: 60_000,
+  auth: { header: "Authorization", value: "Bearer gh-token" },
+  tools: [
+    {
+      name: "search_issues",
+      description: "Search issues",
+      input: z.object({ q: z.string() }),
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      execute: ({ q }: { q: string }) => `Found ${q}`,
+    },
+    {
+      name: "create_issue",
+      description: "Create an issue",
+      input: z.object({ title: z.string() }),
+      execute: ({ title }: { title: string }) => ({
+        content: [{ type: "text" as const, text: `Created ${title}` }],
+        structuredContent: { number: 7 },
+      }),
+    },
+    {
+      name: "repos.list",
+      description: "List repos",
+      execute: () => "repo-a, repo-b",
+    },
+    {
+      name: "attach",
+      description: "Returns rich content",
+      execute: () => ({
+        content: [
+          { type: "resource" as const, resource: { uri: "gh://readme", mimeType: "text/plain", text: "Hello" } },
+          { type: "resource" as const, resource: { uri: "gh://logo", mimeType: "image/png", blob: png } },
+          { type: "resource_link" as const, uri: "gh://issues/1", name: "Issue 1" },
+        ],
+      }),
+    },
+    {
+      name: "ask_user",
+      description: "Needs interactive input",
+      execute: () => ({
+        resultType: "input_required" as const,
+        inputRequests: { name: { method: "elicitation/create" } },
+      }),
+    },
+  ],
+});
+export const legacy = fakeMcpServer({
+  name: "legacy",
+  era: "2025-06-18",
+  tools: [
+    {
+      name: "echo",
+      description: "Echo",
+      input: z.object({ text: z.string() }),
+      execute: ({ text }: { text: string }) => text,
+    },
+  ],
+});
+
+const mcpAgent = defineAgent({
+  agentId: "mcp-agent",
+  name: "MCP agent",
+  instructions: [{ text: "Use the servers." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["weather", "mcp:legacy/echo", "mcp:github"],
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+});
+const mcpPinned = defineAgent({
+  agentId: "mcp-pinned",
+  name: "MCP pinned",
+  instructions: [{ text: "Use the servers." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: [{ name: "mcp:github/search_issues", alwaysLoad: true }],
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+});
+
 export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
   {
     deliverers: [
@@ -481,9 +560,12 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
       librarian,
       librarianWide,
       byok,
+      mcpAgent,
+      mcpPinned,
     ],
   },
   {
+    mcpServers: [github, legacy],
     credentials: { shared: "deployment-key" },
     defaults: {
       providers: { shared: { adapter: "fake", models: ["*"], credential: "deployment:shared" } },

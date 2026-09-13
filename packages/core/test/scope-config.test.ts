@@ -215,10 +215,67 @@ describe("parseScopeConfig", () => {
   it("exports JSON Schema for Platform editors", () => {
     expect(scopeConfigJsonSchema.$schema).toBe("https://json-schema.org/draft/2020-12/schema");
     expect(Object.keys(scopeConfigJsonSchema.properties as object)).toEqual([
+      "mcp",
+      "egress",
       "media",
       "providers",
       "ceilings",
       "policy",
     ]);
+  });
+});
+
+describe("MCP servers and egress", () => {
+  const github = {
+    url: "https://mcp.github.com/mcp",
+    auth: { type: "static" as const, headers: { Authorization: "scope:gh" } },
+  };
+
+  it("accepts registered servers and merges them by id under the Deployment's", () => {
+    expect(parseScopeConfig({ mcp: { servers: { github } } }).mcp?.servers?.github).toEqual(github);
+    const resolved = resolveScopeConfig(
+      {
+        mcp: {
+          servers: { shared: { url: "https://shared.example.com/" }, github: { url: "https://old.example.com/" } },
+        },
+      },
+      { mcp: { servers: { github } } },
+    );
+    expect(Object.keys(resolved.mcp?.servers ?? {})).toEqual(["shared", "github"]);
+    expect(resolved.mcp?.servers?.github).toEqual(github);
+  });
+
+  it("refuses header values that are not credential references, and secret-looking plain headers", () => {
+    expect(() =>
+      parseScopeConfig({
+        mcp: {
+          servers: { github: { url: github.url, auth: { type: "static", headers: { Authorization: "Bearer x" } } } },
+        },
+      }),
+    ).toThrowError(expect.objectContaining({ code: "config.secret-value" }));
+    expect(() =>
+      parseScopeConfig({ mcp: { servers: { github: { url: github.url, headers: { "X-Api-Key": "k" } } } } }),
+    ).toThrowError(expect.objectContaining({ code: "config.secret-value" }));
+  });
+
+  it("refuses private, reserved and non-https server URLs, but allows loopback for development", () => {
+    const at = (url: string) => () => parseScopeConfig({ mcp: { servers: { s: { url } } } });
+    expect(at("https://169.254.169.254/")).toThrowError(expect.objectContaining({ code: "config.invalid" }));
+    expect(at("http://mcp.example.com/")).toThrowError(expect.objectContaining({ code: "config.invalid" }));
+    expect(at("http://localhost:8787/mcp")).not.toThrow();
+  });
+
+  it("intersects egress hosts so a Scope can only narrow the Deployment's", () => {
+    expect(
+      resolveScopeConfig(
+        { egress: { mcpHosts: ["*.github.com", "tools.example.org"] } },
+        { egress: { mcpHosts: ["mcp.github.com", "evil.com"] } },
+      ).egress,
+    ).toEqual({ mcpHosts: ["mcp.github.com"] });
+    expect(resolveScopeConfig({}, { egress: { mcpHosts: ["a.example"] } }).egress).toEqual({ mcpHosts: ["a.example"] });
+    expect(
+      resolveScopeConfig({ egress: { mcpHosts: ["*.example.com"] } }, { egress: { mcpHosts: ["*.sub.example.com"] } })
+        .egress,
+    ).toEqual({ mcpHosts: ["*.sub.example.com"] });
   });
 });

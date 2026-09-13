@@ -83,6 +83,32 @@ await scope.providers.test("default", { model: "anthropic/claude-sonnet-5" }); /
 
 The default store envelope-encrypts each credential with its own data key, wrapped by the active key of the `KARMI_KEYRING` Worker secret: `{ "active": "v2", "keys": { "v1": "<base64>", "v2": "<base64>" } }` (`generateKeyringKey()` makes one). Rotate by adding a key, making it active and running `scope.credentials.rewrap()` per Scope; old keys are decrypt-only until every Scope is rewrapped, and `revoke` deletes the wrapped key. `createKarmi({ secrets })` swaps in a Platform's own `SecretsProvider`; the test kit's `createTestKarmi` uses an in-memory one.
 
+## Remote MCP servers
+
+Register servers in the Scope config (or `defaults`) and reference them from a Spec as `mcp:<server>` or `mcp:<server>/<tool>`. Static auth headers are credential references, so the value lives in the credential store:
+
+```ts
+await scope.credentials.put("github", "Bearer ghp_…");
+await scope.config.set({
+  mcp: {
+    servers: {
+      github: {
+        url: "https://api.githubcopilot.com/mcp/",
+        auth: { type: "static", headers: { Authorization: "scope:github" } },
+        deny: ["delete_repository"],
+        trustAnnotations: true, // let readOnlyHint etc. drive parallelism and Policy; off, every tool counts as destructive
+      },
+    },
+  },
+  egress: { mcpHosts: ["*.githubcopilot.com"] }, // Deployment ∩ Scope; absent means any registered server
+});
+await scope.agents.put({ ...spec, tools: ["mcp:github"] });
+```
+
+At Turn start the Thread takes the servers' catalogues (cached per Scope, refreshed when the server's `ttlMs` elapsed, after a `-32602`, or on `scope.mcp.refreshCatalog()`), offers the tools as `github__create_issue` and so on, and connects lazily per server through `scopedFetch` for the length of the Turn. Both the 2026-07-28 and the 2025 protocol eras are spoken; `input_required` answers become error results; binary resource content spills to media.
+
+In tests, `fakeMcpServer({ name, tools, era? })` is a real in-process server reached through the same `scopedFetch`: `createTestKarmi(catalogue, { mcpServers: [github] })`, then register `github.url` in the Scope config. `github.calls` records every request it saw and `github.tools` can be replaced to change its catalogue.
+
 ## Testing
 
 `@karmi/core/testing` ships `fakeProvider`, a scripted Provider that is registered like any other:

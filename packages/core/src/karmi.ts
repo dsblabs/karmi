@@ -24,6 +24,8 @@ export interface KarmiOptions<Env = unknown> {
   credentials?: Record<string, string>;
   /** Where `scope:<name>` credentials live; the envelope store over `KARMI_KEYRING` unless a Platform brings its own. */
   secrets?: SecretsProvider;
+  /** The transport under every outbound `scopedFetch`; the test kit routes it to in-process fakes. */
+  fetch?: typeof fetch;
   bindings?: BindingsResolver<Env>;
 }
 
@@ -52,6 +54,7 @@ export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
     defaults: parseScopeConfig(options.defaults ?? {}, providers),
     providers,
     secrets: layerDeploymentCredentials(options.credentials, store),
+    fetch: options.fetch ?? ((input, init) => fetch(input, init)),
   };
   const durableObjects = makeDurableObjects(deployment);
   return {

@@ -3,6 +3,8 @@ import { AGENT_SPEC_DEFAULTS } from "./agent-spec";
 import type { AgentSpec, PolicyRule } from "./agent";
 import type { Catalogue } from "./catalogue";
 import { deferAll, type Loaded } from "./loading";
+import { parseMcpReference, type McpReference } from "./mcp-catalog";
+import type { McpToolSource } from "./mcp-source";
 import { evaluatePolicy, type PolicyEffect } from "./policy";
 import type { ToolDefinition } from "./provider";
 import { toJsonSchema } from "./schema";
@@ -10,8 +12,9 @@ import type { Skill, SkillInvoker } from "./skill";
 import type { OutputLimits } from "./spill";
 import type { Tool } from "./tool";
 
-// The Tool set of one Step: the Spec's references in order, every Skill's Tools, then the Framework
-// built-ins, each with its parsed settings and its Policy effect. Denied Tools are never shown to the
+// The Tool set of one Step: the Spec's Catalogue references in order, its MCP servers' tools grouped by
+// server in id order, every Skill's Tools, then the Framework built-ins, each with its parsed settings and
+// its Policy effect. Denied Tools are never shown to the
 // model. Deferral is decided here for the whole set at once; what is loaded is the caller's `Loaded`.
 
 export interface AvailableTool {
@@ -41,6 +44,8 @@ export interface ToolSetInput {
   policy: readonly PolicyRule[];
   builtIns: readonly Tool[];
   remembered?: ReadonlySet<string>;
+  /** The Turn's resolved MCP servers; absent when the Spec references none. */
+  mcp?: McpToolSource;
   loaded: Loaded;
   /** The context window this Turn runs under, in tokens; the `auto` deferral threshold is a share of it. */
   window: number;
@@ -52,27 +57,34 @@ export function resolveToolSet({
   policy,
   builtIns,
   remembered,
+  mcp,
   loaded,
   window,
 }: ToolSetInput): ToolSet {
   const available = new Map<string, AvailableTool>();
   const deferrable: AvailableTool[] = [];
+  const mcpRefs: { ref: McpReference; alwaysLoad: boolean }[] = [];
+  // A pinned ref stays in context; a denied Tool is never indexed, so it has nothing to defer.
+  const offer = (tool: Tool, settings: unknown, alwaysLoad: boolean | undefined) => {
+    const entry: AvailableTool = { tool, settings, effect: evaluatePolicy(policy, tool, remembered), deferred: false };
+    available.set(tool.name, entry);
+    if (!alwaysLoad && entry.effect !== "deny") deferrable.push(entry);
+  };
   for (const ref of spec.tools ?? []) {
     const { name, settings, alwaysLoad } =
       typeof ref === "string" ? { name: ref, settings: undefined, alwaysLoad: undefined } : ref;
+    const mcpRef = parseMcpReference(name);
+    if (mcpRef) {
+      mcpRefs.push({ ref: mcpRef, alwaysLoad: alwaysLoad === true });
+      continue;
+    }
     const tool = catalogue.tools.get(name);
-    // MCP refs resolve at Turn start with the MCP tickets.
-    if (!tool) continue;
-    const entry: AvailableTool = {
-      tool,
-      settings: parseSettings(tool, settings),
-      effect: evaluatePolicy(policy, tool, remembered),
-      deferred: false,
-    };
-    available.set(name, entry);
-    // A pinned ref stays in context; a denied Tool is never indexed, so it has nothing to defer.
-    if (!alwaysLoad && entry.effect !== "deny") deferrable.push(entry);
+    if (tool) offer(tool, parseSettings(tool, settings), alwaysLoad);
   }
+  // Grouped by server in id order, so one server's change only moves its own slice of the prefix.
+  mcpRefs.sort((a, b) => (a.ref.server < b.ref.server ? -1 : a.ref.server > b.ref.server ? 1 : 0));
+  for (const { ref, alwaysLoad } of mcpRefs)
+    for (const tool of mcp?.tools(ref) ?? []) offer(tool, undefined, alwaysLoad);
   const skills: ResolvedSkill[] = [];
   for (const ref of spec.skills ?? []) {
     const { name, invokableBy } = typeof ref === "string" ? { name: ref, invokableBy: undefined } : ref;
