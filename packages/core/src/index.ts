@@ -125,10 +125,24 @@ export type {
   Usage,
   UsageCost,
   ToolDefinition,
+  ProviderMcpServer,
 } from "./provider";
 export { prepareMessages, normalizeToolCallId, type ReplayTarget, type ReplayResult } from "./replay";
 export { scopedFetch, providerHosts, isBlockedUrl, GATEWAY_HOST, type EgressPolicy } from "./scoped-fetch";
-export type { McpSnapshot, McpSnapshotInput, McpServerSnapshot } from "./mcp-registry";
+export type { McpSnapshot, McpSnapshotInput, McpServerSnapshot, McpOAuthState } from "./mcp-registry";
+export {
+  clientDocument,
+  PRE_REGISTRATION_REQUIRED,
+  preRegistration,
+  OAUTH_CALLBACK_PATH,
+  CLIENT_DOCUMENT_PATH,
+  type McpClientIdentity,
+  type McpHolder,
+  type McpHolderRef,
+  type PreRegistration,
+} from "./mcp-auth";
+export type { OAuthRoutes } from "./mcp-oauth-routes";
+export type { McpAuthorizeRequest } from "./scope";
 export type { McpCatalog, McpEra, McpTool, McpReference } from "./mcp-catalog";
 export { parseMcpReference } from "./mcp-catalog";
 export { retry, type RetryOptions } from "./retry";

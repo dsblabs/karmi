@@ -2,6 +2,7 @@ import type { MediaWriter } from "./media";
 import type { Logger, MediaRef } from "./context";
 import type { JsonSchema } from "./schema";
 import type { ProviderConfig } from "./scope-config";
+import type { SensitiveValue } from "./secrets";
 import type { ProviderCredentials } from "./secrets";
 
 // The Provider seam: karmi's own message, event and usage vocabulary. Everything here is plain JSON —
@@ -77,6 +78,16 @@ export interface ToolDefinition {
   deferred?: boolean;
 }
 
+/** An MCP server the provider connects to itself (`execution: "provider"`), with the token the registry resolved. */
+export interface ProviderMcpServer {
+  name: string;
+  url: string;
+  authorization?: SensitiveValue;
+  /** The server's own tool names an Agent may see; absent means every tool. */
+  allow?: string[];
+  deny?: string[];
+}
+
 export interface ProviderRequest {
   /** Provider-native model id: the part after the profile prefix. */
   model: string;
@@ -95,6 +106,8 @@ export interface ProviderRequest {
   };
   /** Adapter-namespaced escape hatch, already merged over `config.providerOptions`. */
   providerOptions?: Record<string, unknown>;
+  /** Servers for the provider's own MCP connector; an adapter without one answers `invalid_request`. */
+  mcpServers?: ProviderMcpServer[];
   /**
    * Compact `messages` now through the provider's own mechanism, answering with a `compaction` block.
    * Set only under `ProviderConfig.compaction: "provider"`; an adapter without one answers nothing.

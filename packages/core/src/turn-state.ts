@@ -20,6 +20,15 @@ export type Plan =
 
 export type Request =
   | { kind: "tool"; id: string; tool: string; timeoutAt: number; answered: boolean }
+  | {
+      kind: "connect";
+      id: string;
+      tool: string;
+      serverId: string;
+      authUrl: string;
+      timeoutAt: number;
+      answered: boolean;
+    }
   | { kind: "continue"; timeoutAt: number; answered: boolean };
 
 type Job = { jobId: string; outcome?: JobOutcome };
@@ -207,27 +216,28 @@ class TurnFold {
   }
 
   private approvalRequested(seq: number, event: EventOf<"approval.requested">): void {
-    if (event.kind !== "tool") {
+    if (event.kind === "continue") {
       this.requests.set(seq, { kind: "continue", timeoutAt: event.timeoutAt, answered: false });
       return;
     }
-    this.requests.set(seq, {
-      kind: "tool",
-      id: event.id,
-      tool: event.tool,
-      timeoutAt: event.timeoutAt,
-      answered: false,
-    });
-    this.approvals.set(event.id, { request: seq });
+    const { id, tool, timeoutAt } = event;
+    this.requests.set(
+      seq,
+      event.kind === "tool"
+        ? { kind: "tool", id, tool, timeoutAt, answered: false }
+        : { kind: "connect", id, tool, serverId: event.serverId, authUrl: event.authUrl, timeoutAt, answered: false },
+    );
+    this.approvals.set(id, { request: seq, kind: event.kind });
   }
 
   private approvalResolved(event: EventOf<"approval.resolved">): void {
     const request = this.requests.get(event.request);
     if (!request) return;
     request.answered = true;
-    if (request.kind === "tool") {
+    if (request.kind !== "continue") {
       this.approvals.set(request.id, {
         request: event.request,
+        kind: request.kind,
         answer: {
           decision: event.decision,
           ...(event.reason !== undefined && { reason: event.reason }),

@@ -494,6 +494,64 @@ export const legacy = fakeMcpServer({
   ],
 });
 
+// OAuth fixtures: a user-level server whose `delete_file` needs a scope the first grant lacks, an agent-level
+// server that registers dynamically and issues a client secret, and one that takes only a pre-registered client.
+export const drive = fakeMcpServer({
+  name: "drive",
+  ttlMs: 60_000,
+  oauth: { scopes: ["drive:read", "drive:write"], requires: { delete_file: "drive:write" }, expiresIn: 3600 },
+  tools: [
+    {
+      name: "list_files",
+      description: "List files",
+      annotations: { readOnlyHint: true },
+      execute: () => "a.txt, b.txt",
+    },
+    {
+      name: "delete_file",
+      description: "Delete a file",
+      input: z.object({ name: z.string() }),
+      execute: ({ name }: { name: string }) => `Deleted ${name}`,
+    },
+  ],
+});
+export const crm = fakeMcpServer({
+  name: "crm",
+  oauth: { cimd: false, dcrSecret: true },
+  tools: [{ name: "contacts", description: "List contacts", execute: () => "alice, bob" }],
+});
+export const locked = fakeMcpServer({
+  name: "locked",
+  oauth: { cimd: false, dcr: false, clients: { "my-app": { secret: "s3cret" } } },
+  tools: [{ name: "ping", description: "Ping", execute: () => "pong" }],
+});
+const mcpDrive = defineAgent({
+  agentId: "mcp-drive",
+  name: "Drive agent",
+  instructions: [{ text: "Use the drive." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["mcp:drive"],
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+  approvals: { timeout: 60 * 60 * 1000 },
+});
+const mcpCrm = defineAgent({
+  agentId: "mcp-crm",
+  name: "CRM agent",
+  instructions: [{ text: "Use the CRM." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["weather", "mcp:crm"],
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+  approvals: { timeout: 60 * 60 * 1000 },
+});
+const mcpLocked = defineAgent({
+  agentId: "mcp-locked",
+  name: "Locked agent",
+  instructions: [{ text: "Ping." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["mcp:locked"],
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+});
+
 const mcpAgent = defineAgent({
   agentId: "mcp-agent",
   name: "MCP agent",
@@ -562,10 +620,13 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
       byok,
       mcpAgent,
       mcpPinned,
+      mcpDrive,
+      mcpCrm,
+      mcpLocked,
     ],
   },
   {
-    mcpServers: [github, legacy],
+    mcpServers: [github, legacy, drive, crm, locked],
     credentials: { shared: "deployment-key" },
     defaults: {
       providers: { shared: { adapter: "fake", models: ["*"], credential: "deployment:shared" } },

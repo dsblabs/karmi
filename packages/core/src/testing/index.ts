@@ -35,6 +35,7 @@ export {
   type FakeMcpCall,
   type FakeMcpEra,
 } from "./fake-mcp-server";
+export type { FakeMcpOAuth, FakeMcpOAuthOptions, FakeAuthorizationRequest, FakeTokenRequest } from "./fake-mcp-oauth";
 export { memorySecrets, type MemorySecrets } from "./memory-secrets";
 export { matchers, lastMessage, type EventPartial } from "./matchers";
 

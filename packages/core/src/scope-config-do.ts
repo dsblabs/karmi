@@ -8,9 +8,19 @@ import { KarmiError } from "./errors";
 import { fail, ok, type Outcome } from "./outcome";
 import type { Envelope } from "./envelope";
 import type { McpCatalog } from "./mcp-catalog";
-import { parseScopeConfig, resolveScopeConfig, type ScopeConfigDocument } from "./scope-config";
+import { mcpHolder, resolveHolder, tokenFresh, type McpHolder, type McpHolderRef } from "./mcp-auth";
+import {
+  beginAuthorization,
+  completeAuthorization,
+  GrantProvider,
+  refreshGrant,
+  type PreregisteredClient,
+} from "./mcp-oauth";
+import { isHolder, listGrants, OAUTH_SCHEMA, readPending, SqlGrantStore } from "./mcp-oauth-store";
+import { parseScopeConfig, resolveScopeConfig, type McpServerConfig, type ScopeConfigDocument } from "./scope-config";
+import { matchesHost, scopedFetch } from "./scoped-fetch";
 import type { CredentialInfo } from "./secrets";
-import { encodeKey, type ThreadSummary } from "./thread";
+import { encodeKey, type ThreadIdentity, type ThreadSummary } from "./thread";
 import { validateAgentSpec, type ValidationResult } from "./validate";
 
 // One Durable Object per Scope, named `{scope}/config` (keys.ts). Its SQLite holds the config revisions, the
@@ -27,6 +37,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS connections (agent_id TEXT NOT NULL, name TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (agent_id, name));
   CREATE TABLE IF NOT EXISTS provider_credentials (name TEXT PRIMARY KEY, version INTEGER NOT NULL, kek TEXT, dek TEXT, ciphertext TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, revoked_at INTEGER);
   CREATE TABLE IF NOT EXISTS mcp_catalog (server_id TEXT NOT NULL, partition TEXT NOT NULL, catalog_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (server_id, partition));
+  CREATE TABLE IF NOT EXISTS user_connections (user_id TEXT NOT NULL, name TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (user_id, name));
 `;
 
 /** Versions kept per Agent; older ones are dropped on put. */
@@ -108,6 +119,60 @@ export interface McpCatalogKey {
   partition: string;
 }
 
+/** An access token as it leaves this object: for one Turn, in memory, never the refresh token. */
+export interface McpGrantView {
+  token: string;
+  expiresAt?: number;
+  scope?: string;
+}
+
+export interface McpAuthorizeInput extends McpHolderRef {
+  /** The Thread whose parked Step the callback wakes. */
+  thread?: ThreadIdentity;
+  /** Scopes to request, replacing the server's configured ones; a step-up passes the union. */
+  scope?: string;
+  /** Where the callback sends the browser afterwards. */
+  returnTo?: string;
+}
+
+export interface McpCallbackInput {
+  nonce: string;
+  code?: string;
+  iss?: string;
+  error?: string;
+}
+
+export interface McpCallbackResult {
+  serverId: string;
+  holder: McpHolder;
+  thread?: ThreadIdentity;
+  returnTo?: string;
+  /** Granted, or why not: the server's error or the exchange's failure. */
+  outcome: ConnectOutcome;
+}
+
+export type ConnectOutcome = { granted: true } | { granted: false; reason: string };
+
+type PendingInput = ConstructorParameters<typeof SqlGrantStore>[3];
+
+/** An access token view of a grant; never the refresh token. */
+function grantView(grant: { accessToken: string; expiresAt?: number; scope?: string }): McpGrantView {
+  return {
+    token: grant.accessToken,
+    ...(grant.expiresAt !== undefined && { expiresAt: grant.expiresAt }),
+    ...(grant.scope !== undefined && { scope: grant.scope }),
+  };
+}
+
+type OAuthServer = {
+  id: string;
+  config: McpServerConfig;
+  auth: Extract<NonNullable<McpServerConfig["auth"]>, { type: "oauth" }>;
+  identity: NonNullable<Deployment["oauth"]>;
+};
+
+export { isHolder };
+
 const notFound = (agentId: string) =>
   fail(new KarmiError("agent.notFound", `Agent "${agentId}" does not exist in this Scope.`));
 
@@ -160,11 +225,15 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   constructor(ctx: DurableObjectState, env: KarmiBindings) {
     super(ctx, env);
     ctx.storage.sql.exec(SCHEMA);
+    ctx.storage.sql.exec(OAUTH_SCHEMA);
   }
 
   private get sql(): SqlStorage {
     return this.ctx.storage.sql;
   }
+
+  /** Refreshes in flight by `server/holder`, so concurrent Turns share one token request and never race a rotation. */
+  private readonly refreshing = new Map<string, Promise<Outcome<McpGrantView | undefined>>>();
 
   // Every entry point: the row appears on first use, and once destruction started nothing else may enter
   // except the lifecycle reads that report on it.
@@ -481,18 +550,271 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok(undefined);
   }
 
+  /** Set values first, then the OAuth grants this Agent holds as `mcp:<serverId>`. */
   connectionsList(scope: ScopeId, agentId: string): Outcome<{ name: string; updatedAt: number }[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    return ok(
-      this.sql
+    return ok([
+      ...this.sql
         .exec<{ name: string; updated_at: number }>(
           "SELECT name, updated_at FROM connections WHERE agent_id = ? ORDER BY name",
           agentId,
         )
         .toArray()
         .map((row) => ({ name: row.name, updatedAt: row.updated_at })),
+      ...listGrants(this.sql, mcpHolder("agent", agentId, undefined) ?? "agent:"),
+    ]);
+  }
+
+  // User-level Connection values, keyed (User, name): the User's own grants, usable by every Agent of the Scope.
+  userConnectionSet(scope: ScopeId, user: string, name: string, value: unknown): Outcome<void> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    this.sql.exec(
+      "INSERT INTO user_connections (user_id, name, value_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, name) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at",
+      user,
+      name,
+      JSON.stringify(value),
+      this.deployment.clock.now(),
     );
+    return ok(undefined);
+  }
+
+  userConnectionDelete(scope: ScopeId, user: string, name: string): Outcome<void> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    this.sql.exec("DELETE FROM user_connections WHERE user_id = ? AND name = ?", user, name);
+    return ok(undefined);
+  }
+
+  userConnectionsList(scope: ScopeId, user: string): Outcome<{ name: string; updatedAt: number }[]> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    return ok([
+      ...this.sql
+        .exec<{ name: string; updated_at: number }>(
+          "SELECT name, updated_at FROM user_connections WHERE user_id = ? ORDER BY name",
+          user,
+        )
+        .toArray()
+        .map((row) => ({ name: row.name, updatedAt: row.updated_at })),
+      ...listGrants(this.sql, mcpHolder("user", undefined, user) ?? "user:"),
+    ]);
+  }
+
+  userConnectionGet(scope: ScopeId, user: string, name: string): Outcome<unknown> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    const row = this.sql
+      .exec<{ value_json: string }>(
+        "SELECT value_json FROM user_connections WHERE user_id = ? AND name = ?",
+        user,
+        name,
+      )
+      .toArray()[0];
+    return ok(row ? JSON.parse(row.value_json) : undefined);
+  }
+
+  // OAuth grants for MCP servers. This object is the only one that talks to an authorization server: it
+  // holds the refresh tokens, mints and redeems pending authorizations, and hands out access tokens only.
+  private oauthServer(head: HeadRow, serverId: string): Outcome<OAuthServer> {
+    const config = resolveScopeConfig(this.deployment.defaults, this.document(head.current_revision));
+    const server = config.mcp?.servers?.[serverId];
+    if (!server)
+      return fail(new KarmiError("mcp.server.unknown", `No MCP server "${serverId}" is registered in this Scope.`));
+    if (server.auth?.type !== "oauth")
+      return fail(new KarmiError("mcp.oauth.notOAuth", `MCP server "${serverId}" is not configured for OAuth.`));
+    const identity = this.deployment.oauth;
+    if (!identity)
+      return fail(
+        new KarmiError(
+          "mcp.oauth.unconfigured",
+          `MCP server "${serverId}" uses OAuth, but createKarmi({ oauth }) names no client identity for this Deployment.`,
+        ),
+      );
+    const host = new URL(server.url).hostname.toLowerCase();
+    const allowed = config.egress?.mcpHosts;
+    if (allowed && !allowed.some((pattern) => matchesHost(host, pattern)))
+      return fail(
+        new KarmiError("config.invalid", `MCP server "${serverId}" is outside this Scope's egress.mcpHosts.`),
+      );
+    return ok({ id: serverId, config: server, auth: server.auth, identity });
+  }
+
+  private grantStore(scope: ScopeId, server: OAuthServer, holder: McpHolder, pending?: PendingInput): SqlGrantStore {
+    return new SqlGrantStore(
+      { sql: this.sql, clock: this.deployment.clock, secrets: this.deployment.secrets, scope },
+      server.id,
+      holder,
+      pending,
+    );
+  }
+
+  private async grantProvider(
+    scope: ScopeId,
+    server: OAuthServer,
+    store: SqlGrantStore,
+  ): Promise<Outcome<GrantProvider>> {
+    const preregistered = await this.preregistered(scope, server);
+    if (!preregistered.ok) return preregistered;
+    return ok(
+      new GrantProvider({
+        scope,
+        identity: server.identity,
+        store,
+        now: () => this.deployment.clock.now(),
+        ...(preregistered.value && { preregistered: preregistered.value }),
+      }),
+    );
+  }
+
+  private async preregistered(scope: ScopeId, server: OAuthServer): Promise<Outcome<PreregisteredClient | undefined>> {
+    const { client } = server.auth;
+    if (!client) return ok(undefined);
+    if (client.secret === undefined) return ok({ client_id: client.id });
+    const secret = await this.deployment.secrets.resolve({ scope, ref: client.secret });
+    if (!secret)
+      return fail(
+        new KarmiError(
+          "mcp.oauth.failed",
+          `MCP server "${server.id}": the client secret "${client.secret}" is missing from the SecretsProvider.`,
+        ),
+      );
+    return ok({ client_id: client.id, client_secret: secret.value.expose() });
+  }
+
+  private flow(scope: ScopeId, server: OAuthServer, provider: GrantProvider) {
+    return {
+      provider,
+      serverId: server.id,
+      serverUrl: server.config.url,
+      // Only the SSRF guard: the authorization server's host is discovered, not registered.
+      fetch: scopedFetch({ fetch: this.deployment.fetch }),
+    };
+  }
+
+  /**
+   * The holder's access token for one server, refreshed first when it is about to expire, or when the
+   * caller's `usedToken` was refused; nothing when there is no grant. A caller whose token another Turn
+   * already rotated gets the current one back; concurrent refreshes of one grant share a single request.
+   */
+  async mcpRefresh(
+    scope: ScopeId,
+    serverId: string,
+    holder: McpHolder,
+    usedToken?: string,
+  ): Promise<Outcome<McpGrantView | undefined>> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    const server = this.oauthServer(head.value, serverId);
+    if (!server.ok) return server;
+    const store = this.grantStore(scope, server.value, holder);
+    const current = store.grant();
+    if (!current) return ok(undefined);
+    const stale =
+      usedToken !== undefined
+        ? current.accessToken === usedToken
+        : !tokenFresh(current.expiresAt, this.deployment.clock.now());
+    if (!stale) return ok(grantView(current));
+    const key = `${serverId}/${holder}`;
+    const inFlight = this.refreshing.get(key);
+    if (inFlight) return inFlight;
+    const work = this.refresh(scope, server.value, store).finally(() => this.refreshing.delete(key));
+    this.refreshing.set(key, work);
+    return work;
+  }
+
+  private async refresh(
+    scope: ScopeId,
+    server: OAuthServer,
+    store: SqlGrantStore,
+  ): Promise<Outcome<McpGrantView | undefined>> {
+    const provider = await this.grantProvider(scope, server, store);
+    if (!provider.ok) return provider;
+    try {
+      const refreshed = await refreshGrant(this.flow(scope, server, provider.value));
+      const grant = store.grant();
+      return ok(refreshed && grant ? grantView(grant) : undefined);
+    } catch (error) {
+      if (error instanceof KarmiError) return fail(error);
+      throw error;
+    }
+  }
+
+  /** Starts a consent flow and answers with where the human must go; the callback lands on `mcpCallback`. */
+  async mcpAuthorize(scope: ScopeId, input: McpAuthorizeInput): Promise<Outcome<{ authUrl: string }>> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    const server = this.oauthServer(head.value, input.serverId);
+    if (!server.ok) return server;
+    const holder = resolveHolder(server.value.auth, input);
+    if (!holder.ok) return fail(holder.error);
+    const store = this.grantStore(scope, server.value, holder.holder, {
+      ...(input.user !== undefined && { user: input.user }),
+      ...(input.thread && { thread: input.thread }),
+      ...(input.returnTo !== undefined && { returnTo: input.returnTo }),
+    });
+    const provider = await this.grantProvider(scope, server.value, store);
+    if (!provider.ok) return provider;
+    try {
+      const url = await beginAuthorization(
+        this.flow(scope, server.value, provider.value),
+        input.scope ?? server.value.auth.scope,
+      );
+      return ok({ authUrl: url.href });
+    } catch (error) {
+      if (error instanceof KarmiError) return fail(error);
+      throw error;
+    }
+  }
+
+  /** The fixed callback route's other half: redeems the code under the pending authorization and stores the grant. */
+  async mcpCallback(scope: ScopeId, input: McpCallbackInput): Promise<Outcome<McpCallbackResult>> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    const pending = readPending(this.sql, input.nonce, this.deployment.clock.now());
+    if (!pending)
+      return fail(new KarmiError("mcp.oauth.state", "This authorization is unknown or has expired; start it again."));
+    const server = this.oauthServer(head.value, pending.serverId);
+    if (!server.ok) return server;
+    const store = this.grantStore(scope, server.value, pending.holder, { nonce: pending.nonce });
+    const provider = await this.grantProvider(scope, server.value, store);
+    if (!provider.ok) return provider;
+    const result = (outcome: ConnectOutcome): McpCallbackResult => ({
+      serverId: pending.serverId,
+      holder: pending.holder,
+      ...(pending.thread && { thread: pending.thread }),
+      ...(pending.returnTo !== undefined && { returnTo: pending.returnTo }),
+      outcome,
+    });
+    try {
+      if (input.code === undefined)
+        return ok(result({ granted: false, reason: input.error ?? "The authorization server sent no code." }));
+      await completeAuthorization(this.flow(scope, server.value, provider.value), input.code, input.iss);
+      return ok(result({ granted: true }));
+    } catch (error) {
+      if (error instanceof KarmiError) return ok(result({ granted: false, reason: error.message }));
+      throw error;
+    } finally {
+      store.dropPending();
+    }
+  }
+
+  /** Drops the holder's grant and the private catalogue cached under it; a public one is not the holder's to lose. */
+  mcpDisconnect(scope: ScopeId, serverId: string, holder: McpHolder): Outcome<void> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    const server = this.oauthServer(head.value, serverId);
+    if (!server.ok) return server;
+    this.ctx.storage.transactionSync(() => {
+      this.grantStore(scope, server.value, holder).dropGrant();
+      this.sql.exec(
+        "DELETE FROM mcp_catalog WHERE server_id = ? AND partition = ? AND json_extract(catalog_json, '$.cacheScope') = 'private'",
+        serverId,
+        holder,
+      );
+    });
+    return ok(undefined);
   }
 
   connectionGet(scope: ScopeId, agentId: string, name: string): Outcome<unknown> {
@@ -578,19 +900,21 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
 
   // The MCP catalogue cache: one `tools/list` per (server, partition), refreshed by whoever holds the
   // credentials to fetch it; this object only stores what it is handed.
+  /** A partition without a catalogue of its own may read another holder's `public` one, so a grant-less Turn still sees the tools. */
   mcpCatalogGet(scope: ScopeId, keys: McpCatalogKey[]): Outcome<(McpCatalog | undefined)[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;
     return ok(
       keys.map(({ serverId, partition }) => {
-        const row = this.sql
-          .exec<{ catalog_json: string }>(
-            "SELECT catalog_json FROM mcp_catalog WHERE server_id = ? AND partition = ?",
+        const rows = this.sql
+          .exec<{ partition: string; catalog_json: string }>(
+            "SELECT partition, catalog_json FROM mcp_catalog WHERE server_id = ? ORDER BY updated_at DESC",
             serverId,
-            partition,
           )
-          .toArray()[0];
-        return row && decodeCatalog(row.catalog_json);
+          .toArray();
+        const own = rows.find((row) => row.partition === partition);
+        if (own) return decodeCatalog(own.catalog_json);
+        return rows.map((row) => decodeCatalog(row.catalog_json)).find((catalog) => catalog.cacheScope === "public");
       }),
     );
   }
@@ -650,6 +974,10 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       );
       this.sql.exec("DELETE FROM provider_credentials");
       this.sql.exec("DELETE FROM mcp_catalog");
+      this.sql.exec("DELETE FROM mcp_grants");
+      this.sql.exec("DELETE FROM mcp_clients");
+      this.sql.exec("DELETE FROM mcp_oauth_state");
+      this.sql.exec("DELETE FROM user_connections");
     });
     return ok({ operationId });
   }

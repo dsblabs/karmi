@@ -1,5 +1,6 @@
 import * as z from "zod/mini";
 import type { McpTool } from "../mcp-catalog";
+import { fakeOAuthServer, type FakeMcpOAuth, type FakeMcpOAuthOptions, type FakeOAuthServer } from "./fake-mcp-oauth";
 import { toJsonSchema, type JsonSchema, type Schema } from "../schema";
 import type { ToolAnnotations } from "../tool";
 
@@ -46,6 +47,8 @@ export interface FakeMcpServerOptions {
   cacheScope?: "public" | "private";
   /** A header every request must carry, else 401. */
   auth?: { header: string; value: string };
+  /** Put the server behind OAuth: its own authorization server lives at the same origin. */
+  oauth?: FakeMcpOAuthOptions;
 }
 
 export interface FakeMcpCall {
@@ -62,6 +65,8 @@ export interface FakeMcpServer {
   /** Every JSON-RPC request received, in order. */
   readonly calls: FakeMcpCall[];
   readonly fetch: typeof fetch;
+  /** The authorization server and its records; present when `oauth` was configured. */
+  readonly oauth?: FakeMcpOAuth;
   reset(): void;
 }
 
@@ -73,13 +78,18 @@ export function fakeMcpServer(options: FakeMcpServerOptions): FakeMcpServer {
   const era = options.era ?? MODERN;
   const calls: FakeMcpCall[] = [];
   const sessions = new Set<string>();
+  const url = `https://${options.name}.mcp.test/mcp`;
+  const oauth: FakeOAuthServer | undefined = options.oauth && fakeOAuthServer(new URL(url).origin, url, options.oauth);
   const server: FakeMcpServer = {
     name: options.name,
-    url: `https://${options.name}.mcp.test/mcp`,
+    url,
     tools: [...(options.tools ?? [])],
     calls,
+    ...(oauth && { oauth: oauth.api }),
     fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init);
+      const routed = await oauth?.handle(request, new URL(request.url));
+      if (routed) return routed;
       if (request.method === "DELETE") return new Response(null, { status: 200 });
       if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
       const headers = Object.fromEntries([...request.headers].map(([k, v]) => [k.toLowerCase(), v]));
@@ -88,6 +98,9 @@ export function fakeMcpServer(options: FakeMcpServerOptions): FakeMcpServer {
       const message = decodeRpc(await request.json());
       if (!message) return new Response("Bad request", { status: 400 });
       calls.push({ method: message.method, params: message.params, headers });
+      const tool = message.method === "tools/call" ? String(message.params?.name) : undefined;
+      const challenged = oauth?.gate(headers, tool);
+      if (challenged) return challenged;
       return handle(server, era, options, sessions, message, headers);
     }) as typeof fetch,
     reset: () => {

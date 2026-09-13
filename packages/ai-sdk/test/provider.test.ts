@@ -51,3 +51,24 @@ it("drives one model call through scopedFetch and reports text and usage", async
     }),
   );
 });
+
+it("rejects execution: provider MCP servers as an invalid request, since only the Anthropic adapter has a connector", async () => {
+  const provider = aiSdk(({ modelId, fetch }) => createOpenAI({ apiKey: "test", fetch }).chat(modelId));
+  const events: ProviderEvent[] = [];
+  for await (const event of provider.stream(
+    {
+      model: "gpt-test",
+      config: { adapter: "ai-sdk" },
+      messages: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      mcpServers: [{ name: "crm", url: "https://crm.example/mcp" }],
+    },
+    { fetch: () => Promise.reject(new Error("no network expected")), signal: new AbortController().signal },
+  ))
+    events.push(event);
+  expect(events).toEqual([
+    expect.objectContaining({
+      type: "error",
+      error: expect.objectContaining({ code: "invalid_request", message: expect.stringContaining("crm") }),
+    }),
+  ]);
+});
