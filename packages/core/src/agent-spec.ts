@@ -195,6 +195,7 @@ export const agentSpecJsonSchema: JsonSchema = toJsonSchema(AgentSpecSchema);
  * stored Spec: absence means "inherit", so a Deployment or Scope default can still apply later.
  */
 export const AGENT_SPEC_DEFAULTS = Object.freeze({
+  delegation: Object.freeze({ maxDepth: 4, maxConcurrent: 8, maxChildren: 32 }),
   context: Object.freeze({
     reserveTokens: 16_384,
     keepRecentTokens: 20_000,

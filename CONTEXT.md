@@ -210,6 +210,9 @@ _Avoid_: webhook, callback, notifier, sender
 
 **Delegation**:
 One Agent handing a task to another Agent in the same Scope and receiving its result. The parent's Agent Spec lists, by name, the Agents it may delegate to; nothing not listed is reachable. The child runs under its own Agent Spec, in its own Thread, with fresh context and the parent's User; the parent receives only the child's final reply. Gated by a Capability. There is no separate "sub-agent" kind of thing — only Agents and the act of delegating.
+The `delegation` grant defaults to `maxDepth: 4`, `maxConcurrent: 8`, and `maxChildren: 32`, bounded by Scope ceilings. Each ancestor counts all descendants started during its Turn; completed children free concurrency, while the child count remains spent. `status().budget.delegated` reports `{ children, active }`. The first delegation fixes a wall deadline from the parent's remaining budget; parking and child approvals do not extend it.
+
+Child ids are `{parentThreadId}/{encoded callId}`, using the stable `ToolContext.callId` so repeated model tool-call ids on later Turns create distinct children. `parent { threadKey, callId }` appears in status and index records; `scope.threads.list({ agent, parent })` filters by parent key, with `parent: null` selecting roots. `delegation.started/completed` name the child with `childKey`. Approval events and pending approvals carry `child { threadId, seq }`; answers travel down to that Thread and remembered grants stay there.
 _Avoid_: sub-agent (for the child Agent), spawn, orchestration, handoff
 
 **Usage record**:

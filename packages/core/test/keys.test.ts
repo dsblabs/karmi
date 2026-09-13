@@ -23,8 +23,6 @@ describe("keys", () => {
     expect(() => keys.config("../other")).toThrowError(
       new KarmiError("scope.id.invalid", 'ScopeId "../other" must match [A-Za-z0-9_-]{1,64}.'),
     );
-    expect(() => keys.thread("a", "b/c")).toThrowError(
-      new KarmiError("thread.id.invalid", 'threadId "b/c" must match [A-Za-z0-9_-]{1,64}.'),
-    );
+    expect(() => keys.thread("a", "b/../c")).toThrowError(new KarmiError("thread.id.invalid", "Invalid Thread id."));
   });
 });

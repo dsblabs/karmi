@@ -112,7 +112,7 @@ export interface Scope {
   thread(target: ThreadIdentity | string): Thread;
   readonly threads: {
     /** An Agent's Threads, most recently active first; `user: null` narrows to user-less Threads. */
-    list(filter: { agent: string; user?: string | null }): Promise<ThreadSummary[]>;
+    list(filter: { agent: string; user?: string | null; parent?: string | null }): Promise<ThreadSummary[]>;
   };
   status(): Promise<ScopeStatus>;
   suspend(): Promise<void>;
@@ -184,7 +184,7 @@ export function openScope(deployment: Deployment, bindings: KarmiBindings, id: S
       },
     },
     thread: (target) => openThread(bindings, id, target),
-    threads: { list: (filter) => call(stub.threadsList(id, filter.agent, filter.user)) },
+    threads: { list: (filter) => call(stub.threadsList(id, filter.agent, filter.user, filter.parent)) },
     status: () => call(stub.status(id)),
     suspend: () => call(stub.suspend(id)),
     resume: () => call(stub.resume(id)),

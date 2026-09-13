@@ -18,7 +18,7 @@ export type Plan =
   | { kind: "compact"; n: number; trigger: CompactionTrigger }
   | { kind: "finish"; stopReason: StopReason; message: ContentBlock[] };
 
-export type Request =
+type LocalRequest =
   | { kind: "tool"; id: string; tool: string; timeoutAt: number; answered: boolean }
   | {
       kind: "connect";
@@ -30,6 +30,8 @@ export type Request =
       answered: boolean;
     }
   | { kind: "continue"; timeoutAt: number; answered: boolean };
+
+export type Request = LocalRequest & { child?: { threadId: string; seq: number } };
 
 type Job = { jobId: string; outcome?: JobOutcome };
 
@@ -216,6 +218,10 @@ class TurnFold {
   }
 
   private approvalRequested(seq: number, event: EventOf<"approval.requested">): void {
+    if (event.child) {
+      this.requests.set(seq, { ...event, answered: false });
+      return;
+    }
     if (event.kind === "continue") {
       this.requests.set(seq, { kind: "continue", timeoutAt: event.timeoutAt, answered: false });
       return;
@@ -234,6 +240,7 @@ class TurnFold {
     const request = this.requests.get(event.request);
     if (!request) return;
     request.answered = true;
+    if (request.child) return;
     if (request.kind !== "continue") {
       this.approvals.set(request.id, {
         request: event.request,
