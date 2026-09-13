@@ -31,8 +31,11 @@ export interface ThreadBudget extends Budget {
 export interface PendingApproval {
   /** What `thread.approve` takes. */
   seq: number;
-  kind: "tool" | "continue";
+  kind: "tool" | "continue" | "connect";
   tool?: string;
+  /** A `connect`: which server, and where the human completes OAuth. */
+  serverId?: string;
+  authUrl?: string;
   timeoutAt: number;
 }
 

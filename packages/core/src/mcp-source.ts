@@ -1,6 +1,7 @@
-import type { CallToolResult } from "@modelcontextprotocol/client";
+import { computeScopeUnion, type CallToolResult } from "@modelcontextprotocol/client";
 import type { Logger, ScopeId } from "./context";
 import type { MediaWriter } from "./media";
+import type { McpHolder } from "./mcp-auth";
 import {
   mcpAnnotations,
   nameTools,
@@ -10,8 +11,9 @@ import {
   type McpTool,
   type NamedMcpTool,
 } from "./mcp-catalog";
-import { describeMcpError, McpSession } from "./mcp-client";
+import { classifyAuth, describeMcpError, McpSession, type McpCallOutcome } from "./mcp-client";
 import { connection, type McpRegistry, type McpServerSnapshot } from "./mcp-registry";
+import type { ProviderMcpServer } from "./provider";
 import { rawJsonSchema } from "./schema";
 import type { Tool, ToolContext, ToolOutputResult } from "./tool";
 
@@ -21,6 +23,24 @@ import type { Tool, ToolContext, ToolOutputResult } from "./tool";
 /** What `resolveToolSet` asks: the Tools one `mcp:` reference selects, in the server's own order. */
 export interface McpToolSource {
   tools(ref: McpReference): readonly Tool[];
+}
+
+/** A call that cannot run until its holder consents; the tool Step turns it into a `connect` Approval. */
+export interface ConnectRequest {
+  serverId: string;
+  level: "agent" | "user";
+  holder: McpHolder;
+  /** The scopes to ask for: the grant's own plus what the server challenged with, on a step-up. */
+  scope?: string;
+}
+
+/** Thrown by an MCP Tool's `execute` in place of a result; only the tool Step catches it. */
+export class McpConnectRequired extends Error {
+  override readonly name = "McpConnectRequired";
+
+  constructor(readonly request: ConnectRequest) {
+    super(`Connection "mcp:${request.serverId}" has not been granted.`);
+  }
 }
 
 /** One server of the Turn: its snapshot (whose `catalog` a refresh replaces) and the Tools built from it. */
@@ -49,11 +69,18 @@ export class McpTurnSource implements McpToolSource {
     const source = new McpTurnSource(host);
     for (const server of servers) {
       const entry: ServerEntry = { server, named: [], tools: new Map() };
+      source.servers.set(server.id, entry);
+      // The provider lists a connector server itself.
+      if (server.config.execution === "provider") continue;
+      // A user-less Thread cannot reach a user-level server: its tools are offered from the cache so a call can say so.
+      if (server.oauth && !server.oauth.holder) {
+        if (server.catalog) source.adopt(entry, server.catalog);
+        continue;
+      }
       const session = () => source.session(server.id, server);
       const current = await host.registry.currentCatalog(host.scope, server, session, host.signal);
       if (current.ok) source.adopt(entry, current.value);
       else host.logger.warn("MCP catalogue unavailable", { server: server.id, error: current.message });
-      source.servers.set(server.id, entry);
     }
     return source;
   }
@@ -71,6 +98,27 @@ export class McpTurnSource implements McpToolSource {
     return selectTools(entry.named, entry.server.config, ref)
       .map(({ name }) => entry.tools.get(name))
       .filter(defined);
+  }
+
+  /** The servers the model provider connects to itself, with the token it needs; one without a grant is left out. */
+  providerServers(): ProviderMcpServer[] {
+    const servers: ProviderMcpServer[] = [];
+    for (const [id, { server }] of this.servers) {
+      if (server.config.execution !== "provider") continue;
+      if (server.oauth && !server.oauth.token) {
+        this.host.logger.warn("MCP connector server left out: no grant", { server: id });
+        continue;
+      }
+      const { allow, deny } = server.config;
+      servers.push({
+        name: id,
+        url: server.config.url,
+        ...(server.oauth?.token && { authorization: server.oauth.token }),
+        ...(allow && { allow }),
+        ...(deny && { deny }),
+      });
+    }
+    return servers;
   }
 
   async close(): Promise<void> {
@@ -108,17 +156,32 @@ export class McpTurnSource implements McpToolSource {
   private async call(id: string, tool: McpTool, input: unknown, ctx: ToolContext<unknown>): Promise<ToolOutputResult> {
     const entry = this.servers.get(id);
     if (!entry) return failed(`MCP server "${id}" is not part of this Turn.`);
-    if (entry.server.missing !== undefined)
-      return failed(`Credential "${entry.server.missing}" for MCP server "${id}" is missing.`);
-    let session: McpSession;
-    try {
-      session = await this.session(id, entry.server);
-    } catch (caught) {
-      return failed(`MCP server "${id}" is unreachable: ${describeMcpError(caught)}`);
+    const { server } = entry;
+    if (server.missing !== undefined)
+      return failed(`Credential "${server.missing}" for MCP server "${id}" is missing.`);
+    const { oauth } = server;
+    if (oauth && !oauth.holder)
+      return failed(
+        `connection.unavailable: Connection "mcp:${id}" is user-level and this Thread has no User to hold it.`,
+      );
+    if (oauth?.holder && !oauth.token)
+      throw new McpConnectRequired({ serverId: id, level: oauth.level, holder: oauth.holder });
+    let outcome = await this.attempt(entry, tool, input, ctx.signal);
+    // A refused token gets one refresh and one more try; only then does the holder have to consent again.
+    if (!outcome.ok && outcome.failure.kind === "unauthorized" && oauth?.holder) {
+      const refreshed = await this.host.registry.refreshToken(this.host.scope, server);
+      if (refreshed) outcome = await this.attempt(entry, tool, input, ctx.signal);
+      if (!outcome.ok && outcome.failure.kind === "unauthorized")
+        throw new McpConnectRequired({ serverId: id, level: oauth.level, holder: oauth.holder });
     }
-    const outcome = await session.callTool(tool, input, ctx.signal);
     if (outcome.ok) return render(outcome.result, ctx.media);
     const { failure } = outcome;
+    if (failure.kind === "insufficient_scope" && oauth?.holder) {
+      const scope = computeScopeUnion(oauth.scope, failure.scope);
+      throw new McpConnectRequired({ serverId: id, level: oauth.level, holder: oauth.holder, ...(scope && { scope }) });
+    }
+    if (failure.kind === "unauthorized" || failure.kind === "insufficient_scope")
+      return failed(`MCP server "${id}" refused the request as unauthorized.`);
     if (failure.kind === "input_required")
       return failed(`Tool "${tool.name}" needs interactive input from a user, which is not supported.`);
     if (failure.kind === "invalid_params") {
@@ -126,6 +189,30 @@ export class McpTurnSource implements McpToolSource {
       return failed(`${failure.message} The tool's definition has been refreshed; check it before retrying.`);
     }
     return failed(failure.message);
+  }
+
+  /** One session open plus one call; an open that the server refuses classifies like a refused call. */
+  private async attempt(
+    entry: ServerEntry,
+    tool: McpTool,
+    input: unknown,
+    signal: AbortSignal,
+  ): Promise<McpCallOutcome> {
+    let session: McpSession;
+    try {
+      session = await this.session(entry.server.id, entry.server);
+    } catch (caught) {
+      const auth = classifyAuth(caught);
+      if (auth) return { ok: false, failure: auth };
+      return {
+        ok: false,
+        failure: {
+          kind: "error",
+          message: `MCP server "${entry.server.id}" is unreachable: ${describeMcpError(caught)}`,
+        },
+      };
+    }
+    return session.callTool(tool, input, signal);
   }
 
   /** A `-32602` says the catalogue may be out of date: list it again over the open session and swap the Tools in place. */

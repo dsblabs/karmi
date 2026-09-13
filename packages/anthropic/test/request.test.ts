@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Message } from "@karmi/core";
+import { sensitive, type Message } from "@karmi/core";
 import { anthropic } from "../src/index";
 import text from "./fixtures/text.sse?raw";
 import { collect, request, serve } from "./helpers";
@@ -13,6 +13,31 @@ async function sent(overrides: Parameters<typeof request>[0]) {
 }
 
 describe("request building", () => {
+  it("puts execution: provider servers on the MCP connector with the registry's token and the allow/deny lists", async () => {
+    const call = await sent({
+      mcpServers: [
+        { name: "crm", url: "https://crm.example/mcp", authorization: sensitive("at-1"), allow: ["contacts"] },
+        { name: "docs", url: "https://docs.example/mcp", deny: ["delete"] },
+      ],
+    });
+    expect(call.body).toMatchObject({
+      mcp_servers: [
+        { type: "url", name: "crm", url: "https://crm.example/mcp", authorization_token: "at-1" },
+        { type: "url", name: "docs", url: "https://docs.example/mcp" },
+      ],
+      tools: [
+        {
+          type: "mcp_toolset",
+          mcp_server_name: "crm",
+          default_config: { enabled: false },
+          configs: { contacts: { enabled: true } },
+        },
+        { type: "mcp_toolset", mcp_server_name: "docs", configs: { delete: { enabled: false } } },
+      ],
+    });
+    expect(call.headers["anthropic-beta"]).toContain("mcp-client-2025-11-20");
+  });
+
   it("posts to the Messages API with the key, a default max_tokens and cache breakpoints on system and the last message", async () => {
     const call = await sent({ system: "Be brief." });
     expect(call.url).toBe("https://api.anthropic.com/v1/messages?beta=true");

@@ -11,6 +11,7 @@ import { errorMessage } from "./errors";
 import { hooksAt } from "./hooks";
 import { keys } from "./keys";
 import type { Loaded } from "./loading";
+import { McpConnectRequired, type ConnectRequest } from "./mcp-source";
 import { isPlatformFailure } from "./platform-failure";
 import { renderTruncated, truncateOutput } from "./spill";
 import type { ApprovalAnswer, ApprovalSource, PauseReason, ThreadEvent, ThreadEventData } from "./thread-events";
@@ -54,7 +55,9 @@ export interface ToolStepHost {
   append(data: ThreadEventData): ThreadEvent;
   /** Logs `approval.requested` for the call and arms its timeout. */
   ask(call: ToolCall): void;
-  /** A Connection value by name at one level; the user-level store is not built yet and answers nothing. */
+  /** Starts the consent flow and logs `approval.requested { kind: "connect" }`; a failure to start is the call's result. */
+  connect(call: ToolCall, request: ConnectRequest): Promise<{ ok: true } | { ok: false; message: string }>;
+  /** A Connection value by name at one level: the User's own store, or the Agent's. */
   connection(level: Connection["level"], name: string): Promise<unknown>;
 }
 
@@ -64,9 +67,10 @@ export interface ToolCall {
   input: unknown;
 }
 
-/** How an asked call stands: requested, and answered or not. */
+/** How an asked call stands: requested (by the Policy, or for a Connection), and answered or not. */
 export interface CallApproval {
   request: number;
+  kind: "tool" | "connect";
   answer?: ApprovalAnswer & { source: ApprovalSource };
 }
 
@@ -107,11 +111,13 @@ export async function runToolStep(
   const stepSignal = AbortSignal.any([host.signal, step.signal]);
   const started = new Set<string>();
   // Each call gets a leaf of the tree, cut when the call is over so nothing it left behind keeps running.
+  const connects = new Set<string>();
   const run = async (call: ToolCall) => {
     const leaf = new AbortController();
     try {
-      if ((await runCall(host, call, prior, AbortSignal.any([stepSignal, leaf.signal]))) === "pending")
-        started.add(call.id);
+      const ran = await runCall(host, call, prior, AbortSignal.any([stepSignal, leaf.signal]));
+      if (ran === "pending") started.add(call.id);
+      else if (ran === "connect") connects.add(call.id);
     } finally {
       leaf.abort();
     }
@@ -136,7 +142,7 @@ export async function runToolStep(
     step.abort();
   }
   // Asks are raised only once every allowed call of the batch has run.
-  let reason: "approval" | "job" | undefined = started.size > 0 ? "job" : undefined;
+  let reason: "approval" | "job" | undefined = connects.size > 0 ? "approval" : started.size > 0 ? "job" : undefined;
   for (const call of waiting) {
     const waits = waitsOn(call);
     if (waits === "approval") {
@@ -155,7 +161,7 @@ async function runCall(
   call: ToolCall,
   prior: PriorCalls,
   signal: AbortSignal,
-): Promise<"pending" | undefined> {
+): Promise<"pending" | "connect" | undefined> {
   signal.throwIfAborted();
   const started = prior.started.get(call.id);
   const entry = host.available.get(call.name);
@@ -167,6 +173,13 @@ async function runCall(
   // A Job's outcome is the call's result, whatever the Tool's annotations say about re-running it.
   const job = prior.jobs.get(call.id);
   if (job?.outcome && started) return finishJob(host, entry.tool, started.seq, job.outcome, finish);
+
+  // A call parked for a Connection never reached the server: an allow retries it once, anything else refuses it.
+  const approval = prior.approvals.get(call.id);
+  if (started && approval?.kind === "connect") {
+    if (approval.answer?.decision !== "allow") return finish(started.seq, error(notGranted(call, approval.answer)));
+    return execute(host, call, entry, started.input, started.seq, signal, finish, true);
+  }
 
   // A re-run may repeat only work that is safe to repeat; anything else gets an honest "interrupted".
   if (started && !(annotations.readOnlyHint || annotations.idempotentHint)) {
@@ -250,7 +263,8 @@ async function execute(
   seq: number,
   signal: AbortSignal,
   finish: Finish,
-): Promise<"pending" | undefined> {
+  retry = false,
+): Promise<"pending" | "connect" | undefined> {
   const { tool } = entry;
   const parsed = z.safeParse(tool.input, input);
   if (!parsed.success) {
@@ -290,7 +304,12 @@ async function execute(
     result = await ingestToolResult(outcome, ctx.media);
   } catch (caught) {
     if (isPlatformFailure(caught)) throw caught;
-    result = error(errorMessage(caught));
+    if (caught instanceof McpConnectRequired) {
+      if (retry) return finish(seq, error(notGranted(call)));
+      const started = await host.connect(call, caught.request);
+      if (started.ok) return "connect";
+      result = error(started.message);
+    } else result = error(errorMessage(caught));
   }
   const spilled = await spill(host, tool, seq, result);
   return finish(seq, spilled.result, spilled.output ? { output: spilled.output } : {});
@@ -302,6 +321,8 @@ const notLoaded = ({ tool, skill }: AvailableTool): string =>
     ? `Tool "${tool.name}" is not loaded. Load it with tool_search (select:${tool.name}) before calling it.`
     : `Tool "${tool.name}" belongs to the skill "${skill}", which is not active. Activate it with use_skill first.`;
 const error = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
+const notGranted = (call: ToolCall, answer?: CallApproval["answer"]): string =>
+  `Tool "${call.name}": connection not granted${answer?.source === "timeout" ? " (the request timed out)" : answer?.reason ? ` (${answer.reason})` : ""}.`;
 
 function normalize(raw: ToolOutcome): ToolOutputResult | { pending: string } {
   return typeof raw === "string" ? { content: [{ type: "text", text: raw }] } : raw;

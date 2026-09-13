@@ -60,7 +60,17 @@ export interface Scope {
     readonly connections: {
       set(agentId: string, name: string, value: unknown): Promise<void>;
       delete(agentId: string, name: string): Promise<void>;
+      /** Set values, then the OAuth grants the Agent holds as `mcp:<serverId>`. */
       list(agentId: string): Promise<{ name: string; updatedAt: number }[]>;
+    };
+  };
+  readonly users: {
+    /** User-level Connection values keyed (User, name): the User's own grants, resolved before the Agent's. */
+    readonly connections: {
+      set(user: string, name: string, value: unknown): Promise<void>;
+      delete(user: string, name: string): Promise<void>;
+      /** Set values, then the OAuth grants the User holds as `mcp:<serverId>`. */
+      list(user: string): Promise<{ name: string; updatedAt: number }[]>;
     };
   };
   /**
@@ -88,7 +98,14 @@ export interface Scope {
      */
     snapshot(input: McpSnapshotInput): Promise<McpSnapshot>;
     /** Fetches `tools/list` again for one server (or every registered one); returns each new `catalogVersion`. */
-    refreshCatalog(serverId?: string): Promise<Record<string, string>>;
+    refreshCatalog(serverId?: string, holder?: { agent?: string; user?: string }): Promise<Record<string, string>>;
+    /**
+     * Starts the consent flow for an OAuth server, for the Agent (agent-level) or the User (user-level)
+     * it names, and answers with the URL the human must visit; the fixed callback route completes it.
+     */
+    authorize(input: McpAuthorizeRequest): Promise<{ authUrl: string }>;
+    /** Drops the holder's grant and the catalogue cached under it. */
+    disconnect(input: { serverId: string; agent?: string; user?: string }): Promise<void>;
   };
   /** An identity creates the Thread on first use; a key from `thread.key` reopens one and never creates. */
   thread(target: ThreadIdentity | string): Thread;
@@ -102,6 +119,14 @@ export interface Scope {
   /** Tombstones the Scope at once; the walk that empties it reports through `destroyStatus`. */
   destroy(): Promise<{ operationId: string }>;
   destroyStatus(operationId: string): Promise<DestroyStatus>;
+}
+
+export interface McpAuthorizeRequest {
+  serverId: string;
+  agent?: string;
+  user?: string;
+  /** Where the callback sends the browser once consent is complete. */
+  returnTo?: string;
 }
 
 /** What `scope.providers.test` found: the call went through, or the Provider's own error. */
@@ -153,6 +178,13 @@ export function openScope(deployment: Deployment, bindings: KarmiBindings, id: S
         list: (agentId) => call(stub.connectionsList(id, agentId)),
       },
     },
+    users: {
+      connections: {
+        set: (user, name, value) => call(stub.userConnectionSet(id, user, name, value)),
+        delete: (user, name) => call(stub.userConnectionDelete(id, user, name)),
+        list: (user) => call(stub.userConnectionsList(id, user)),
+      },
+    },
     thread: (target) => openThread(bindings, id, target),
     threads: { list: (filter) => call(stub.threadsList(id, filter.agent, filter.user)) },
     status: () => call(stub.status(id)),
@@ -166,15 +198,20 @@ export function openScope(deployment: Deployment, bindings: KarmiBindings, id: S
 function mcpHandle(registry: McpRegistry, id: ScopeId, resolved: () => Promise<ScopeConfigDocument>): Scope["mcp"] {
   return {
     snapshot: async (input) => registry.snapshot(id, await resolved(), input),
-    refreshCatalog: async (serverId) => {
+    refreshCatalog: async (serverId, holder = {}) => {
       const config = await resolved();
-      const { servers } = await registry.snapshot(id, config, serverId === undefined ? {} : { serverIds: [serverId] });
+      const { servers } = await registry.snapshot(id, config, {
+        ...holder,
+        ...(serverId !== undefined && { serverIds: [serverId] }),
+      });
       const egress = registry.egress(config, servers);
       const versions: Record<string, string> = {};
       for (const server of servers)
         versions[server.id] = (await registry.refresh(id, server, egress, AbortSignal.timeout(30_000))).catalogVersion;
       return versions;
     },
+    authorize: (input) => registry.authorize(id, input),
+    disconnect: async (input) => registry.disconnect(id, await resolved(), input),
   };
 }
 

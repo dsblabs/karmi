@@ -1,5 +1,6 @@
 import type { Catalogue } from "./catalogue";
 import type { Clock } from "./clock";
+import type { McpClientIdentity } from "./mcp-auth";
 import type { Provider } from "./provider";
 import type { ScopeConfigDocument } from "./scope-config";
 import type { SecretsProvider } from "./secrets";
@@ -15,4 +16,6 @@ export interface Deployment {
   readonly secrets: SecretsProvider;
   /** The transport under every `scopedFetch`: the global `fetch` unless a test supplies one. */
   readonly fetch: typeof fetch;
+  /** The OAuth client this Deployment presents to MCP authorization servers; absent, OAuth servers cannot be used. */
+  readonly oauth?: McpClientIdentity;
 }

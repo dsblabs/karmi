@@ -70,11 +70,22 @@ export type ThreadEventData =
   /** Its `seq` is what `thread.approve` answers; `timeoutAt` is when an unanswered request becomes a deny. */
   | { type: "approval.requested"; kind: "tool"; id: string; tool: string; input: unknown; timeoutAt: number }
   | { type: "approval.requested"; kind: "continue"; budget: Budget; timeoutAt: number }
+  /** Call `id` needs the holder's consent to an MCP server: completing OAuth at `authUrl` answers it. */
+  | {
+      type: "approval.requested";
+      kind: "connect";
+      id: string;
+      tool: string;
+      serverId: string;
+      level: "agent" | "user";
+      authUrl: string;
+      timeoutAt: number;
+    }
   /** `request` is the seq of the `approval.requested` it answers; `tool` names the asked Tool. */
   | ({
       type: "approval.resolved";
       request: number;
-      kind: "tool" | "continue";
+      kind: "tool" | "continue" | "connect";
       tool?: string;
       source: ApprovalSource;
     } & ApprovalAnswer)

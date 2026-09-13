@@ -20,6 +20,8 @@ import type {
   BetaToolReferenceBlockParam,
   BetaToolResultBlockParam,
   BetaToolUnion,
+  BetaMCPToolset,
+  BetaRequestMCPServerURLDefinition,
   MessageCountTokensParams,
   MessageCreateParamsBase,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
@@ -54,7 +56,7 @@ export function buildParams(request: ProviderRequest, media: RequestMedia = new 
   const options = anthropicOptions(request);
   const cache = options.cache === false ? undefined : cacheControl(options.cache?.ttl);
   const messages = toMessages(request.messages, cache, media);
-  const tools = toTools(request.tools, options, cache);
+  const tools = toTools(request, options, cache);
   const params: MessageCreateParamsBase = {
     model: request.model,
     max_tokens: request.params?.maxOutputTokens ?? DEFAULT_MAX_TOKENS,
@@ -95,7 +97,9 @@ export function buildParams(request: ProviderRequest, media: RequestMedia = new 
         },
       ],
     };
-  if (options.mcpServers) params.mcp_servers = options.mcpServers;
+  const connector = mcpConnector(request);
+  if (options.mcpServers || connector.length > 0)
+    params.mcp_servers = [...(options.mcpServers ?? []), ...connector.map(({ server }) => server)];
 
   const betas = collectBetas(request, options, messages);
   if (betas.length > 0) params.betas = betas;
@@ -136,7 +140,7 @@ function collectBetas(request: ProviderRequest, options: AnthropicOptions, messa
   for (const beta of request.config.headers?.["anthropic-beta"]?.split(",") ?? [])
     if (beta.trim()) betas.add(beta.trim());
   if (options.fallbacks) betas.add(BETAS.fallbacks);
-  if (options.mcpServers) betas.add(BETAS.mcp);
+  if (options.mcpServers || request.mcpServers?.length) betas.add(BETAS.mcp);
   if (options.taskBudget) betas.add(BETAS.taskBudget);
   const compacts =
     request.compact !== undefined ||
@@ -152,13 +156,36 @@ function cacheControl(ttl?: "5m" | "1h"): BetaCacheControlEphemeral {
   return ttl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
 }
 
+/**
+ * karmi's `execution: "provider"` servers on Anthropic's MCP connector: one `mcp_servers` entry with the
+ * registry's token, and one `mcp_toolset` carrying the allow/deny lists as per-tool enablement.
+ */
+function mcpConnector(
+  request: ProviderRequest,
+): { server: BetaRequestMCPServerURLDefinition; toolset: BetaMCPToolset }[] {
+  return (request.mcpServers ?? []).map(({ name, url, authorization, allow, deny }) => {
+    const configs: NonNullable<BetaMCPToolset["configs"]> = {};
+    for (const tool of allow ?? []) configs[tool] = { enabled: true };
+    for (const tool of deny ?? []) configs[tool] = { enabled: false };
+    return {
+      server: { type: "url", name, url, ...(authorization && { authorization_token: authorization.expose() }) },
+      toolset: {
+        type: "mcp_toolset",
+        mcp_server_name: name,
+        ...(allow && { default_config: { enabled: false } }),
+        ...(Object.keys(configs).length > 0 && { configs }),
+      },
+    };
+  });
+}
+
 function toTools(
-  tools: ToolDefinition[] | undefined,
+  request: ProviderRequest,
   options: AnthropicOptions,
   cache: BetaCacheControlEphemeral | undefined,
 ): BetaToolUnion[] {
   // Deferred definitions go last: the API strips them from the cached prefix, and they take no cache_control.
-  const ordered = (tools ?? []).toSorted((a, b) => Number(a.deferred === true) - Number(b.deferred === true));
+  const ordered = (request.tools ?? []).toSorted((a, b) => Number(a.deferred === true) - Number(b.deferred === true));
   const out: BetaToolUnion[] = ordered.map((tool) => ({
     name: tool.name,
     description: tool.description,
@@ -167,6 +194,7 @@ function toTools(
     ...(tool.deferred && { defer_loading: true }),
   }));
   if (options.serverTools) out.push(...options.serverTools);
+  out.push(...mcpConnector(request).map(({ toolset }) => toolset));
   const last = out.filter((tool): tool is BetaTool => "input_schema" in tool && !tool.defer_loading).at(-1);
   if (cache && last) last.cache_control = cache;
   return out;

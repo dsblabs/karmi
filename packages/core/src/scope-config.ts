@@ -115,8 +115,19 @@ const McpServerSchema = z.strictObject({
         type: z.literal("static"),
         headers: z.record(z.string().check(z.minLength(1)), credentialRef),
       }),
+      // An OAuth grant is the Connection `mcp:<id>`, held per Agent or per User; tokens live in ScopeConfig.
+      z.strictObject({
+        type: z.literal("oauth"),
+        level: z.enum(["agent", "user"]),
+        /** Scopes to request; absent lets the server's metadata decide. */
+        scope: z.optional(z.string().check(z.minLength(1))),
+        /** A pre-registered client for this server's issuer; the secret, if any, is a credential reference. */
+        client: z.optional(z.strictObject({ id: z.string().check(z.minLength(1)), secret: z.optional(credentialRef) })),
+      }),
     ]),
   ),
+  /** Who calls the server's tools: the Harness (default), or the model provider's own MCP connector. */
+  execution: z.optional(z.enum(["harness", "provider"])),
   /** Non-secret headers sent on every request; a header that authenticates belongs under `auth`. */
   headers: z.optional(z.record(z.string(), z.string())),
   /** Tool names (the server's own) an Agent may see; absent means every tool. */
@@ -202,12 +213,16 @@ export interface Ceilings {
   context?: { window?: number };
 }
 
-export type McpAuthConfig = { type: "none" } | { type: "static"; headers: Record<string, string> };
+export type McpAuthConfig =
+  | { type: "none" }
+  | { type: "static"; headers: Record<string, string> }
+  | { type: "oauth"; level: "agent" | "user"; scope?: string; client?: { id: string; secret?: string } };
 
 /** One registered remote MCP server; `auth.headers` values are credential references, never values. */
 export interface McpServerConfig {
   url: string;
   auth?: McpAuthConfig;
+  execution?: "harness" | "provider";
   headers?: Record<string, string>;
   allow?: string[];
   deny?: string[];
@@ -251,7 +266,10 @@ export function parseScopeConfig(
     if (issue.code === "unrecognized_keys" && issue.keys.some((key) => SECRET_LOOKING_KEY.test(key)))
       throw secretValue(path);
     // A `credential` that is not a reference is a value someone pasted in.
-    if (issue.code === "invalid_format" && (path.endsWith("/credential") || path.includes("/auth/headers/")))
+    if (
+      issue.code === "invalid_format" &&
+      (path.endsWith("/credential") || path.includes("/auth/headers/") || path.endsWith("/auth/client/secret"))
+    )
       throw secretValue(path);
     throw invalid(path, issue.message);
   }

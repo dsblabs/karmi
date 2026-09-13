@@ -50,6 +50,8 @@ export function createTestKarmi(catalogue: CatalogueInput, options: TestKarmiOpt
   };
   const { mcpServers, ...rest } = options;
   const karmi = createKarmi({
+    // A client identity out of the box, so an OAuth fake needs no more than `mcpServers`.
+    oauth: { origin: "https://karmi.test", clientName: "karmi test" },
     ...rest,
     ...(mcpServers && { fetch: routeFetch(mcpServers, options.fetch) }),
     clock,

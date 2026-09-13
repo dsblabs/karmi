@@ -11,6 +11,8 @@ import type { Provider } from "./provider";
 import { parseScopeConfig, type ScopeConfigDocument } from "./scope-config";
 import { openScope, type Scope } from "./scope";
 import { envelopeSecrets } from "./envelope-secrets";
+import type { McpClientIdentity } from "./mcp-auth";
+import { oauthRoutes, type OAuthRoutes } from "./mcp-oauth-routes";
 import { layerDeploymentCredentials, type SecretsProvider } from "./secrets";
 
 export interface KarmiOptions<Env = unknown> {
@@ -26,6 +28,8 @@ export interface KarmiOptions<Env = unknown> {
   secrets?: SecretsProvider;
   /** The transport under every outbound `scopedFetch`; the test kit routes it to in-process fakes. */
   fetch?: typeof fetch;
+  /** The OAuth client this Deployment presents to MCP servers; required before any `auth: { type: "oauth" }` server works. */
+  oauth?: McpClientIdentity;
   bindings?: BindingsResolver<Env>;
 }
 
@@ -34,6 +38,8 @@ export interface Karmi {
   readonly durableObjects: DurableObjects;
   readonly catalogue: Catalogue;
   readonly queueHandler: ExportedHandlerQueueHandler;
+  /** The two fixed OAuth routes: the client document and the callback. Mount with `karmi.oauth.handle(request)`. */
+  readonly oauth: OAuthRoutes;
   scope(id: string): Scope;
 }
 
@@ -55,6 +61,7 @@ export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
     providers,
     secrets: layerDeploymentCredentials(options.credentials, store),
     fetch: options.fetch ?? ((input, init) => fetch(input, init)),
+    ...(options.oauth && { oauth: options.oauth }),
   };
   const durableObjects = makeDurableObjects(deployment);
   return {
@@ -62,6 +69,7 @@ export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
     durableObjects,
     catalogue: deployment.catalogue,
     queueHandler: deliveryQueueHandler(deployment, bindings),
+    oauth: oauthRoutes(deployment, bindings),
     scope: (id) => openScope(deployment, bindings, id),
   };
 }

@@ -54,11 +54,6 @@ export function catalogVersion(tools: readonly McpTool[]): Promise<string> {
   return sha256Hex(JSON.stringify(tools)).then((hex) => hex.slice(0, 16));
 }
 
-/** The credential partition a catalogue is cached under: one per Scope while auth is `none` or `static`. */
-export function mcpPartition(): string {
-  return "scope";
-}
-
 /** Providers accept `^[a-zA-Z0-9_-]{1,64}$`; every model-facing name is cut to fit. */
 const NAME_LIMIT = 64;
 

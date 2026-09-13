@@ -29,7 +29,7 @@ import { consoleLogger } from "./logger";
 import { sha256Hex } from "./digest";
 import { parseMcpReference } from "./mcp-catalog";
 import { McpRegistry, type McpServerSnapshot } from "./mcp-registry";
-import { McpTurnSource } from "./mcp-source";
+import { McpTurnSource, type ConnectRequest } from "./mcp-source";
 import { fail, ok, remote, type Outcome } from "./outcome";
 import { isPlatformFailure } from "./platform-failure";
 import { evaluatePrompt } from "./prompt";
@@ -168,6 +168,13 @@ type ApprovalRequest =
       ? Omit<E, "timeoutAt">
       : never
     : never;
+
+/** What the OAuth callback reports for a parked `connect` request. */
+export interface ConnectOutcome {
+  serverId: string;
+  granted: boolean;
+  reason?: string;
+}
 
 type ModelPlan = Extract<Plan, { kind: "model" }>;
 type ToolPlan = Extract<Plan, { kind: "tool" }>;
@@ -437,7 +444,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         pending.push({
           seq,
           kind: request.kind,
-          ...(request.kind === "tool" && { tool: request.tool }),
+          ...(request.kind !== "continue" && { tool: request.tool }),
+          ...(request.kind === "connect" && { serverId: request.serverId, authUrl: request.authUrl }),
           timeoutAt: request.timeoutAt,
         });
     if (pending.length > 0) status.pendingApprovals = pending;
@@ -501,6 +509,24 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (answer.decision !== "allow" && answer.decision !== "deny")
       return fail(new KarmiError("approval.invalid", `An Approval answer is "allow" or "deny".`));
     this.resolve(row, seq, request, answer, "answer");
+    await this.settle(row);
+    return ok(undefined);
+  }
+
+  /** The OAuth callback's word on a `connect` request for `serverId`: granted retries the call, anything else refuses it. */
+  async connected(address: ThreadAddress, outcome: ConnectOutcome): Promise<Outcome<void>> {
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    const row = entered.value;
+    if (row.state !== "parked") return ok(undefined);
+    const turn = this.readTurn(row);
+    for (const [seq, request] of turn.requests) {
+      if (request.kind !== "connect" || request.answered || request.serverId !== outcome.serverId) continue;
+      const answer: ApprovalAnswer = outcome.granted
+        ? { decision: "allow", by: "oauth" }
+        : { decision: "deny", by: "oauth", ...(outcome.reason !== undefined && { reason: outcome.reason }) };
+      this.resolve(row, seq, request, answer, "answer");
+    }
     await this.settle(row);
     return ok(undefined);
   }
@@ -964,7 +990,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         type: "approval.resolved",
         request: seq,
         kind: request.kind,
-        ...(request.kind === "tool" && { tool: request.tool }),
+        ...(request.kind !== "continue" && { tool: request.tool }),
         decision: answer.decision,
         ...(answer.reason !== undefined && { reason: answer.reason }),
         ...(remember && { remember }),
@@ -1802,12 +1828,14 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       provider: profile.adapter,
       model: native,
     });
+    const mcpServers = this.mcp?.turn === row.turn ? (this.mcp.source?.providerServers() ?? []) : [];
     return {
       model: native,
       config: profile,
       ...(system !== undefined && { system }),
       messages,
       ...(tools.length > 0 && { tools }),
+      ...(mcpServers.length > 0 && { mcpServers }),
       ...(spec.model.params && { params: spec.model.params }),
       ...((profile.providerOptions || spec.model.providerOptions) && {
         providerOptions: { ...profile.providerOptions, ...spec.model.providerOptions },
@@ -1857,6 +1885,41 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return stepError("The Provider stream ended without a terminal event.");
   }
 
+  /** A call that needs the holder's consent: ScopeConfig starts the flow, then a `connect` request parks the Step on its URL. */
+  private async requestConnection(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    channelRef: unknown,
+    call: ToolCall,
+    request: ConnectRequest,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const signal = this.turnAbort.signal;
+    signal.throwIfAborted();
+    const started = await this.scopeStub(row).mcpAuthorize(row.scope_id, {
+      serverId: request.serverId,
+      ...(request.level === "agent" ? { agent: row.agent_id } : { user: request.holder.slice("user:".length) }),
+      ...(request.scope !== undefined && { scope: request.scope }),
+      thread: { agent: row.agent_id, threadId: row.thread_id, ...(row.user_id !== null && { user: row.user_id }) },
+    });
+    if (!started.ok) return { ok: false, message: started.message };
+    signal.throwIfAborted();
+    this.request(
+      row,
+      snapshot,
+      {
+        type: "approval.requested",
+        kind: "connect",
+        id: call.id,
+        tool: call.name,
+        serverId: request.serverId,
+        level: request.level,
+        authUrl: started.value.authUrl,
+      },
+      channelRef,
+    );
+    return { ok: true };
+  }
+
   private toolStep(
     row: ThreadRow,
     snapshot: TurnSnapshot,
@@ -1897,11 +1960,15 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
             channelRef,
           );
         },
+        connect: (call, request) => this.requestConnection(row, snapshot, channelRef, call, request),
         connection: async (level, name) => {
-          // The user-level store lands with the Connection ticket; until then only agent-level values exist.
-          if (level === "user") return undefined;
-          const value = await stub.connectionGet(row.scope_id, row.agent_id, name);
-          return value.ok ? value.value : undefined;
+          const value =
+            level === "user"
+              ? row.user_id === null
+                ? undefined
+                : await stub.userConnectionGet(row.scope_id, row.user_id, name)
+              : await stub.connectionGet(row.scope_id, row.agent_id, name);
+          return value?.ok ? value.value : undefined;
         },
       },
       batch,

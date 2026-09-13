@@ -25,6 +25,10 @@ export function buildRequest(
   call: ProviderCallOptions,
   media: RequestMedia = new Map(),
 ): LanguageModelV4CallOptions {
+  if (request.mcpServers?.length)
+    throw new InvalidRequestError(
+      `MCP execution: "provider" is only supported by the Anthropic adapter (servers: ${request.mcpServers.map((s) => s.name).join(", ")}).`,
+    );
   const { reasoning, ...params } = request.params ?? {};
   const result: LanguageModelV4CallOptions = {
     ...params,
