@@ -51,7 +51,7 @@ export interface ToolSetInput {
   window: number;
 }
 
-const POLICED_BUILT_INS = new Set(["schedule", "cancel_schedule"]);
+const POLICED_BUILT_INS = new Set(["schedule"]);
 
 export function resolveToolSet({
   spec,
@@ -104,7 +104,7 @@ export function resolveToolSet({
       });
   }
   // Framework built-ins are allowed by default: they are Harness machinery, not developer actions. The
-  // ones that act on the Agent's behalf still honour a rule that names them, so a Policy may `ask`.
+  // `schedule` acts on the Agent's behalf, so it honours a rule that names it and a Policy may `ask`.
   const modelSkills = skills.some((entry) => entry.invokableBy !== "user");
   for (const tool of builtIns) {
     if (tool.name === "use_skill" && !modelSkills) continue;

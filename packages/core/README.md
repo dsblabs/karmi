@@ -176,7 +176,7 @@ const { scheduleId, nextAt } = await thread.schedule({
 });
 ```
 
-A firing is an ordinary `send()` of the Event on the Thread's own Durable Object alarm, so it coalesces into the next Turn while one runs or is parked. A cron holds at most one undelivered firing: a tick that arrives while the last one is still queued is logged as `schedule.skipped` and the cron rearms. A one-shot is deleted on delivery; a Turn that fails is not retried. `schedule.created`, `schedule.fired`, `schedule.skipped` and `schedule.cancelled` record everything. Every Thread holds at most 100 pending Schedules, none further than a year ahead.
+A firing is an ordinary `send()` of the Event on the Thread's own Durable Object alarm, so it coalesces into the next Turn while one runs or is parked. A cron holds at most one undelivered firing: a tick that arrives while the last one is still queued is logged as `schedule.skipped` and the cron rearms. A one-shot is deleted on delivery, and an `at` already in the past fires at once; a Turn that fails is not retried. A cron's next tick is computed from the time it actually fired, so ticks missed while the Durable Object was unreachable are not replayed. `schedule.created`, `schedule.fired`, `schedule.skipped` and `schedule.cancelled` record everything. Every Thread holds at most 100 pending Schedules, none further than a year ahead.
 
 The `scheduling` Capability gives an Agent `schedule`, `cancel_schedule` and `list_schedules` for its own Thread and no other; a firing reaches it as `{ kind: "event", type: "schedule.fired", payload }`. Its `{ maxPending, maxHorizonMs, cron }` are bounded by the Scope ceiling and the caps above, and a Permission Policy rule naming `schedule` may `ask`.
 

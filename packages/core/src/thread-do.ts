@@ -443,20 +443,28 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         "INSERT INTO delivery_route (id, json) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json",
         JSON.stringify(binding),
       );
+    const { turn } = this.enqueue(row, input, steer);
+    return ok({ turn, seq: this.head });
+  }
+
+  /** Queues one input and wakes the loop; returns the Turn it will run in and its `inputs` row. */
+  private enqueue(row: ThreadRow, input: TurnInput, steer: boolean): { turn: number; id: number } {
     // A steer joins the Turn in flight; anything else coalesces into the one next Turn, which is the one
     // after the Turn being prepared right now.
     const joins = steer && row.state !== "idle";
     const next = this.preparing === undefined ? row.turn + 1 : this.preparing + 1;
-    this.sql.exec(
-      "INSERT INTO inputs (turn, json, steer) VALUES (?, ?, ?)",
-      joins ? row.turn : next,
-      JSON.stringify(input),
-      joins ? 1 : 0,
-    );
+    const { id } = this.sql
+      .exec<{ id: number }>(
+        "INSERT INTO inputs (turn, json, steer) VALUES (?, ?, ?) RETURNING id",
+        joins ? row.turn : next,
+        JSON.stringify(input),
+        joins ? 1 : 0,
+      )
+      .one();
     if (this.active) this.armWatchdog();
     else if (row.state === "idle" || row.state === "running") this.kick(row.state === "running");
     else if (!joins && this.readTurn(row).paused === "scope_suspended") this.wake(row, "input");
-    return ok({ turn: joins ? row.turn : next, seq: this.head });
+    return { turn: joins ? row.turn : next, id };
   }
 
   events(address: ThreadAddress, after: number): Outcome<ThreadEvent[]> {
@@ -2102,13 +2110,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const now = this.deployment.clock.now();
     const resolved = resolveSchedule(request, now);
     if (!resolved.ok) return resolved;
-    const limit =
-      resolved.timing.kind === "cron" && !limits.cron
-        ? "cron"
-        : overScheduleLimit(limits, this.scheduleStore.count(), resolved.nextAt, now);
+    const limit = overScheduleLimit(limits, resolved.timing, this.scheduleStore.count(), resolved.nextAt, now);
     if (limit) return { ok: false, code: "schedule.limit", message: `limit_exceeded: ${limit}` };
-    // Parsed above: `input` is the event as given.
-    const { input, delay } = request as ScheduleRequest;
+    const { input, delay } = resolved.request;
     const record: ScheduleRecord = { id, timing: resolved.timing, input, createdAt: now, nextAt: resolved.nextAt };
     this.scheduleStore.save(record);
     this.scheduler.set({ id: scheduleJobId(id), kind: "schedule", dueAt: record.nextAt, payload: { scheduleId: id } });
@@ -2152,10 +2156,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (undelivered && nextAt !== undefined) {
       this.append(row.turn, { type: "schedule.skipped", scheduleId, nextAt }, record.input.channelRef);
     } else {
-      const sent = this.send(this.address(row), record.input);
-      if (!sent.ok) this.logger(row).warn("Schedule firing refused", { scheduleId, code: sent.code });
+      const entered = this.enter(this.address(row));
+      if (!entered.ok) this.logger(row).warn("Schedule firing refused", { scheduleId, code: entered.code });
       else {
-        record.pendingInput = this.sql.exec<{ id: number }>("SELECT MAX(id) AS id FROM inputs").one().id;
+        record.pendingInput = this.enqueue(entered.value, record.input, false).id;
         this.append(
           row.turn,
           { type: "schedule.fired", scheduleId, ...(nextAt !== undefined && { nextAt }) },

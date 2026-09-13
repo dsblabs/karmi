@@ -1,6 +1,5 @@
 import * as z from "zod/mini";
 import type { Capabilities } from "./agent";
-import { AGENT_SPEC_DEFAULTS } from "./agent-spec";
 import { isTimeZone, nextCronTime, parseCron } from "./cron";
 import { milliseconds } from "./duration";
 import type { KarmiErrorCode } from "./errors";
@@ -63,15 +62,17 @@ const ScheduleRequestSchema = z.object({
 export type ScheduleRequest = z.output<typeof ScheduleRequestSchema>;
 
 export type ScheduleFailure = { code: Extract<KarmiErrorCode, "schedule.invalid" | "schedule.limit">; message: string };
-export type Resolved = { ok: true; timing: ScheduleTiming; nextAt: number } | ({ ok: false } & ScheduleFailure);
+export type ScheduleResolution =
+  { ok: true; timing: ScheduleTiming; nextAt: number; request: ScheduleRequest } | ({ ok: false } & ScheduleFailure);
 
-const invalid = (message: string): Resolved => ({ ok: false, code: "schedule.invalid", message });
+const invalid = (message: string): ScheduleResolution => ({ ok: false, code: "schedule.invalid", message });
 
 /** Normalises a request into its timing and first firing; every rejection is one `schedule.invalid`. */
-export function resolveSchedule(request: unknown, now: number): Resolved {
-  const parsed = z.safeParse(ScheduleRequestSchema, request);
+export function resolveSchedule(raw: unknown, now: number): ScheduleResolution {
+  const parsed = z.safeParse(ScheduleRequestSchema, raw);
   if (!parsed.success) return invalid('A Schedule needs `input: { kind: "event", type, payload }`.');
-  const { at, delay, cron, tz } = parsed.data;
+  const request = parsed.data;
+  const { at, delay, cron, tz } = request;
   const given = [at, delay, cron].filter((value) => value !== undefined).length;
   if (given !== 1) return invalid("Exactly one of `at`, `delay` or `cron` is required.");
   if (cron !== undefined) {
@@ -80,7 +81,7 @@ export function resolveSchedule(request: unknown, now: number): Resolved {
     if (!parseCron(cron)) return invalid(`"${cron}" is not a five-field cron expression.`);
     const nextAt = nextCronTime(cron, now, zone);
     if (nextAt === undefined) return invalid(`"${cron}" never fires.`);
-    return { ok: true, timing: { kind: "cron", cron, tz: zone }, nextAt };
+    return { ok: true, timing: { kind: "cron", cron, tz: zone }, nextAt, request };
   }
   if (tz !== undefined) return invalid("`tz` applies to `cron` only; give `at` with an offset instead.");
   let fireAt: number;
@@ -92,33 +93,34 @@ export function resolveSchedule(request: unknown, now: number): Resolved {
     fireAt = typeof at === "number" ? at : Date.parse(at ?? "");
     if (!Number.isFinite(fireAt)) return invalid(`"${at}" is not epoch milliseconds or an ISO 8601 date.`);
   }
-  return { ok: true, timing: { kind: "once", at: fireAt }, nextAt: fireAt };
+  return { ok: true, timing: { kind: "once", at: fireAt }, nextAt: fireAt, request };
 }
 
-/** The cap a new Schedule would break, if any: how many are pending and how far ahead it first fires. */
-export function overLimit(limits: SchedulingLimits, pending: number, nextAt: number, now: number): string | undefined {
+export type ScheduleLimit = keyof SchedulingLimits;
+
+/** The cap a new Schedule would break, if any: its kind, how many are pending and how far ahead it first fires. */
+export function overLimit(
+  limits: SchedulingLimits,
+  timing: ScheduleTiming,
+  pending: number,
+  nextAt: number,
+  now: number,
+): ScheduleLimit | undefined {
+  if (timing.kind === "cron" && !limits.cron) return "cron";
   if (pending >= limits.maxPending) return "maxPending";
   if (nextAt - now > limits.maxHorizonMs) return "maxHorizonMs";
   return undefined;
 }
 
-/** Fills in the Framework defaults and applies the Scope ceiling as a maximum; both stay under the Deployment caps. */
+/** A grant that names no bound gets the Deployment cap; the Scope ceiling and the caps are maxima. */
 export function resolveSchedulingLimits(
   grant: NonNullable<Capabilities["scheduling"]>,
   ceiling: false | NonNullable<Capabilities["scheduling"]> | undefined,
 ): SchedulingLimits {
   const max = ceiling || {};
   return {
-    maxPending: Math.min(
-      grant.maxPending ?? AGENT_SPEC_DEFAULTS.scheduling.maxPending,
-      max.maxPending ?? SCHEDULE_CAPS.maxPending,
-      SCHEDULE_CAPS.maxPending,
-    ),
-    maxHorizonMs: Math.min(
-      grant.maxHorizonMs ?? AGENT_SPEC_DEFAULTS.scheduling.maxHorizonMs,
-      max.maxHorizonMs ?? SCHEDULE_CAPS.maxHorizonMs,
-      SCHEDULE_CAPS.maxHorizonMs,
-    ),
+    maxPending: Math.min(grant.maxPending ?? Infinity, max.maxPending ?? Infinity, SCHEDULE_CAPS.maxPending),
+    maxHorizonMs: Math.min(grant.maxHorizonMs ?? Infinity, max.maxHorizonMs ?? Infinity, SCHEDULE_CAPS.maxHorizonMs),
     cron: (grant.cron ?? true) && max.cron !== false,
   };
 }

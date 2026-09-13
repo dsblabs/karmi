@@ -1,7 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
-import type { ThreadEvent } from "../src/index";
+import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
+import type { ScheduleInput, ThreadEvent } from "../src/index";
+import type { ScheduleRequest } from "../src/schedule";
 import { reply } from "../src/testing/index";
-import { clock, provider, scope } from "./worker";
+import { clock, gate, karmi, provider, scope } from "./worker";
+
+// The hand-written `ScheduleInput` (for editor hovers) must stay within what the runtime schema decodes.
+expectTypeOf<ScheduleInput>().toMatchTypeOf<ScheduleRequest>();
 
 // Storage is shared across the file, so every test uses a Thread of its own and cancels it afterwards.
 let n = 0;
@@ -18,6 +22,7 @@ const eventTurns = (events: ThreadEvent[]) =>
   events.filter((e) => e.type === "turn.started" && e.input.kind === "event");
 
 afterEach(async () => {
+  gate.open = true;
   for (const thread of opened.splice(0)) {
     for (const schedule of await thread.schedules()) await thread.cancelSchedule(schedule.scheduleId);
     await thread.cancel();
@@ -140,6 +145,34 @@ describe("thread.schedule", () => {
     await thread.approve(request.seq, { decision: "allow" });
     await expect.poll(async () => (await thread.events()).filter((e) => e.type === "turn.completed").length).toBe(2);
     const events = await thread.events();
+    expect(eventTurns(events)).toHaveLength(1);
+    expect(events.filter((e) => e.type === "turn.started").at(-1)).toMatchObject({ input: reminder(1) });
+  });
+});
+
+describe("thread.schedule while a Turn runs", () => {
+  it("coalesces a firing into the next Turn while a Turn is running", async () => {
+    gate.open = false;
+    provider.script(({ request }) =>
+      request.messages.some((m) => m.role === "toolResult")
+        ? "Released"
+        : JSON.stringify(request.messages).includes("reminder.due")
+          ? "Reminded"
+          : reply.toolCall("wait_gate", {}, "g1"),
+    );
+    // Registers the Thread for cleanup; the test kit's send() only returns at the Turn's end, and this
+    // Turn blocks inside wait_gate, so the raw handle drives it.
+    fresh("approver");
+    const running = karmi.scope("test").thread({ agent: "approver", user: "guest-1", threadId: `schedule-${n}` });
+    await running.send(message("Wait"));
+    await running.schedule({ delay: "1m", input: reminder(1) });
+    await expect.poll(async () => (await running.status()).state).toBe("running");
+    await clock.advance("1m");
+    expect(await running.events()).toContainEvent({ type: "schedule.fired" });
+    expect(eventTurns(await running.events())).toHaveLength(0);
+    gate.open = true;
+    await expect.poll(async () => (await running.events()).filter((e) => e.type === "turn.completed").length).toBe(2);
+    const events = await running.events();
     expect(eventTurns(events)).toHaveLength(1);
     expect(events.filter((e) => e.type === "turn.started").at(-1)).toMatchObject({ input: reminder(1) });
   });
