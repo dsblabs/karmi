@@ -4,6 +4,7 @@ import type { ScopeId } from "./context";
 import type { Deployment } from "./deployment";
 import { KarmiError } from "./errors";
 import { keys } from "./keys";
+import type { McpHolderRef } from "./mcp-auth";
 import { McpRegistry, type McpSnapshot, type McpSnapshotInput } from "./mcp-registry";
 import { remote, unwrap as call } from "./outcome";
 import type { ProviderError, ProviderRequest } from "./provider";
@@ -104,8 +105,8 @@ export interface Scope {
      * it names, and answers with the URL the human must visit; the fixed callback route completes it.
      */
     authorize(input: McpAuthorizeRequest): Promise<{ authUrl: string }>;
-    /** Drops the holder's grant and the catalogue cached under it. */
-    disconnect(input: { serverId: string; agent?: string; user?: string }): Promise<void>;
+    /** Drops the holder's grant and the private catalogue cached under it. */
+    disconnect(input: McpHolderRef): Promise<void>;
   };
   /** An identity creates the Thread on first use; a key from `thread.key` reopens one and never creates. */
   thread(target: ThreadIdentity | string): Thread;
@@ -121,10 +122,7 @@ export interface Scope {
   destroyStatus(operationId: string): Promise<DestroyStatus>;
 }
 
-export interface McpAuthorizeRequest {
-  serverId: string;
-  agent?: string;
-  user?: string;
+export interface McpAuthorizeRequest extends McpHolderRef {
   /** Where the callback sends the browser once consent is complete. */
   returnTo?: string;
 }

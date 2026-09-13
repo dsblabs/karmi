@@ -1,6 +1,7 @@
 import type { OAuthDiscoveryState, StoredOAuthClientInformation } from "@modelcontextprotocol/client";
 import type { Clock } from "./clock";
 import type { ScopeId } from "./context";
+import { sha256Hex } from "./digest";
 import { KarmiError } from "./errors";
 import { OAUTH_STATE_TTL_MS, type McpHolder } from "./mcp-auth";
 import type { GrantRecord, GrantStore, PendingAuthorization } from "./mcp-oauth";
@@ -76,10 +77,7 @@ export interface OAuthStoreHost {
 }
 
 /** A DCR-issued client secret is stored as this Scope credential, named from a digest of its issuer. */
-const secretName = (issuer: string) =>
-  `__mcp-client-${Array.from(new TextEncoder().encode(issuer))
-    .reduce((hash, byte) => Math.imul(hash ^ byte, 0x01000193) >>> 0, 0x811c9dc5)
-    .toString(16)}`;
+const secretName = async (issuer: string) => `__mcp-client-${(await sha256Hex(issuer)).slice(0, 16)}`;
 
 export class SqlGrantStore implements GrantStore {
   /** The pending authorization this store works on: the callback's, or the one `mintPending` created. */
@@ -122,7 +120,7 @@ export class SqlGrantStore implements GrantStore {
           "mcp.oauth.failed",
           `The authorization server ${issuer} issued a client secret, but the configured SecretsProvider is read-only; pre-register a client instead.`,
         );
-      secretRef = credentialRef("scope", secretName(issuer));
+      secretRef = credentialRef("scope", await secretName(issuer));
       await secrets.put({ scope, ref: secretRef }, sensitive(client_secret));
     }
     this.sql.exec(

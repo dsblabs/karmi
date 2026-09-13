@@ -213,6 +213,10 @@ describe("consent", () => {
     ]);
     const bob = thread(scope, "mcp-drive", "bob", "deny");
     const parked = await settled(bob, "list");
+    // Only OAuth can grant; a hand-written allow is refused, a deny is an ordinary answer.
+    await expect(bob.approve(requested(parked).seq, { decision: "allow" })).rejects.toMatchObject({
+      code: "approval.invalid",
+    });
     const denied = await karmi.oauth.handle(new Request(drive.oauth!.deny(requested(parked).authUrl)));
     expect(denied?.status).toBe(400);
     const resumed = await rest(bob, parked.at(-1)!.seq);

@@ -52,22 +52,19 @@ async function callback(deployment: Deployment, bindings: KarmiBindings, params:
     ...(error !== undefined && { error }),
   });
   if (!result.ok) return new Response(new KarmiError(result.code, result.message).message, { status: 400 });
-  const { thread, serverId, granted, reason, returnTo } = result.value;
+  const { thread, serverId, outcome, returnTo } = result.value;
   if (thread) {
     const threads = remote<ThreadDurableObject>(bindings.KARMI_THREADS, keys.thread(state.scope, thread.threadId));
-    await threads.connected(
-      { ...thread, scope: state.scope, create: false },
-      { serverId, granted, ...(reason !== undefined && { reason }) },
-    );
+    await threads.connected({ ...thread, scope: state.scope, create: false }, serverId, outcome);
   }
   if (returnTo !== undefined) {
     const target = new URL(returnTo);
     target.searchParams.set("mcp", serverId);
-    target.searchParams.set("connected", granted ? "true" : "false");
+    target.searchParams.set("connected", outcome.granted ? "true" : "false");
     return Response.redirect(target.href, 303);
   }
-  return new Response(granted ? `Connected to ${serverId}. You can close this window.` : `Not connected: ${reason}`, {
-    status: granted ? 200 : 400,
-    headers: { "content-type": "text/plain; charset=utf-8" },
-  });
+  return new Response(
+    outcome.granted ? `Connected to ${serverId}. You can close this window.` : `Not connected: ${outcome.reason}`,
+    { status: outcome.granted ? 200 : 400, headers: { "content-type": "text/plain; charset=utf-8" } },
+  );
 }

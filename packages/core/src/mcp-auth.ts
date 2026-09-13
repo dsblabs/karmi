@@ -1,4 +1,5 @@
 import type { ScopeId } from "./context";
+import { KarmiError } from "./errors";
 import type { McpAuthConfig } from "./scope-config";
 
 // The pure half of MCP OAuth: who holds a grant, how a catalogue partitions by holder, the shape of the
@@ -16,6 +17,35 @@ export function mcpHolder(
 ): McpHolder | undefined {
   if (level === "user") return user === undefined ? undefined : `user:${user}`;
   return agent === undefined ? undefined : `agent:${agent}`;
+}
+
+/** Who a request is about: one server, and the Agent or User whose grant it concerns. */
+export interface McpHolderRef {
+  serverId: string;
+  agent?: string;
+  user?: string;
+}
+
+/** The holder a request names for an OAuth server, or why it names none; the one place that rule lives. */
+export function resolveHolder(
+  auth: McpAuthConfig | undefined,
+  ref: McpHolderRef,
+): { ok: true; level: "agent" | "user"; holder: McpHolder } | { ok: false; error: KarmiError } {
+  if (auth?.type !== "oauth")
+    return {
+      ok: false,
+      error: new KarmiError("mcp.oauth.notOAuth", `MCP server "${ref.serverId}" is not configured for OAuth.`),
+    };
+  const holder = mcpHolder(auth.level, ref.agent, ref.user);
+  if (holder === undefined)
+    return {
+      ok: false,
+      error: new KarmiError(
+        "mcp.oauth.failed",
+        `MCP server "${ref.serverId}" holds ${auth.level}-level grants; pass the ${auth.level} it is for.`,
+      ),
+    };
+  return { ok: true, level: auth.level, holder };
 }
 
 /** The credential partition a catalogue is cached under: the grant holder for OAuth, one per Scope otherwise. */

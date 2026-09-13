@@ -8,7 +8,7 @@ import { KarmiError } from "./errors";
 import { fail, ok, type Outcome } from "./outcome";
 import type { Envelope } from "./envelope";
 import type { McpCatalog } from "./mcp-catalog";
-import { mcpHolder, tokenFresh, type McpHolder } from "./mcp-auth";
+import { mcpHolder, resolveHolder, tokenFresh, type McpHolder, type McpHolderRef } from "./mcp-auth";
 import {
   beginAuthorization,
   completeAuthorization,
@@ -126,10 +126,7 @@ export interface McpGrantView {
   scope?: string;
 }
 
-export interface McpAuthorizeInput {
-  serverId: string;
-  agent?: string;
-  user?: string;
+export interface McpAuthorizeInput extends McpHolderRef {
   /** The Thread whose parked Step the callback wakes. */
   thread?: ThreadIdentity;
   /** Scopes to request, replacing the server's configured ones; a step-up passes the union. */
@@ -150,9 +147,21 @@ export interface McpCallbackResult {
   holder: McpHolder;
   thread?: ThreadIdentity;
   returnTo?: string;
-  granted: boolean;
-  /** Why not, when not granted: the server's error or the exchange's failure. */
-  reason?: string;
+  /** Granted, or why not: the server's error or the exchange's failure. */
+  outcome: ConnectOutcome;
+}
+
+export type ConnectOutcome = { granted: true } | { granted: false; reason: string };
+
+type PendingInput = ConstructorParameters<typeof SqlGrantStore>[3];
+
+/** An access token view of a grant; never the refresh token. */
+function grantView(grant: { accessToken: string; expiresAt?: number; scope?: string }): McpGrantView {
+  return {
+    token: grant.accessToken,
+    ...(grant.expiresAt !== undefined && { expiresAt: grant.expiresAt }),
+    ...(grant.scope !== undefined && { scope: grant.scope }),
+  };
 }
 
 type OAuthServer = {
@@ -553,7 +562,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         )
         .toArray()
         .map((row) => ({ name: row.name, updatedAt: row.updated_at })),
-      ...listGrants(this.sql, `agent:${agentId}`),
+      ...listGrants(this.sql, mcpHolder("agent", agentId, undefined) ?? "agent:"),
     ]);
   }
 
@@ -589,7 +598,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         )
         .toArray()
         .map((row) => ({ name: row.name, updatedAt: row.updated_at })),
-      ...listGrants(this.sql, `user:${user}`),
+      ...listGrants(this.sql, mcpHolder("user", undefined, user) ?? "user:"),
     ]);
   }
 
@@ -632,39 +641,46 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok({ id: serverId, config: server, auth: server.auth, identity });
   }
 
-  private async grantProvider(
-    scope: ScopeId,
-    server: OAuthServer,
-    holder: McpHolder,
-    pending?: ConstructorParameters<typeof SqlGrantStore>[3],
-  ): Promise<{ provider: GrantProvider; store: SqlGrantStore }> {
-    const store = new SqlGrantStore(
+  private grantStore(scope: ScopeId, server: OAuthServer, holder: McpHolder, pending?: PendingInput): SqlGrantStore {
+    return new SqlGrantStore(
       { sql: this.sql, clock: this.deployment.clock, secrets: this.deployment.secrets, scope },
       server.id,
       holder,
       pending,
     );
-    const provider = new GrantProvider({
-      scope,
-      identity: server.identity,
-      store,
-      now: () => this.deployment.clock.now(),
-      ...(await this.preregistered(scope, server)),
-    });
-    return { provider, store };
   }
 
-  private async preregistered(scope: ScopeId, server: OAuthServer): Promise<{ preregistered?: PreregisteredClient }> {
+  private async grantProvider(
+    scope: ScopeId,
+    server: OAuthServer,
+    store: SqlGrantStore,
+  ): Promise<Outcome<GrantProvider>> {
+    const preregistered = await this.preregistered(scope, server);
+    if (!preregistered.ok) return preregistered;
+    return ok(
+      new GrantProvider({
+        scope,
+        identity: server.identity,
+        store,
+        now: () => this.deployment.clock.now(),
+        ...(preregistered.value && { preregistered: preregistered.value }),
+      }),
+    );
+  }
+
+  private async preregistered(scope: ScopeId, server: OAuthServer): Promise<Outcome<PreregisteredClient | undefined>> {
     const { client } = server.auth;
-    if (!client) return {};
-    if (client.secret === undefined) return { preregistered: { client_id: client.id } };
+    if (!client) return ok(undefined);
+    if (client.secret === undefined) return ok({ client_id: client.id });
     const secret = await this.deployment.secrets.resolve({ scope, ref: client.secret });
     if (!secret)
-      throw new KarmiError(
-        "mcp.oauth.failed",
-        `MCP server "${server.id}": the client secret "${client.secret}" is missing from the SecretsProvider.`,
+      return fail(
+        new KarmiError(
+          "mcp.oauth.failed",
+          `MCP server "${server.id}": the client secret "${client.secret}" is missing from the SecretsProvider.`,
+        ),
       );
-    return { preregistered: { client_id: client.id, client_secret: secret.value.expose() } };
+    return ok({ client_id: client.id, client_secret: secret.value.expose() });
   }
 
   private flow(scope: ScopeId, server: OAuthServer, provider: GrantProvider) {
@@ -677,29 +693,33 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     };
   }
 
-  /** The holder's access token for one server, refreshed first when it is about to expire; nothing when there is no grant. */
-  mcpGrant(scope: ScopeId, serverId: string, holder: McpHolder): Promise<Outcome<McpGrantView | undefined>> {
-    return this.mcpRefresh(scope, serverId, holder);
-  }
-
   /**
-   * A token that stopped working: refreshed once, in one place. A caller whose token has already been
-   * rotated by another gets the current one back without a second request to the authorization server.
+   * The holder's access token for one server, refreshed first when it is about to expire, or when the
+   * caller's `usedToken` was refused; nothing when there is no grant. A caller whose token another Turn
+   * already rotated gets the current one back; concurrent refreshes of one grant share a single request.
    */
-  mcpRefresh(
+  async mcpRefresh(
     scope: ScopeId,
     serverId: string,
     holder: McpHolder,
     usedToken?: string,
   ): Promise<Outcome<McpGrantView | undefined>> {
     const head = this.enter(scope);
-    if (!head.ok) return Promise.resolve(head);
+    if (!head.ok) return head;
     const server = this.oauthServer(head.value, serverId);
-    if (!server.ok) return Promise.resolve(server);
+    if (!server.ok) return server;
+    const store = this.grantStore(scope, server.value, holder);
+    const current = store.grant();
+    if (!current) return ok(undefined);
+    const stale =
+      usedToken !== undefined
+        ? current.accessToken === usedToken
+        : !tokenFresh(current.expiresAt, this.deployment.clock.now());
+    if (!stale) return ok(grantView(current));
     const key = `${serverId}/${holder}`;
     const inFlight = this.refreshing.get(key);
     if (inFlight) return inFlight;
-    const work = this.refresh(scope, server.value, holder, usedToken).finally(() => this.refreshing.delete(key));
+    const work = this.refresh(scope, server.value, store).finally(() => this.refreshing.delete(key));
     this.refreshing.set(key, work);
     return work;
   }
@@ -707,29 +727,14 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   private async refresh(
     scope: ScopeId,
     server: OAuthServer,
-    holder: McpHolder,
-    usedToken: string | undefined,
+    store: SqlGrantStore,
   ): Promise<Outcome<McpGrantView | undefined>> {
-    const { provider, store } = await this.grantProvider(scope, server, holder);
-    const view = (): McpGrantView | undefined => {
-      const grant = store.grant();
-      return (
-        grant && {
-          token: grant.accessToken,
-          ...(grant.expiresAt !== undefined && { expiresAt: grant.expiresAt }),
-          ...(grant.scope !== undefined && { scope: grant.scope }),
-        }
-      );
-    };
-    const current = store.grant();
-    if (!current) return ok(undefined);
-    const stale =
-      usedToken !== undefined
-        ? current.accessToken === usedToken
-        : !tokenFresh(current.expiresAt, this.deployment.clock.now());
-    if (!stale) return ok(view());
+    const provider = await this.grantProvider(scope, server, store);
+    if (!provider.ok) return provider;
     try {
-      return ok((await refreshGrant(this.flow(scope, server, provider))) ? view() : undefined);
+      const refreshed = await refreshGrant(this.flow(scope, server, provider.value));
+      const grant = store.grant();
+      return ok(refreshed && grant ? grantView(grant) : undefined);
     } catch (error) {
       if (error instanceof KarmiError) return fail(error);
       throw error;
@@ -742,22 +747,18 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     if (!head.ok) return head;
     const server = this.oauthServer(head.value, input.serverId);
     if (!server.ok) return server;
-    const holder = mcpHolder(server.value.auth.level, input.agent, input.user);
-    if (holder === undefined)
-      return fail(
-        new KarmiError(
-          "mcp.oauth.failed",
-          `MCP server "${input.serverId}" holds ${server.value.auth.level}-level grants; pass the ${server.value.auth.level} to authorize for.`,
-        ),
-      );
+    const holder = resolveHolder(server.value.auth, input);
+    if (!holder.ok) return fail(holder.error);
+    const store = this.grantStore(scope, server.value, holder.holder, {
+      ...(input.user !== undefined && { user: input.user }),
+      ...(input.thread && { thread: input.thread }),
+      ...(input.returnTo !== undefined && { returnTo: input.returnTo }),
+    });
+    const provider = await this.grantProvider(scope, server.value, store);
+    if (!provider.ok) return provider;
     try {
-      const { provider } = await this.grantProvider(scope, server.value, holder, {
-        ...(input.user !== undefined && { user: input.user }),
-        ...(input.thread && { thread: input.thread }),
-        ...(input.returnTo !== undefined && { returnTo: input.returnTo }),
-      });
       const url = await beginAuthorization(
-        this.flow(scope, server.value, provider),
+        this.flow(scope, server.value, provider.value),
         input.scope ?? server.value.auth.scope,
       );
       return ok({ authUrl: url.href });
@@ -776,21 +777,23 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       return fail(new KarmiError("mcp.oauth.state", "This authorization is unknown or has expired; start it again."));
     const server = this.oauthServer(head.value, pending.serverId);
     if (!server.ok) return server;
-    const { provider, store } = await this.grantProvider(scope, server.value, pending.holder, { nonce: pending.nonce });
-    const result: McpCallbackResult = {
+    const store = this.grantStore(scope, server.value, pending.holder, { nonce: pending.nonce });
+    const provider = await this.grantProvider(scope, server.value, store);
+    if (!provider.ok) return provider;
+    const result = (outcome: ConnectOutcome): McpCallbackResult => ({
       serverId: pending.serverId,
       holder: pending.holder,
       ...(pending.thread && { thread: pending.thread }),
       ...(pending.returnTo !== undefined && { returnTo: pending.returnTo }),
-      granted: false,
-    };
+      outcome,
+    });
     try {
       if (input.code === undefined)
-        return ok({ ...result, reason: input.error ?? "The authorization server sent no code." });
-      await completeAuthorization(this.flow(scope, server.value, provider), input.code, input.iss);
-      return ok({ ...result, granted: true });
+        return ok(result({ granted: false, reason: input.error ?? "The authorization server sent no code." }));
+      await completeAuthorization(this.flow(scope, server.value, provider.value), input.code, input.iss);
+      return ok(result({ granted: true }));
     } catch (error) {
-      if (error instanceof KarmiError) return ok({ ...result, reason: error.message });
+      if (error instanceof KarmiError) return ok(result({ granted: false, reason: error.message }));
       throw error;
     } finally {
       store.dropPending();
@@ -801,8 +804,10 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   mcpDisconnect(scope: ScopeId, serverId: string, holder: McpHolder): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
+    const server = this.oauthServer(head.value, serverId);
+    if (!server.ok) return server;
     this.ctx.storage.transactionSync(() => {
-      this.sql.exec("DELETE FROM mcp_grants WHERE server_id = ? AND holder = ?", serverId, holder);
+      this.grantStore(scope, server.value, holder).dropGrant();
       this.sql.exec(
         "DELETE FROM mcp_catalog WHERE server_id = ? AND partition = ? AND json_extract(catalog_json, '$.cacheScope') = 'private'",
         serverId,

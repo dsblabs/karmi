@@ -37,7 +37,7 @@ import type { ContentBlock, ProviderError, ProviderEvent, ProviderRequest, StopR
 import { prepareMessages } from "./replay";
 import { ScheduledDurableObject, type ScheduledJob } from "./scheduler";
 import { providerHosts, scopedFetch } from "./scoped-fetch";
-import type { ScopeConfigDurableObject, ScopeState, TurnSnapshotSource } from "./scope-config-do";
+import type { ConnectOutcome, ScopeConfigDurableObject, ScopeState, TurnSnapshotSource } from "./scope-config-do";
 import {
   attemptTarget,
   fallbackReason,
@@ -168,13 +168,6 @@ type ApprovalRequest =
       ? Omit<E, "timeoutAt">
       : never
     : never;
-
-/** What the OAuth callback reports for a parked `connect` request. */
-export interface ConnectOutcome {
-  serverId: string;
-  granted: boolean;
-  reason?: string;
-}
 
 type ModelPlan = Extract<Plan, { kind: "model" }>;
 type ToolPlan = Extract<Plan, { kind: "tool" }>;
@@ -508,23 +501,31 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       return fail(new KarmiError("approval.resolved", `The Approval at seq ${seq} has already been answered.`));
     if (answer.decision !== "allow" && answer.decision !== "deny")
       return fail(new KarmiError("approval.invalid", `An Approval answer is "allow" or "deny".`));
+    // Only completing OAuth can grant a Connection; a hand-written allow would retry a call that still has no token.
+    if (request.kind === "connect" && answer.decision === "allow")
+      return fail(
+        new KarmiError(
+          "approval.invalid",
+          `A connect Approval is granted by completing OAuth at its authUrl; only "deny" can be answered here.`,
+        ),
+      );
     this.resolve(row, seq, request, answer, "answer");
     await this.settle(row);
     return ok(undefined);
   }
 
   /** The OAuth callback's word on a `connect` request for `serverId`: granted retries the call, anything else refuses it. */
-  async connected(address: ThreadAddress, outcome: ConnectOutcome): Promise<Outcome<void>> {
+  async connected(address: ThreadAddress, serverId: string, outcome: ConnectOutcome): Promise<Outcome<void>> {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     const row = entered.value;
     if (row.state !== "parked") return ok(undefined);
     const turn = this.readTurn(row);
     for (const [seq, request] of turn.requests) {
-      if (request.kind !== "connect" || request.answered || request.serverId !== outcome.serverId) continue;
+      if (request.kind !== "connect" || request.answered || request.serverId !== serverId) continue;
       const answer: ApprovalAnswer = outcome.granted
         ? { decision: "allow", by: "oauth" }
-        : { decision: "deny", by: "oauth", ...(outcome.reason !== undefined && { reason: outcome.reason }) };
+        : { decision: "deny", by: "oauth", reason: outcome.reason };
       this.resolve(row, seq, request, answer, "answer");
     }
     await this.settle(row);

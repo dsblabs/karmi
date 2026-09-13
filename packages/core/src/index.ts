@@ -138,6 +138,7 @@ export {
   CLIENT_DOCUMENT_PATH,
   type McpClientIdentity,
   type McpHolder,
+  type McpHolderRef,
   type PreRegistration,
 } from "./mcp-auth";
 export type { OAuthRoutes } from "./mcp-oauth-routes";

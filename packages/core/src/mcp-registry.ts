@@ -2,7 +2,7 @@ import type { ScopeId } from "./context";
 import type { Deployment } from "./deployment";
 import { KarmiError } from "./errors";
 import { keys } from "./keys";
-import { mcpHolder, mcpPartition, type McpHolder } from "./mcp-auth";
+import { mcpHolder, mcpPartition, resolveHolder, type McpHolder, type McpHolderRef } from "./mcp-auth";
 import { catalogVersion, DEFAULT_CATALOG_TTL_MS, isStale, mcpHostAllowList, type McpCatalog } from "./mcp-catalog";
 import { describeMcpError, McpSession, type McpConnection } from "./mcp-client";
 import { fail, ok, remote, unwrap, type Outcome } from "./outcome";
@@ -125,7 +125,7 @@ export class McpRegistry {
     const { level } = server.auth;
     const holder = mcpHolder(level, input.agent, input.user);
     if (holder === undefined) return { level };
-    const view = await unwrap(this.stub(scope).mcpGrant(scope, id, holder));
+    const view = await unwrap(this.stub(scope).mcpRefresh(scope, id, holder));
     return { level, holder, ...grantState(view) };
   }
 
@@ -151,23 +151,13 @@ export class McpRegistry {
   }
 
   /** Drops the grant and the private catalogue partition of one holder. */
-  async disconnect(
-    scope: ScopeId,
-    config: ScopeConfigDocument,
-    input: { serverId: string; agent?: string; user?: string },
-  ): Promise<void> {
+  async disconnect(scope: ScopeId, config: ScopeConfigDocument, input: McpHolderRef): Promise<void> {
     const server = config.mcp?.servers?.[input.serverId];
     if (!server)
       throw new KarmiError("mcp.server.unknown", `No MCP server "${input.serverId}" is registered in this Scope.`);
-    if (server.auth?.type !== "oauth")
-      throw new KarmiError("mcp.oauth.notOAuth", `MCP server "${input.serverId}" is not configured for OAuth.`);
-    const holder = mcpHolder(server.auth.level, input.agent, input.user);
-    if (holder === undefined)
-      throw new KarmiError(
-        "mcp.oauth.failed",
-        `MCP server "${input.serverId}" holds ${server.auth.level}-level grants; pass the ${server.auth.level} to disconnect.`,
-      );
-    await unwrap(this.stub(scope).mcpDisconnect(scope, input.serverId, holder));
+    const holder = resolveHolder(server.auth, input);
+    if (!holder.ok) throw holder.error;
+    await unwrap(this.stub(scope).mcpDisconnect(scope, input.serverId, holder.holder));
   }
 
   /**
