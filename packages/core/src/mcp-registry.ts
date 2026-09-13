@@ -10,8 +10,8 @@ import {
   mcpPartition,
   type McpCatalog,
 } from "./mcp-catalog";
-import { describeMcpError, McpSession } from "./mcp-client";
-import { remote, unwrap } from "./outcome";
+import { describeMcpError, McpSession, type McpConnection } from "./mcp-client";
+import { fail, ok, remote, unwrap, type Outcome } from "./outcome";
 import type { ScopeConfigDurableObject } from "./scope-config-do";
 import type { McpServerConfig, ScopeConfigDocument } from "./scope-config";
 import { scopedFetch } from "./scoped-fetch";
@@ -37,13 +37,12 @@ export interface McpServerSnapshot {
   headers?: Record<string, SensitiveValue>;
   /** The credential reference that did not resolve; the server is unusable until it does. */
   missing?: string;
+  /** The cached catalogue, replaced in place by a refresh. */
   catalog?: McpCatalog;
 }
 
 export interface McpSnapshot {
   servers: McpServerSnapshot[];
-  /** What the Turn's MCP `scopedFetch` may reach. */
-  hosts: string[];
 }
 
 export class McpRegistry {
@@ -56,8 +55,8 @@ export class McpRegistry {
     return remote<ScopeConfigDurableObject>(this.scopes, keys.config(scope));
   }
 
-  /** Builds the per-Turn egress for the registered servers: hosts narrowed by `egress.mcpHosts`. */
-  egress(config: ScopeConfigDocument, servers: readonly { config: McpServerConfig }[]): typeof fetch {
+  /** The egress for a Turn's servers: their hosts, narrowed by `egress.mcpHosts`. */
+  egress(config: ScopeConfigDocument, servers: readonly McpServerSnapshot[]): typeof fetch {
     const hosts = mcpHostAllowList(
       servers.map((server) => server.config.url),
       config.egress?.mcpHosts,
@@ -85,13 +84,7 @@ export class McpRegistry {
       const server = servers[i];
       if (server && catalog) server.catalog = catalog;
     });
-    return {
-      servers,
-      hosts: mcpHostAllowList(
-        servers.map((server) => server.config.url),
-        config.egress?.mcpHosts,
-      ),
-    };
+    return { servers };
   }
 
   private async credentials(
@@ -108,66 +101,77 @@ export class McpRegistry {
     return { headers };
   }
 
-  /** The cached catalogue while fresh; otherwise a refresh, falling back to the stale one when the server is unreachable. */
-  async fresh(
+  /**
+   * The catalogue a Turn runs under: the cached one while fresh, else a refresh through `session`,
+   * falling back to the stale one when the server cannot be listed. Fails only with nothing to serve.
+   */
+  async currentCatalog(
     scope: ScopeId,
     server: McpServerSnapshot,
-    egress: typeof fetch,
+    session: () => Promise<McpSession>,
     signal?: AbortSignal,
-  ): Promise<{ catalog: McpCatalog; refreshed: boolean } | { error: string }> {
+  ): Promise<Outcome<McpCatalog>> {
     const { catalog } = server;
-    if (catalog && !isStale(catalog, this.deployment.clock.now())) return { catalog, refreshed: false };
-    try {
-      return { catalog: await this.refresh(scope, server, egress, signal), refreshed: true };
-    } catch (error) {
-      if (!(error instanceof KarmiError)) throw error;
-      return catalog ? { catalog, refreshed: false } : { error: error.message };
-    }
+    if (catalog && !isStale(catalog, this.deployment.clock.now())) return ok(catalog);
+    const listed = await this.list(scope, server, session, signal);
+    return listed.ok || !catalog ? listed : ok(catalog);
   }
 
-  /** One `tools/list` through a short-lived session; the result replaces the cached catalogue. */
-  async refresh(
+  /** One `tools/list` through `session`; the result replaces the cached catalogue, on the server and in the store. */
+  async list(
     scope: ScopeId,
     server: McpServerSnapshot,
-    egress: typeof fetch,
+    session: () => Promise<McpSession>,
     signal?: AbortSignal,
-  ): Promise<McpCatalog> {
+  ): Promise<Outcome<McpCatalog>> {
     if (server.missing !== undefined)
-      throw new KarmiError(
-        "mcp.discovery.failed",
-        `Credential "${server.missing}" for MCP server "${server.id}" is missing.`,
+      return fail(
+        new KarmiError(
+          "mcp.discovery.failed",
+          `Credential "${server.missing}" for MCP server "${server.id}" is missing.`,
+        ),
       );
-    let session: McpSession | undefined;
     try {
-      session = await McpSession.open({ ...connection(server, egress), ...(signal && { signal }) });
-      const { tools, hints } = await session.listTools(signal);
+      const open = await session();
+      const { tools, hints } = await open.listTools(signal);
       const catalog: McpCatalog = {
         tools,
         catalogVersion: await catalogVersion(tools),
         fetchedAt: this.deployment.clock.now(),
         ttlMs: hints.ttlMs ?? server.config.catalog?.ttlMs ?? DEFAULT_CATALOG_TTL_MS,
         cacheScope: hints.cacheScope ?? "private",
-        era: session.era(),
+        era: open.era(),
       };
       await unwrap(
         this.stub(scope).mcpCatalogPut(scope, { serverId: server.id, partition: server.partition }, catalog),
       );
       server.catalog = catalog;
-      return catalog;
+      return ok(catalog);
     } catch (caught) {
-      if (caught instanceof KarmiError) throw caught;
-      throw new KarmiError("mcp.discovery.failed", `MCP server "${server.id}": ${describeMcpError(caught)}`);
+      if (caught instanceof KarmiError) return fail(caught);
+      return fail(new KarmiError("mcp.discovery.failed", `MCP server "${server.id}": ${describeMcpError(caught)}`));
+    }
+  }
+
+  /** A refresh on request, outside any Turn: one short-lived session, dropped when the list is stored. */
+  async refresh(
+    scope: ScopeId,
+    server: McpServerSnapshot,
+    egress: typeof fetch,
+    signal: AbortSignal,
+  ): Promise<McpCatalog> {
+    let opened: McpSession | undefined;
+    const session = async () => (opened = await McpSession.open({ ...connection(server, egress), signal }));
+    try {
+      return await unwrap(this.list(scope, server, session, signal));
     } finally {
-      await session?.close();
+      await opened?.close();
     }
   }
 }
 
 /** The transport inputs for one server: the plain headers, then the resolved static ones over them. */
-export function connection(
-  server: McpServerSnapshot,
-  egress: typeof fetch,
-): { url: string; headers: Record<string, string>; fetch: typeof fetch; prior?: McpCatalog["era"] } {
+export function connection(server: McpServerSnapshot, egress: typeof fetch): Omit<McpConnection, "signal"> {
   const headers = { ...server.config.headers };
   for (const [header, value] of Object.entries(server.headers ?? {})) headers[header] = value.expose();
   return {

@@ -43,13 +43,31 @@ export function matchesHost(host: string, pattern: string): boolean {
   return host === pattern;
 }
 
-function denied(logger: Logger | undefined, code: "egress.blocked" | "egress.denied", target: string): Response {
+type DenialCode = "egress.blocked" | "egress.denied";
+
+function denied(logger: Logger | undefined, code: DenialCode, target: string): Response {
   const message =
     code === "egress.blocked"
       ? `Egress to ${target} is blocked: private, reserved or malformed address.`
       : `Egress to ${target} is outside this Scope's allowed hosts.`;
   logger?.warn("egress denied", { code, host: target });
   return Response.json({ error: { code, message } }, { status: 403 });
+}
+
+/** The one reader of the synthetic 403 body above: its message when `text` is one, else nothing. */
+export function decodeEgressDenial(text: string): string | undefined {
+  if (!text.includes('"egress.')) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || !("error" in parsed)) return undefined;
+  const { error } = parsed;
+  if (!error || typeof error !== "object" || !("message" in error) || typeof error.message !== "string")
+    return undefined;
+  return error.message;
 }
 
 // SSRF guard vendored from cloudflare/agents (packages/agents/src/mcp/client/index.ts, MIT, © Cloudflare, Inc.).

@@ -59,7 +59,7 @@ export function mcpPartition(): string {
   return "scope";
 }
 
-export const MODEL_TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+/** Providers accept `^[a-zA-Z0-9_-]{1,64}$`; every model-facing name is cut to fit. */
 const NAME_LIMIT = 64;
 
 export interface NamedMcpTool {

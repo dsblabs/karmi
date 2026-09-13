@@ -110,19 +110,17 @@ describe("calls", () => {
     provider.script([[reply.toolCall("legacy__echo", { text: "hi" }, "c1")], "Done"]);
     const events = await settled(thread(await fresh()), "echo");
     expect(result(events, "c1")).toMatchObject({ content: [{ type: "text", text: "hi" }] });
+    // One connection per Thread Turn: the list and the call ride the same session.
     expect(methods(legacy.calls)).toEqual([
       "server/discover",
       "initialize",
       "notifications/initialized",
       "tools/list",
-      "initialize",
-      "notifications/initialized",
       "tools/call",
     ]);
-    const [, init, , list, , , call] = legacy.calls;
+    const [, init, , list, call] = legacy.calls;
     expect(list?.headers["mcp-session-id"]).toBeDefined();
-    expect(call?.headers["mcp-session-id"]).toBeDefined();
-    expect(call?.headers["mcp-session-id"]).not.toBe(list?.headers["mcp-session-id"]);
+    expect(call?.headers["mcp-session-id"]).toBe(list?.headers["mcp-session-id"]);
     expect(init?.headers["mcp-session-id"]).toBeUndefined();
   });
 
@@ -274,7 +272,6 @@ describe("scope.mcp", () => {
     const scope = await fresh();
     const snapshot = await scope.mcp.snapshot({ agent: "mcp-agent", serverIds: ["github"] });
     expect(snapshot.servers).toHaveLength(1);
-    expect(snapshot.hosts).toEqual(["github.mcp.test"]);
     expect(snapshot.servers[0]?.catalog).toBeUndefined();
     expect(JSON.stringify(snapshot.servers[0]?.config)).not.toContain("gh-token");
     expect(() => JSON.stringify(snapshot.servers[0]?.headers)).toThrowError(

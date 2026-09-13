@@ -37,7 +37,7 @@ import type { ContentBlock, ProviderError, ProviderEvent, ProviderRequest, StopR
 import { prepareMessages } from "./replay";
 import { ScheduledDurableObject, type ScheduledJob } from "./scheduler";
 import { providerHosts, scopedFetch } from "./scoped-fetch";
-import type { ScopeConfigDurableObject, TurnSnapshotSource } from "./scope-config-do";
+import type { ScopeConfigDurableObject, ScopeState, TurnSnapshotSource } from "./scope-config-do";
 import {
   attemptTarget,
   fallbackReason,
@@ -1455,7 +1455,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private async scopeSnapshot(
     row: ThreadRow,
     input: TurnInput | undefined,
-  ): Promise<{ ok: true; snapshot: TurnSnapshot; state: string } | { ok: false; failure: TurnEnd }> {
+  ): Promise<{ ok: true; snapshot: TurnSnapshot; state: ScopeState } | { ok: false; failure: TurnEnd }> {
     const title = input ? titleOf(input) : undefined;
     const source = await this.scopeStub(row).turnSnapshot(row.scope_id, row.agent_id, {
       threadId: row.thread_id,

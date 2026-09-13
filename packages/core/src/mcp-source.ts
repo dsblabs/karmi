@@ -23,11 +23,9 @@ export interface McpToolSource {
   tools(ref: McpReference): readonly Tool[];
 }
 
+/** One server of the Turn: its snapshot (whose `catalog` a refresh replaces) and the Tools built from it. */
 interface ServerEntry {
   server: McpServerSnapshot;
-  catalog?: McpCatalog;
-  /** Why the catalogue is missing, when it is. */
-  error?: string;
   named: NamedMcpTool[];
   tools: Map<string, Tool>;
 }
@@ -46,16 +44,15 @@ export class McpTurnSource implements McpToolSource {
 
   private constructor(private readonly host: McpSourceHost) {}
 
-  /** Resolves every server's catalogue, refreshing the stale ones over the network. */
+  /** Resolves every server's catalogue, refreshing the stale ones through the Turn's own session. */
   static async open(host: McpSourceHost, servers: readonly McpServerSnapshot[]): Promise<McpTurnSource> {
     const source = new McpTurnSource(host);
     for (const server of servers) {
       const entry: ServerEntry = { server, named: [], tools: new Map() };
-      const fresh = await host.registry.fresh(host.scope, server, host.egress, host.signal);
-      if ("error" in fresh) {
-        entry.error = fresh.error;
-        host.logger.warn("MCP catalogue unavailable", { server: server.id, error: fresh.error });
-      } else source.adopt(entry, fresh.catalog);
+      const session = () => source.session(server.id, server);
+      const current = await host.registry.currentCatalog(host.scope, server, session, host.signal);
+      if (current.ok) source.adopt(entry, current.value);
+      else host.logger.warn("MCP catalogue unavailable", { server: server.id, error: current.message });
       source.servers.set(server.id, entry);
     }
     return source;
@@ -64,7 +61,7 @@ export class McpTurnSource implements McpToolSource {
   /** Each server's `catalogVersion`, for the Turn's `toolsVersion`; a server without a catalogue reports none. */
   versions(): Record<string, string> {
     const versions: Record<string, string> = {};
-    for (const [id, entry] of this.servers) if (entry.catalog) versions[id] = entry.catalog.catalogVersion;
+    for (const [id, { server }] of this.servers) if (server.catalog) versions[id] = server.catalog.catalogVersion;
     return versions;
   }
 
@@ -83,7 +80,6 @@ export class McpTurnSource implements McpToolSource {
   }
 
   private adopt(entry: ServerEntry, catalog: McpCatalog): void {
-    entry.catalog = catalog;
     entry.named = nameTools(entry.server.id, catalog.tools);
     entry.tools = new Map(entry.named.map((named) => [named.name, this.tool(entry.server, named)]));
   }
@@ -132,19 +128,13 @@ export class McpTurnSource implements McpToolSource {
     return failed(failure.message);
   }
 
-  /** A `-32602` says the catalogue may be out of date: fetch it again and swap the Tools in place. */
+  /** A `-32602` says the catalogue may be out of date: list it again over the open session and swap the Tools in place. */
   private async refetch(entry: ServerEntry): Promise<void> {
-    try {
-      this.adopt(
-        entry,
-        await this.host.registry.refresh(this.host.scope, entry.server, this.host.egress, this.host.signal),
-      );
-    } catch (caught) {
-      this.host.logger.warn("MCP catalogue refresh failed", {
-        server: entry.server.id,
-        error: describeMcpError(caught),
-      });
-    }
+    const { server } = entry;
+    const session = () => this.session(server.id, server);
+    const listed = await this.host.registry.list(this.host.scope, server, session, this.host.signal);
+    if (listed.ok) this.adopt(entry, listed.value);
+    else this.host.logger.warn("MCP catalogue refresh failed", { server: server.id, error: listed.message });
   }
 }
 

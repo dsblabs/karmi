@@ -9,6 +9,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { errorMessage } from "./errors";
 import { cacheHints, type CacheHints, type McpEra, type McpTool } from "./mcp-catalog";
+import { decodeEgressDenial } from "./scoped-fetch";
 
 // The one seam onto `@modelcontextprotocol/client`: a session is one connected Client for one server,
 // opened lazily by the caller, never holding a listen stream, and dropped when the caller is done.
@@ -64,10 +65,9 @@ export class McpSession {
   }
 
   async callTool(tool: McpTool, input: unknown, signal: AbortSignal): Promise<McpCallOutcome> {
-    const args = input !== null && typeof input === "object" && !Array.isArray(input) ? input : {};
     try {
       const result = await this.client.callTool(
-        { name: tool.name, arguments: args as Record<string, unknown> },
+        { name: tool.name, arguments: isArguments(input) ? input : {} },
         { toolDefinition: tool, signal },
       );
       return { ok: true, result };
@@ -79,6 +79,10 @@ export class McpSession {
   async close(): Promise<void> {
     await this.client.close();
   }
+}
+
+function isArguments(input: unknown): input is Record<string, unknown> {
+  return input !== null && typeof input === "object" && !Array.isArray(input);
 }
 
 function classify(caught: unknown): McpCallFailure {
@@ -98,20 +102,8 @@ function inputRequired(error: SdkError): boolean {
 export function describeMcpError(caught: unknown): string {
   if (caught instanceof SdkHttpError) {
     const { text } = caught.data;
-    const denial = typeof text === "string" ? egressDenial(text) : undefined;
+    const denial = typeof text === "string" ? decodeEgressDenial(text) : undefined;
     if (denial) return denial;
   }
   return errorMessage(caught);
-}
-
-function egressDenial(text: string): string | undefined {
-  if (!text.includes('"egress.')) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (parsed && typeof parsed === "object" && "error" in parsed && parsed.error && typeof parsed.error === "object")
-      return "message" in parsed.error && typeof parsed.error.message === "string" ? parsed.error.message : undefined;
-  } catch {
-    return undefined;
-  }
-  return undefined;
 }
