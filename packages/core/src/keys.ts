@@ -4,7 +4,7 @@ import { assertIdentifier } from "./names";
 
 /**
  * The one place a storage name is minted (ADR-0001): every Durable Object name is `{scope}/{kind}/{id}`
- * and every R2 key starts with `{scope}/`. Ids are validated here so no segment can contain a slash.
+ * and every R2 key starts with `{scope}/`. Child paths encode the stable Tool callId into one segment.
  */
 export const keys = {
   childThread(parent: string, callId: string): string {

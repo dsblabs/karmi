@@ -1,6 +1,7 @@
 import * as z from "zod/mini";
+import { AGENT_SPEC_DEFAULTS } from "./agent-spec";
 import type { Capabilities } from "./agent";
-import { isMediaRef, type MediaRef } from "./context";
+import { isMediaRef, MediaRefSchema } from "./context";
 import { defineFragment } from "./fragment";
 import type { ThreadAddress } from "./thread";
 import type { Budget, ThreadEvent, TurnInput } from "./thread-events";
@@ -27,6 +28,7 @@ export interface DelegationRecord {
   origin: ChildOrigin;
   input: TurnInput;
   after: number;
+  reserved: boolean;
   started: boolean;
   done: boolean;
   released: boolean;
@@ -38,9 +40,11 @@ const decodeOrigin = (json: string): ChildOrigin => JSON.parse(json);
 export class DelegationStore {
   constructor(private sql: SqlStorage) {
     sql.exec(`CREATE TABLE IF NOT EXISTS delegation_origin (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS delegation_children (id TEXT PRIMARY KEY, turn INTEGER NOT NULL, json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS delegation_children (id TEXT PRIMARY KEY, turn INTEGER NOT NULL, released INTEGER NOT NULL, json TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS delegation_children_outstanding ON delegation_children (released) WHERE released = 0;
       CREATE INDEX IF NOT EXISTS delegation_children_by_turn ON delegation_children (turn);
-      CREATE TABLE IF NOT EXISTS delegation_reservations (id TEXT PRIMARY KEY, turn INTEGER NOT NULL, active INTEGER NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS delegation_reservations (id TEXT PRIMARY KEY, turn INTEGER NOT NULL, active INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS delegation_reservations_by_turn ON delegation_reservations (turn);`);
   }
   origin(): ChildOrigin | undefined {
     const row = this.sql.exec<{ json: string }>("SELECT json FROM delegation_origin WHERE id = 1").toArray()[0];
@@ -62,24 +66,28 @@ export class DelegationStore {
         : this.sql.exec<{ json: string }>("SELECT json FROM delegation_children WHERE turn = ?", turn);
     return rows.toArray().map((row) => decodeRecord(row.json));
   }
+  outstanding(): DelegationRecord[] {
+    return this.sql
+      .exec<{ json: string }>("SELECT json FROM delegation_children WHERE released = 0")
+      .toArray()
+      .map((row) => decodeRecord(row.json));
+  }
   save(record: DelegationRecord): void {
     this.sql.exec(
-      "INSERT INTO delegation_children (id, turn, json) VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json",
+      "INSERT INTO delegation_children (id, turn, released, json) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json, released = excluded.released",
       record.id,
       record.turn,
+      record.released ? 1 : 0,
       JSON.stringify(record),
     );
   }
   reserve(id: string, ancestor: Ancestor): string | undefined {
     if (this.sql.exec("SELECT id FROM delegation_reservations WHERE id = ?", id).toArray().length) return;
-    const counts = this.sql
-      .exec<{ total: number; active: number }>(
-        "SELECT COUNT(*) AS total, COALESCE(SUM(active), 0) AS active FROM delegation_reservations WHERE turn = ?",
-        ancestor.turn,
-      )
-      .one();
-    if (counts.total >= (ancestor.limits.maxChildren ?? 32)) return "maxChildren";
-    if (counts.active >= (ancestor.limits.maxConcurrent ?? 8)) return "maxConcurrent";
+    const counts = this.budget(ancestor.turn);
+    if (counts.children >= (ancestor.limits.maxChildren ?? AGENT_SPEC_DEFAULTS.delegation.maxChildren))
+      return "maxChildren";
+    if (counts.active >= (ancestor.limits.maxConcurrent ?? AGENT_SPEC_DEFAULTS.delegation.maxConcurrent))
+      return "maxConcurrent";
     this.sql.exec("INSERT INTO delegation_reservations (id, turn, active) VALUES (?, ?, 1)", id, ancestor.turn);
   }
   release(id: string, rollback: boolean): void {
@@ -100,7 +108,7 @@ export class DelegationStore {
 const DelegateInput = z.object({
   agent: z.string(),
   task: z.string(),
-  attachments: z.optional(z.array(z.custom<MediaRef>(isMediaRef))),
+  attachments: z.optional(z.array(MediaRefSchema)),
 });
 export type DelegateInput = z.output<typeof DelegateInput>;
 export function delegateTool(
@@ -134,7 +142,9 @@ export function delegationResult(event: Extract<ThreadEvent, { type: "turn.compl
 }
 export function depthLimit(chain: Ancestor[], agent: string): boolean {
   return chain.some(
-    (ancestor, index) => ancestor.address.agent === agent || chain.length - index > (ancestor.limits.maxDepth ?? 4),
+    (ancestor, index) =>
+      ancestor.address.agent === agent ||
+      chain.length - index > (ancestor.limits.maxDepth ?? AGENT_SPEC_DEFAULTS.delegation.maxDepth),
   );
 }
 export function delegationDeadline(now: number, budget: Budget, spent: Budget, chain: Ancestor[]): number {
@@ -147,8 +157,17 @@ export function resolveDelegationLimits(
 ): NonNullable<Capabilities["delegation"]> {
   const max = ceiling || {};
   return {
-    maxDepth: Math.min(grant.maxDepth ?? 4, max.maxDepth ?? Number.MAX_SAFE_INTEGER),
-    maxConcurrent: Math.min(grant.maxConcurrent ?? 8, max.maxConcurrent ?? Number.MAX_SAFE_INTEGER),
-    maxChildren: Math.min(grant.maxChildren ?? 32, max.maxChildren ?? Number.MAX_SAFE_INTEGER),
+    maxDepth: Math.min(
+      grant.maxDepth ?? AGENT_SPEC_DEFAULTS.delegation.maxDepth,
+      max.maxDepth ?? Number.MAX_SAFE_INTEGER,
+    ),
+    maxConcurrent: Math.min(
+      grant.maxConcurrent ?? AGENT_SPEC_DEFAULTS.delegation.maxConcurrent,
+      max.maxConcurrent ?? Number.MAX_SAFE_INTEGER,
+    ),
+    maxChildren: Math.min(
+      grant.maxChildren ?? AGENT_SPEC_DEFAULTS.delegation.maxChildren,
+      max.maxChildren ?? Number.MAX_SAFE_INTEGER,
+    ),
   };
 }

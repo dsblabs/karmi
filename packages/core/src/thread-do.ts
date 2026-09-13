@@ -207,7 +207,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   abstract readonly deployment: Deployment;
 
   private readonly delegations: DelegationStore;
-  private syncingDelegations = false;
+  private syncWork: Promise<void> | undefined;
   private syncAgain = false;
   private head = 0;
   private active = false;
@@ -461,9 +461,14 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     status.turn = row.turn;
     status.step = row.step;
     if (turn.paused) status.paused = turn.paused;
-    if (row.snapshot_json !== null) status.budget = { ...turn.budget, max: decodeSnapshot(row.snapshot_json).budget };
-    if (status.budget && this.delegations.children(row.turn).length > 0)
-      status.budget.delegated = this.delegations.budget(row.turn);
+    if (row.snapshot_json !== null) {
+      const snapshot = decodeSnapshot(row.snapshot_json);
+      status.budget = {
+        ...turn.budget,
+        max: snapshot.budget,
+        ...(snapshot.spec.capabilities?.delegation && { delegated: this.delegations.budget(row.turn) }),
+      };
+    }
     const pending: PendingApproval[] = [];
     for (const [seq, request] of turn.requests)
       if (!request.answered)
@@ -543,16 +548,28 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           `A connect Approval is granted by completing OAuth at its authUrl; only "deny" can be answered here.`,
         ),
       );
-    if (request.child) {
-      const child = this.delegations.children(row.turn).find((c) => c.address.threadId === request.child?.threadId);
-      if (!child) return fail(new KarmiError("approval.notFound", "Child Thread not found."));
-      const forwarded = await this.threadStub(child.address).approve(child.address, request.child.seq, answer);
-      if (!forwarded.ok) return forwarded;
-      // The child owns remembered grants; the parent only records the answer.
-      if (!this.readTurn(this.row()).requests.get(seq)?.answered)
-        this.resolve(this.row(), seq, request, { ...answer, remember: false }, "answer");
-    } else this.resolve(row, seq, request, answer, "answer");
+    if (request.child) return this.forwardApproval(row, seq, request, answer);
+    this.resolve(row, seq, request, answer, "answer");
     await this.settle(row);
+    return ok(undefined);
+  }
+
+  private async forwardApproval(
+    row: ThreadRow,
+    seq: number,
+    request: Request,
+    answer: ApprovalAnswer,
+  ): Promise<Outcome<void>> {
+    const child = this.delegations.children(row.turn).find((c) => c.address.threadId === request.child?.threadId);
+    if (!child || !request.child) return fail(new KarmiError("approval.notFound", "Child Thread not found."));
+    const forwarded = await this.threadStub(child.address).approve(child.address, request.child.seq, answer);
+    if (!forwarded.ok) return forwarded;
+    const current = this.row();
+    if (current.turn !== row.turn || current.state === "idle") return ok(undefined);
+    const pending = this.readTurn(current).requests.get(seq);
+    // The child owns remembered grants; the parent only records the answer.
+    if (pending && !pending.answered) this.resolve(current, seq, pending, { ...answer, remember: false }, "answer");
+    await this.settle(current);
     return ok(undefined);
   }
 
@@ -1088,6 +1105,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private async cancelTurn(row: ThreadRow): Promise<void> {
+    this.update({ cancelled: 1 });
     await Promise.all(
       this.delegations
         .children(row.turn)
@@ -2044,7 +2062,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   private async delegate(row: ThreadRow, snapshot: TurnSnapshot, input: DelegateInput, stableId: string) {
     const prior = this.delegations.child(stableId);
-    if (prior) return { pending: stableId };
+    if (prior?.reserved) return { pending: stableId };
     if (!snapshot.spec.delegates?.includes(input.agent))
       return delegationError(`Agent "${input.agent}" is not an allowed delegate.`);
     const inherited = this.delegations.origin()?.chain ?? [];
@@ -2071,10 +2089,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       agent: input.agent,
       threadId: keys.childThread(row.thread_id, stableId),
     };
-    const limit = await this.reserveDelegation(row, chain, stableId);
-    if (limit) return delegationError(`limit_exceeded: ${limit}`);
     const origin = { parent: { threadKey: encodeKey(address), callId: stableId }, chain };
-    this.delegations.save({
+    const child: DelegationRecord = {
       id: stableId,
       turn: row.turn,
       address: childAddress,
@@ -2087,10 +2103,13 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         ],
       },
       after: 0,
+      reserved: false,
       started: false,
       done: false,
       released: false,
-    });
+    };
+    const limit = await this.admitDelegation(row, child);
+    if (limit) return delegationError(`limit_exceeded: ${limit}`);
     this.scheduler.set({ id: "delegation-deadline", kind: "delegation-deadline", dueAt: deadline, payload: null });
     this.append(
       row.turn,
@@ -2101,22 +2120,40 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return { pending: stableId };
   }
 
+  private async admitDelegation(row: ThreadRow, child: DelegationRecord): Promise<string | undefined> {
+    // The intent precedes remote writes, so cancellation can find partially reserved descendants.
+    this.delegations.save(child);
+    try {
+      const limit = await this.reserveDelegation(row, child.origin.chain, child.id);
+      if (!limit) {
+        child.reserved = true;
+        this.delegations.save(child);
+        return;
+      }
+      child.done = true;
+      this.delegations.save(child);
+      await this.releaseChild(child);
+      return limit;
+    } catch (error) {
+      child.done = true;
+      this.delegations.save(child);
+      await this.releaseChild(child);
+      return errorMessage(error);
+    }
+  }
+
   private async reserveDelegation(row: ThreadRow, chain: Ancestor[], id: string): Promise<string | undefined> {
-    const reserved: Ancestor[] = [];
     for (const ancestor of chain) {
       const limit =
         ancestor.address.threadId === row.thread_id
           ? this.delegationReserve(ancestor, id)
           : await this.threadStub(ancestor.address).delegationReserve(ancestor, id);
       if (limit) {
-        await this.releaseDelegation(reserved, id, true);
         return limit;
       }
-      reserved.push(ancestor);
     }
     const current = this.row();
     if (current.cancelled || current.turn !== row.turn || current.state === "idle") {
-      await this.releaseDelegation(reserved, id, true);
       return "parent_cancelled";
     }
   }
@@ -2135,24 +2172,28 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   async delegationChanged(address: ThreadAddress): Promise<void> {
     const entered = this.enter(address);
     if (!entered.ok) return;
+    this.scheduler.set({ id: "delegation", kind: "delegation", dueAt: this.deployment.clock.now(), payload: null });
     await this.syncDelegations();
   }
 
-  private async syncDelegations(): Promise<void> {
-    if (this.syncingDelegations) {
+  private syncDelegations(): Promise<void> {
+    if (this.syncWork) {
       this.syncAgain = true;
-      return;
+      return this.syncWork;
     }
-    this.syncingDelegations = true;
-    try {
-      do {
-        this.syncAgain = false;
-        const children = this.delegations.children().filter((child) => !child.released);
-        await Promise.all(children.map((child) => this.syncChild(child)));
-      } while (this.syncAgain);
-    } finally {
-      this.syncingDelegations = false;
-    }
+    const work = this.syncDelegationLoop().finally(() => {
+      this.syncWork = undefined;
+    });
+    this.syncWork = work;
+    return work;
+  }
+
+  private async syncDelegationLoop(): Promise<void> {
+    do {
+      this.syncAgain = false;
+      const children = this.delegations.outstanding();
+      await Promise.all(children.map((child) => this.syncChild(child)));
+    } while (this.syncAgain);
   }
 
   private async syncChild(child: DelegationRecord): Promise<void> {
@@ -2215,7 +2256,17 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     for (const [seq, request] of this.readTurn(row).requests) {
       if (request.child?.threadId !== child.address.threadId || request.child.seq !== event.request || request.answered)
         continue;
-      this.resolve(row, seq, request, { decision: event.decision, ...(event.by && { by: event.by }) }, event.source);
+      this.resolve(
+        row,
+        seq,
+        request,
+        {
+          decision: event.decision,
+          ...(event.by && { by: event.by }),
+          ...(event.reason !== undefined && { reason: event.reason }),
+        },
+        event.source,
+      );
     }
   }
 
@@ -2245,7 +2296,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private async releaseChild(child: DelegationRecord): Promise<void> {
     // Keep release retryable even if a remote ancestor is unavailable after the outcome was logged.
     this.scheduler.set({ id: "delegation", kind: "delegation", dueAt: this.deployment.clock.now(), payload: null });
-    await this.releaseDelegation(child.origin.chain, child.id, false);
+    await this.releaseDelegation(child.origin.chain, child.id, !child.reserved);
     child.released = true;
     this.delegations.save(child);
   }

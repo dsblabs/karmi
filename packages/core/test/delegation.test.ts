@@ -248,3 +248,107 @@ it("bubbles a child continue and reports a refused budget as an error without en
     message: [{ type: "text", text: "Parent handled error" }],
   });
 });
+
+it("keeps children distinct when a model reuses a call id on another Turn and carries media refs", async () => {
+  await scope.agents.put({
+    agentId: "delegation-media",
+    name: "Parent",
+    instructions: [],
+    model: { id: "shared/media-root" },
+    delegates: ["concierge"],
+    capabilities: { delegation: {} },
+  });
+  const thread = scope.thread({ agent: "delegation-media", user: "guest-1", threadId: "delegation-media" });
+  opened.push(thread);
+  const ref = await thread.uploads.put("%PDF-1.7\n%%EOF", { mimeType: "application/pdf" });
+  provider.script(({ request }) => {
+    if (request.model !== "media-root")
+      return [
+        { type: "part", index: 0, block: { type: "media", media: ref } },
+        { type: "message.end", stopReason: "end_turn", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } },
+      ];
+    return request.messages.at(-1)?.role === "toolResult"
+      ? "Done"
+      : reply.toolCall("delegate", { agent: "concierge", task: "Read attachment", attachments: [ref] }, "same-id");
+  });
+  for (let turn = 1; turn <= 2; turn++) {
+    await thread.send({ kind: "message", parts: [{ type: "text", text: "Read" }] });
+    await expect.poll(async () => (await thread.events()).filter((e) => e.type === "turn.completed").length).toBe(turn);
+  }
+  expect(await scope.threads.list({ agent: "concierge", parent: thread.key })).toHaveLength(2);
+  const children = provider.requests.filter((r) => r.model !== "media-root");
+  expect(children).toHaveLength(2);
+  for (const request of children) expect(JSON.stringify(request.messages)).toContain(ref.key);
+  expect(await thread.events()).toContainEvent({
+    type: "tool.result",
+    name: "delegate",
+    content: [{ type: "media", media: ref }],
+    isError: false,
+  });
+});
+
+it("returns a child cancellation as an error while the parent continues", async () => {
+  await scope.agents.put({
+    agentId: "delegation-cancel-child",
+    name: "Parent",
+    instructions: [],
+    model: { id: "shared/cancel-child-root" },
+    delegates: ["asking"],
+    capabilities: { delegation: {} },
+  });
+  provider.script(({ request }) =>
+    request.model === "cancel-child-root"
+      ? request.messages.some((m) => m.role === "toolResult")
+        ? "Parent continues"
+        : reply.toolCall("delegate", { agent: "asking", task: "Ask" })
+      : reply.toolCall("book", { room: 1 }),
+  );
+  const thread = scope.thread({ agent: "delegation-cancel-child", threadId: "delegation-cancel-child" });
+  opened.push(thread);
+  await thread.send({ kind: "message", parts: [{ type: "text", text: "Ask" }] });
+  await expect.poll(async () => (await thread.status()).pendingApprovals?.length).toBe(1);
+  const children = await scope.threads.list({ agent: "asking", parent: thread.key });
+  await scope.thread(children[0]!.key).cancel();
+  await expect.poll(async () => (await thread.status()).state).toBe("idle");
+  expect(await thread.events()).toContainEvent({ type: "tool.result", name: "delegate", isError: true });
+  expect(await thread.events()).toContainEvent({
+    type: "turn.completed",
+    message: [{ type: "text", text: "Parent continues" }],
+  });
+});
+
+it.each(["maxConcurrent", "maxChildren"] as const)(
+  "rejects a batch beyond %s without starting another child",
+  async (limit) => {
+    const agent = `delegation-limit-${limit}`;
+    await scope.agents.put({
+      agentId: agent,
+      name: "Parent",
+      instructions: [],
+      model: { id: "shared/limit-root" },
+      delegates: ["asking"],
+      capabilities: { delegation: { [limit]: 1 } },
+    });
+    provider.script(({ request }) =>
+      request.model === "limit-root"
+        ? [
+            reply.toolCall("delegate", { agent: "asking", task: "First" }, "first"),
+            reply.toolCall("delegate", { agent: "asking", task: "Second" }, "second"),
+          ]
+        : reply.toolCall("book", { room: 1 }),
+    );
+    const thread = scope.thread({ agent, threadId: agent });
+    opened.push(thread);
+    await thread.send({ kind: "message", parts: [{ type: "text", text: "Two" }] });
+    await expect.poll(async () => (await thread.status()).pendingApprovals?.length).toBe(1);
+    expect(await thread.events()).toContainEvent({
+      type: "tool.result",
+      name: "delegate",
+      isError: true,
+      content: [{ type: "text", text: `limit_exceeded: ${limit}` }],
+    });
+    await clock.advance(0);
+    expect(await scope.threads.list({ agent: "asking", parent: thread.key })).toHaveLength(1);
+    expect((await thread.events()).filter((e) => e.type === "approval.requested")).toHaveLength(1);
+  },
+);
