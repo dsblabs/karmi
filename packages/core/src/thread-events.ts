@@ -21,6 +21,7 @@ export interface ThreadEventBase {
   turn: number;
   at: number;
   channelRef?: unknown;
+  child?: { threadId: string; seq: number };
 }
 
 /** Why a Turn is parked: a human answer, a budget `continue`, a Job, or the Scope. */
@@ -58,7 +59,9 @@ export interface StepCredentials {
   fallback?: { from: string; reason: FallbackReason };
 }
 
-export type ThreadEventData =
+type EventData =
+  | { type: "delegation.started"; id: string; childKey: string }
+  | { type: "delegation.completed"; id: string; childKey: string; result: ToolResult }
   | { type: "turn.started"; input: TurnInput; toolsVersion: string }
   /** A further input of the same Turn: coalesced at Turn start, or steered in at a batch boundary. */
   | { type: "turn.input"; input: TurnInput; steer?: boolean }
@@ -162,6 +165,8 @@ export type ThreadEventData =
     }
   | { type: "message.delta"; index: number; kind: "text" | "thinking" | "tool_input"; text: string }
   | { type: "message.part"; index: number; block: ContentBlock };
+
+export type ThreadEventData = EventData & { child?: { threadId: string; seq: number } };
 
 export type ThreadEvent = ThreadEventBase & ThreadEventData;
 export type ThreadEventType = ThreadEventData["type"];

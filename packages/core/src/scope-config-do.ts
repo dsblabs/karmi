@@ -34,6 +34,8 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS destroy_operations (operation_id TEXT PRIMARY KEY, state TEXT NOT NULL, started_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, cursor_json TEXT);
   CREATE TABLE IF NOT EXISTS threads (thread_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL, last_active_at INTEGER NOT NULL, title TEXT);
   CREATE INDEX IF NOT EXISTS threads_by_agent_user ON threads (agent_id, user_id, last_active_at);
+  CREATE TABLE IF NOT EXISTS thread_parents (thread_id TEXT PRIMARY KEY, thread_key TEXT NOT NULL, call_id TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS thread_parents_by_parent ON thread_parents (thread_key);
   CREATE TABLE IF NOT EXISTS connections (agent_id TEXT NOT NULL, name TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (agent_id, name));
   CREATE TABLE IF NOT EXISTS provider_credentials (name TEXT PRIMARY KEY, version INTEGER NOT NULL, kek TEXT, dek TEXT, ciphertext TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, revoked_at INTEGER);
   CREATE TABLE IF NOT EXISTS mcp_catalog (server_id TEXT NOT NULL, partition TEXT NOT NULL, catalog_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (server_id, partition));
@@ -84,6 +86,7 @@ export interface DestroyStatus {
 
 /** What a Thread reports about itself when its Turn snapshots; the index row is created or touched from it. */
 export interface ThreadActivity {
+  parent?: import("./delegation").ParentLink;
   threadId: string;
   userId?: string;
   createdAt: number;
@@ -483,6 +486,13 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       thread.activeAt,
       thread.title ?? null,
     );
+    if (thread.parent)
+      this.sql.exec(
+        "INSERT OR IGNORE INTO thread_parents (thread_id, thread_key, call_id) VALUES (?, ?, ?)",
+        thread.threadId,
+        thread.parent.threadKey,
+        thread.parent.callId,
+      );
     return ok({
       state: head.value.state,
       agent: agent.value,
@@ -495,20 +505,29 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const head = this.enter(scope, false);
     if (!head.ok) return head;
     this.sql.exec("DELETE FROM threads WHERE thread_id = ?", threadId);
+    this.sql.exec("DELETE FROM thread_parents WHERE thread_id = ?", threadId);
     return ok(undefined);
   }
 
-  threadsList(scope: ScopeId, agent: string, user?: string | null): Outcome<ThreadSummary[]> {
+  threadsList(scope: ScopeId, agent: string, user?: string | null, parent?: string | null): Outcome<ThreadSummary[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    const rows =
-      user === undefined
-        ? this.sql.exec<ThreadRow>("SELECT * FROM threads WHERE agent_id = ? ORDER BY last_active_at DESC", agent)
-        : this.sql.exec<ThreadRow>(
-            "SELECT * FROM threads WHERE agent_id = ? AND user_id IS ? ORDER BY last_active_at DESC",
-            agent,
-            user,
-          );
+    const conditions = ["t.agent_id = ?"];
+    const values: (string | null)[] = [agent];
+    if (user !== undefined) {
+      conditions.push("t.user_id IS ?");
+      values.push(user);
+    }
+    if (parent !== undefined) {
+      conditions.push("p.thread_key IS ?");
+      values.push(parent);
+    }
+    const rows = this.sql.exec<ThreadRow & { thread_key: string | null; call_id: string | null }>(
+      `SELECT t.*, p.thread_key, p.call_id FROM threads t
+       LEFT JOIN thread_parents p ON p.thread_id = t.thread_id
+       WHERE ${conditions.join(" AND ")} ORDER BY t.last_active_at DESC`,
+      ...values,
+    );
     return ok(
       rows.toArray().map((row) => {
         const identity = {
@@ -518,6 +537,8 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         };
         return {
           ...identity,
+          ...(row.thread_key !== null &&
+            row.call_id !== null && { parent: { threadKey: row.thread_key, callId: row.call_id } }),
           key: encodeKey(identity),
           createdAt: row.created_at,
           lastActiveAt: row.last_active_at,

@@ -26,11 +26,13 @@ export interface ThreadAddress extends ThreadIdentity {
 /** What the running Turn has spent in its current budget window, against the bounds it runs under. */
 export interface ThreadBudget extends Budget {
   max: Budget;
+  delegated?: { children: number; active: number };
 }
 
 export interface PendingApproval {
   /** What `thread.approve` takes. */
   seq: number;
+  child?: { threadId: string; seq: number };
   kind: "tool" | "continue" | "connect";
   tool?: string;
   /** A `connect`: which server, and where the human completes OAuth. */
@@ -40,6 +42,7 @@ export interface PendingApproval {
 }
 
 export interface ThreadStatus {
+  parent?: import("./delegation").ParentLink;
   state: "idle" | "running" | "parked";
   /** The current Turn and Step while running or parked. */
   turn?: number;
@@ -58,6 +61,7 @@ export interface ThreadStatus {
 }
 
 export interface ThreadSummary extends ThreadIdentity {
+  parent?: import("./delegation").ParentLink;
   key: string;
   createdAt: number;
   lastActiveAt: number;
