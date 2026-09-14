@@ -164,6 +164,45 @@ await clock.advance("24h"); // Also fires due alarms through cloudflare:test.
 
 `advance()` accepts milliseconds or durations with `ms`, `s`, `m`, `h`, or `d` suffixes. It moves the clock forward and dispatches due alarms; live or recovered Steps continue in-process, so observe completion through the Thread's event stream.
 
+## Schedules
+
+A Thread can wake itself. `thread.schedule({ delay: "24h", input })`, `{ at }` (epoch milliseconds or ISO 8601) or `{ cron: "0 9 * * 1-5", tz: "Europe/Berlin" }` (five fields, IANA zone, UTC by default) returns `{ scheduleId, nextAt }`; `thread.cancelSchedule(scheduleId)` and `thread.schedules()` complete the API, and `thread.status().nextScheduleAt` reports the soonest. Exactly one of `at`, `delay` or `cron` is given, and `input` is an Event, the same shape `send()` takes. Scheduling on a Thread addressed by identity creates it.
+
+```ts
+const thread = karmi.scope("tenant").thread({ agent: "billing", user: "payer", threadId: "dunning" });
+const { scheduleId, nextAt } = await thread.schedule({
+  delay: "3d",
+  input: { kind: "event", type: "invoice.overdue", payload: { invoice: "inv_42" } },
+});
+```
+
+A firing is an ordinary `send()` of the Event on the Thread's own Durable Object alarm, so it coalesces into the next Turn while one runs or is parked. A cron holds at most one undelivered firing: a tick that arrives while the last one is still queued is logged as `schedule.skipped` and the cron rearms. A one-shot is deleted on delivery, and an `at` already in the past fires at once; a Turn that fails is not retried. A cron's next tick is computed from the time it actually fired, so ticks missed while the Durable Object was unreachable are not replayed. `schedule.created`, `schedule.fired`, `schedule.skipped` and `schedule.cancelled` record everything. Every Thread holds at most 100 pending Schedules, none further than a year ahead.
+
+The `scheduling` Capability gives an Agent `schedule`, `cancel_schedule` and `list_schedules` for its own Thread and no other; a firing reaches it as `{ kind: "event", type: "schedule.fired", payload }`. Its `{ maxPending, maxHorizonMs, cron }` are bounded by the Scope ceiling and the caps above, and a Permission Policy rule naming `schedule` may `ask`.
+
+External triggers stay your code. A Worker `scheduled()` or `queue()` handler maps the trigger to a Thread and sends the same Event shape; karmi keeps no taxonomy of where Events come from and does not dedupe repeated deliveries.
+
+```ts
+export default {
+  async scheduled(controller: ScheduledController, env: Env) {
+    await karmi
+      .scope("tenant")
+      .thread({ agent: "reporter", threadId: "daily-report" })
+      .send({ kind: "event", type: "report.daily", payload: { cron: controller.cron, at: controller.scheduledTime } });
+  },
+  async queue(batch: MessageBatch<{ scope: string; user: string; order: string }>) {
+    for (const message of batch.messages) {
+      const { scope, user, order } = message.body;
+      await karmi
+        .scope(scope)
+        .thread({ agent: "orders", user, threadId: `order-${order}` })
+        .send({ kind: "event", type: "order.placed", payload: message.body });
+      message.ack();
+    }
+  },
+};
+```
+
 ## Compaction and forking
 
 Long Threads keep working. Before every fresh model Step, and after a `context_window_exceeded` stop, the Harness compares the context (the last model Step's usage plus a cheap estimate of what was logged since, never a re-tokenisation) with `context.window - reserveTokens`. Over it, a `compact` Step runs: the cut walks back to `keepRecentTokens`, then to the start of that Turn (falling back to a tool Step boundary, never inside a call/result batch), the events before the cut are summarised, and `thread.compacted { trigger, firstKeptSeq, tokensBefore, tokensAfter, strategy, summary, attachments }` is appended. The log is never rewritten: the next request is the Prompt, the summary, and the events from `firstKeptSeq` on. Summaries chain, and the media of the summarised events is carried forward as `attachments`.

@@ -169,7 +169,9 @@ export type {
   SendOptions,
   CompactOptions,
   ThreadSummary,
+  ScheduleInput,
 } from "./thread";
+export { SCHEDULE_CAPS, type ScheduleSummary } from "./schedule";
 export type {
   TurnInput,
   Part,

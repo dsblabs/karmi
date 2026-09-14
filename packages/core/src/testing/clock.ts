@@ -1,5 +1,6 @@
 import type { KarmiBindings } from "../bindings";
 import type { Clock } from "../clock";
+import { milliseconds as toMilliseconds } from "../duration";
 
 export interface TestClock extends Clock {
   /** Move time forward and fire the due alarms of this test Worker's Durable Objects. */
@@ -11,7 +12,8 @@ export function testClock(bindings: KarmiBindings): TestClock {
   const clock: TestClock = {
     now: () => Date.now() + offset,
     async advance(duration) {
-      const ms = milliseconds(duration);
+      const ms = toMilliseconds(duration);
+      if (!Number.isFinite(ms) || ms < 0) throw new Error(`Invalid clock duration "${duration}".`);
       offset += ms;
       const { listDurableObjectIds, runInDurableObject, runDurableObjectAlarm } = await import("cloudflare:test");
       let ran: boolean;
@@ -28,18 +30,4 @@ export function testClock(bindings: KarmiBindings): TestClock {
     },
   };
   return clock;
-}
-
-function milliseconds(duration: number | string): number {
-  const ms = typeof duration === "number" ? duration : parseDuration(duration);
-  if (!Number.isFinite(ms) || ms < 0) throw new Error(`Invalid clock duration "${duration}".`);
-  return ms;
-}
-
-const UNITS: Record<string, number> = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
-
-/** `"1.5h"` in milliseconds, or NaN when the text is not a duration. */
-function parseDuration(text: string): number {
-  const [, amount, unit = ""] = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(text) ?? [];
-  return Number(amount) * (UNITS[unit] ?? NaN);
 }

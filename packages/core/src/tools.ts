@@ -5,7 +5,7 @@ import type { Catalogue } from "./catalogue";
 import { deferAll, type Loaded } from "./loading";
 import { parseMcpReference, type McpReference } from "./mcp-catalog";
 import type { McpToolSource } from "./mcp-source";
-import { evaluatePolicy, type PolicyEffect } from "./policy";
+import { evaluatePolicy, explicitEffect, type PolicyEffect } from "./policy";
 import type { ToolDefinition } from "./provider";
 import { toJsonSchema } from "./schema";
 import type { Skill, SkillInvoker } from "./skill";
@@ -50,6 +50,8 @@ export interface ToolSetInput {
   /** The context window this Turn runs under, in tokens; the `auto` deferral threshold is a share of it. */
   window: number;
 }
+
+const POLICED_BUILT_INS = new Set(["schedule"]);
 
 export function resolveToolSet({
   spec,
@@ -101,11 +103,13 @@ export function resolveToolSet({
         skill: name,
       });
   }
-  // Framework built-ins are always allowed: they are Harness machinery, not developer actions.
+  // Framework built-ins are allowed by default: they are Harness machinery, not developer actions. The
+  // `schedule` acts on the Agent's behalf, so it honours a rule that names it and a Policy may `ask`.
   const modelSkills = skills.some((entry) => entry.invokableBy !== "user");
   for (const tool of builtIns) {
     if (tool.name === "use_skill" && !modelSkills) continue;
-    available.set(tool.name, { tool, settings: undefined, effect: "allow", deferred: false });
+    const effect = (POLICED_BUILT_INS.has(tool.name) && explicitEffect(policy, tool, remembered)) || "allow";
+    available.set(tool.name, { tool, settings: undefined, effect, deferred: false });
   }
   const config = { ...AGENT_SPEC_DEFAULTS.context.tools, ...spec.context?.tools };
   if (deferAll(config, deferrable.map(definition), window)) for (const entry of deferrable) entry.deferred = true;
