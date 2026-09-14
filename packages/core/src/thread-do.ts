@@ -1,3 +1,7 @@
+import { readScriptResult } from "./script-results";
+import { CloudflareIsolateSandbox } from "./isolate-sandbox";
+import { scriptTool, resolveScriptLimits } from "./scripts";
+import type { ScriptLimits } from "./sandbox";
 import {
   DelegationStore,
   delegateTool,
@@ -131,6 +135,7 @@ const CANCELLED = Symbol("cancelled");
 
 /** What a Turn runs under, persisted locally at its first Step so a Spec change lands on the next Turn. */
 export interface TurnSnapshot {
+  scripts?: ScriptLimits;
   media?: ScopeConfigDocument["media"];
   agentVersion: number;
   /** Stored normalized; a JSON round trip already dropped every explicit `undefined`. */
@@ -1234,6 +1239,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         policy: snapshot.policy,
         builtIns: [
           ...builtInTools(host),
+          ...(snapshot.scripts && this.env.KARMI_LOADER
+            ? [scriptTool(snapshot.spec, () => current().available, row.user_id ?? undefined)]
+            : []),
           ...(snapshot.spec.capabilities?.delegation
             ? [
                 delegateTool(snapshot.spec.delegates ?? [], (input, callId) =>
@@ -2463,6 +2471,35 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     void this.notifyParent().catch((error) => console.error("Delegation notification deferred", error));
   }
 
+  private scriptExecution(row: ThreadRow, snapshot: TurnSnapshot) {
+    if (!snapshot.scripts || !this.env.KARMI_LOADER) return {};
+    return {
+      scripts: {
+        sandbox: new CloudflareIsolateSandbox(this.env.KARMI_LOADER),
+        limits: snapshot.scripts,
+        result: async (callId: string) => {
+          const seq = keys.toolCallSeq(row.thread_id, callId);
+          if (seq === undefined) throw new Error("Unknown callId on this Thread.");
+          const [call] = this.read(seq - 1, "part", 1, seq);
+          if (!call || call.type !== "tool.call") throw new Error("Unknown callId on this Thread.");
+          const result = this.sql
+            .exec<EventRow>(
+              `SELECT * FROM events
+               WHERE seq > ? AND turn = ? AND type = 'tool.result' AND json_extract(json, '$.id') = ?
+               ORDER BY seq LIMIT 1`,
+              seq,
+              call.turn,
+              call.id,
+            )
+            .toArray()
+            .map((row) => decodeEvent(row.json))[0];
+          if (!result || result.type !== "tool.result") throw new Error("No result for this callId.");
+          return readScriptResult(this.env.KARMI_MEDIA, result);
+        },
+      },
+    };
+  }
+
   private toolStep(
     row: ThreadRow,
     snapshot: TurnSnapshot,
@@ -2484,6 +2521,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         attempt,
         spec: snapshot.spec,
         catalogue: this.deployment.catalogue,
+        ...this.scriptExecution(row, snapshot),
+        now: () => this.deployment.clock.now(),
         available: available.available,
         loaded: available.loaded,
         bucket: this.env.KARMI_MEDIA,
@@ -2582,6 +2621,9 @@ function buildSnapshot(
       ),
       ...(spec.capabilities?.delegation && {
         delegation: resolveDelegationLimits(spec.capabilities.delegation, ceilings.delegation),
+      }),
+      ...(spec.capabilities?.scripts?.tier === "isolate" && {
+        scripts: resolveScriptLimits(spec.capabilities.scripts, ceilings.scripts),
       }),
       ...(spec.capabilities?.scheduling && {
         scheduling: resolveSchedulingLimits(spec.capabilities.scheduling, ceilings.scheduling),

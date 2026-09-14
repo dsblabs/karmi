@@ -73,6 +73,7 @@ export type ValidationResult =
 
 /** What the Scope layer sees: the resolved (Deployment ≤ Scope) config and the Scope's other Agents. */
 export interface ScopeContext {
+  loaderAvailable?: boolean;
   config: ScopeConfigDocument;
   agents: readonly { agentId: string; spec: AgentSpec }[];
   /** The Deployment's own profiles, where a profile's `fallback.profile` points; `config.providers` when absent. */
@@ -559,6 +560,12 @@ class ScopeChecker {
   }
 
   private ceilings(): void {
+    if (this.spec.capabilities?.scripts?.tier === "isolate" && this.scope.loaderAvailable === false)
+      this.issues.error(
+        "capability.unavailable",
+        "/capabilities/scripts",
+        "Isolate scripts require the KARMI_LOADER binding.",
+      );
     const ceilings = this.scope.config.ceilings ?? {};
     const capabilities = this.spec.capabilities ?? {};
     for (const key of Object.keys(capabilities) as (keyof Capabilities)[]) {

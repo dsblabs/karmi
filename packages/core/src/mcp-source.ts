@@ -23,6 +23,7 @@ import type { Tool, ToolContext, ToolOutputResult } from "./tool";
 /** What `resolveToolSet` asks: the Tools one `mcp:` reference selects, in the server's own order. */
 export interface McpToolSource {
   tools(ref: McpReference): readonly Tool[];
+  scriptUnavailable?(name: string): boolean;
 }
 
 /** A call that cannot run until its holder consents; the tool Step turns it into a `connect` Approval. */
@@ -98,6 +99,12 @@ export class McpTurnSource implements McpToolSource {
     return selectTools(entry.named, entry.server.config, ref)
       .map(({ name }) => entry.tools.get(name))
       .filter(defined);
+  }
+
+  scriptUnavailable(name: string): boolean {
+    for (const { server, tools } of this.servers.values())
+      if (tools.has(name)) return server.oauth !== undefined && !server.oauth.holder;
+    return false;
   }
 
   /** The servers the model provider connects to itself, with the token it needs; one without a grant is left out. */

@@ -8,7 +8,9 @@
   "files": [
     "dist",
     "wrangler.baseline.jsonc",
-    "LICENSE"
+    "LICENSE",
+    "src/vendor/codemode/NOTICE",
+    "src/vendor/codemode/LICENSE"
   ],
   "exports": {
     ".": {

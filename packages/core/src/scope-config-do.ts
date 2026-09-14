@@ -321,6 +321,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       config,
       agents,
       deploymentProviders: this.deployment.defaults.providers ?? {},
+      loaderAvailable: this.env.KARMI_LOADER !== undefined,
     });
   }
 

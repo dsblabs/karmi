@@ -1,3 +1,5 @@
+import { scriptValue, storeStructuredResult } from "./script-results";
+import { ScriptInput, scriptTools, type ScriptExecution } from "./scripts";
 import { ingestToolResult } from "./media-ingress";
 import type { ToolOutputResult } from "./tool";
 import { putMedia } from "./media";
@@ -35,6 +37,10 @@ import { inContext, outputLimits, type AvailableTool } from "./tools";
 
 /** What the Step reads from and writes to: the Thread DO, narrowed to what a batch needs. */
 export interface ToolStepHost {
+  captureResult?(result: ToolResult): void;
+  now(): number;
+  scripts?: ScriptExecution;
+  parentCallId?: string;
   scope: ScopeId;
   user?: UserId;
   threadId: string;
@@ -207,12 +213,20 @@ function finisher(
 ): Finish {
   return async (seq, result, extra = {}) => {
     const logged = seq ?? host.append({ type: "tool.call", id: call.id, name: call.name, input: call.input }).seq;
+    host.captureResult?.(result);
+    const structured = await storeStructuredResult(
+      host,
+      logged,
+      result,
+      outputLimits(host.spec, host.available.get(call.name)?.tool ?? {}),
+    );
     host.append({
       type: "tool.result",
       id: call.id,
       name: call.name,
       content: result.content,
       isError: result.isError === true,
+      ...structured,
       ...extra,
     });
     await afterTool(
@@ -296,8 +310,9 @@ async function execute(
   };
   let result: ToolResult;
   try {
-    const outcome = normalize(await tool.execute(parsed.data, ctx));
+    const outcome = normalize(await executeOutcome(host, call, parsed.data, ctx, tool));
     if ("pending" in outcome) {
+      if (host.parentCallId) return finish(seq, error("Scripts cannot wait for Jobs."));
       host.append({ type: "job.started", id: call.id, jobId: outcome.pending });
       return "pending";
     }
@@ -305,17 +320,18 @@ async function execute(
   } catch (caught) {
     if (isPlatformFailure(caught)) throw caught;
     if (caught instanceof McpConnectRequired) {
-      if (retry) return finish(seq, error(notGranted(call)));
+      if (retry || host.parentCallId) return finish(seq, error(notGranted(call)));
       const started = await host.connect(call, caught.request);
       if (started.ok) return "connect";
       result = error(started.message);
     } else result = error(errorMessage(caught));
   }
+  host.captureResult?.(result);
   const spilled = await spill(host, tool, seq, result);
   return finish(seq, spilled.result, spilled.output ? { output: spilled.output } : {});
 }
 
-const callId = (host: ToolStepHost, seq: number) => `${host.threadId}:${seq}`;
+const callId = (host: ToolStepHost, seq: number) => keys.toolCall(host.threadId, seq);
 const notLoaded = ({ tool, skill }: AvailableTool): string =>
   skill === undefined
     ? `Tool "${tool.name}" is not loaded. Load it with tool_search (select:${tool.name}) before calling it.`
@@ -450,4 +466,81 @@ async function spill(
     ...result.content.filter((block) => block.type !== "text"),
   ];
   return { result: { ...result, content }, ...(output && { output }) };
+}
+
+async function executeScript(host: ToolStepHost, code: string, ctx: ToolContext<unknown>): Promise<ToolResult> {
+  const execution = host.scripts;
+  if (!execution) return error("Scripts are unavailable.");
+  const available = scriptTools(host.spec, host.available, host.user);
+  const startedAt = host.now();
+  const result = await execution.sandbox.run({
+    code,
+    limits: execution.limits,
+    signal: ctx.signal,
+    tools: [...available.keys()],
+    result: execution.result,
+    call: scriptCaller(host, ctx, available),
+  });
+  host.append({
+    type: "usage.recorded",
+    kind: "script",
+    tier: "isolate",
+    wallMs: host.now() - startedAt,
+    callId: ctx.callId,
+  });
+  return { content: [{ type: "text", text: JSON.stringify(result) }], isError: result.error !== undefined };
+}
+
+async function executeOutcome(
+  host: ToolStepHost,
+  call: ToolCall,
+  input: unknown,
+  ctx: ToolContext<unknown>,
+  tool: Tool,
+): Promise<ToolOutcome> {
+  return call.name === "run_script" && host.scripts
+    ? executeScript(host, z.parse(ScriptInput, input).code, ctx)
+    : tool.execute(input, ctx);
+}
+
+function scriptCaller(host: ToolStepHost, ctx: ToolContext<unknown>, available: ReadonlyMap<string, AvailableTool>) {
+  let count = 0;
+  return async (name: string, input: unknown, signal: AbortSignal) => {
+    const id = keys.scriptCall(ctx.callId, ++count);
+    let callId = id;
+    let value: unknown;
+    let isError = true;
+    let captured = false;
+    const child: ToolStepHost = {
+      ...host,
+      available,
+      parentCallId: ctx.callId,
+      captureResult: (result) => {
+        if (!captured) {
+          value = scriptValue(result);
+          isError = result.isError === true;
+          captured = true;
+        }
+      },
+      signal,
+      append: (data) => {
+        signal.throwIfAborted();
+        const event = host.append({ ...data, parentCallId: ctx.callId });
+        if (event.type === "tool.call") callId = keys.toolCall(host.threadId, event.seq);
+        return event;
+      },
+    };
+    const leaf = new AbortController();
+    try {
+      await runCall(
+        child,
+        { id, name, input },
+        { started: new Map(), finished: new Set(), approvals: new Map(), jobs: new Map() },
+        AbortSignal.any([signal, leaf.signal]),
+      );
+    } finally {
+      leaf.abort();
+    }
+    return { callId, value, isError };
+  };
 }

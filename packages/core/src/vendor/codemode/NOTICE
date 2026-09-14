@@ -1,0 +1,9 @@
+Portions adapted from Cloudflare Codemode, Copyright (c) 2025 Cloudflare, Inc.
+MIT license: see LICENSE in this directory.
+Source: https://github.com/cloudflare/agents/tree/46760e635ce9599add0abbfe6c1a34af0d5d44f1/packages/codemode/src
+
+Adapted: executor.ts one-shot Worker Loader, RPC bridge, binary codec, console
+capture, timeout and eager stub disposal; codec.ts transport encoding only.
+Omitted: AI SDK integration, connectors, durable runtime, normalization, storage,
+module injection and network configuration. karmi supplies its own Tool gate,
+limits, module contract and result shape. Global outbound is always null.

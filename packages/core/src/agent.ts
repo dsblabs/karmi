@@ -41,7 +41,7 @@ export interface Capabilities {
       jobMaxWallMs?: number;
       maxArtifacts?: number;
     };
-    /** Which of the Agent's Tools a Script may call; `"allowed"` means every allow-resolved one. */
+    /** Defaults to `"allowed"`: every allow-resolved Tool, independent of model deferral. An array narrows that set. */
     tools?: "allowed" | string[];
   };
   longRunning?: { maxSteps?: number; maxWallMs?: number; maxTokens?: number };
