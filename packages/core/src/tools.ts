@@ -18,6 +18,8 @@ import type { Tool } from "./tool";
 // model. Deferral is decided here for the whole set at once; what is loaded is the caller's `Loaded`.
 
 export interface AvailableTool {
+  /** A cached user-level MCP Tool without a User; scripts omit it and explain why. */
+  scriptUnavailable?: boolean;
   tool: Tool;
   settings: unknown;
   effect: PolicyEffect;
@@ -68,7 +70,13 @@ export function resolveToolSet({
   const mcpRefs: { ref: McpReference; alwaysLoad: boolean }[] = [];
   // A pinned ref stays in context; a denied Tool is never indexed, so it has nothing to defer.
   const offer = (tool: Tool, settings: unknown, alwaysLoad: boolean | undefined) => {
-    const entry: AvailableTool = { tool, settings, effect: evaluatePolicy(policy, tool, remembered), deferred: false };
+    const entry: AvailableTool = {
+      tool,
+      settings,
+      effect: evaluatePolicy(policy, tool, remembered),
+      deferred: false,
+      scriptUnavailable: mcp?.scriptUnavailable?.(tool.name) ?? false,
+    };
     available.set(tool.name, entry);
     if (!alwaysLoad && entry.effect !== "deny") deferrable.push(entry);
   };

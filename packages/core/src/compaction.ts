@@ -65,7 +65,7 @@ function eventTokens(event: ThreadEvent): number {
     case "turn.input":
       return estimateTokens(inputContent(event.input));
     case "tool.result":
-      return estimateTokens(event.content);
+      return event.parentCallId ? 0 : estimateTokens(event.content);
     case "message.part":
       return estimateTokens(event.block);
     default:
@@ -133,6 +133,7 @@ export function attachmentsOf(events: readonly ThreadEvent[]): MediaRef[] {
           for (const part of event.input.parts) if (part.type !== "text") add(part.media);
         break;
       case "tool.result":
+        if (event.parentCallId) break;
         for (const block of event.content) if (block.type === "media") add(block.media);
         break;
       default:

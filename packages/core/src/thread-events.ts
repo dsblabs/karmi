@@ -60,6 +60,8 @@ export interface StepCredentials {
 }
 
 type EventData =
+  /** Script accounting hook point; delivery and model usage are added by the observability layer. */
+  | { type: "usage.recorded"; kind: "script"; tier: "isolate"; wallMs: number; callId: string }
   /** A Schedule of this Thread: how it was asked for (`delay` already in milliseconds), and when it first fires. */
   | {
       type: "schedule.created";
@@ -175,6 +177,7 @@ type EventData =
       id: string;
       name: string;
       content: ToolContent[];
+      structuredContent?: unknown;
       isError: boolean;
       interrupted?: { attempt: number };
       output?: MediaRef;
@@ -182,7 +185,7 @@ type EventData =
   | { type: "message.delta"; index: number; kind: "text" | "thinking" | "tool_input"; text: string }
   | { type: "message.part"; index: number; block: ContentBlock };
 
-export type ThreadEventData = EventData & { child?: { threadId: string; seq: number } };
+export type ThreadEventData = EventData & { parentCallId?: string; child?: { threadId: string; seq: number } };
 
 export type ThreadEvent = ThreadEventBase & ThreadEventData;
 export type ThreadEventType = ThreadEventData["type"];

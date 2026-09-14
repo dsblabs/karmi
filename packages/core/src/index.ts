@@ -207,3 +207,6 @@ export type { MediaUrlOptions } from "./media-url";
 
 export { ingestProviderEvent } from "./media-ingress";
 export type { ToolOutputResult } from "./tool";
+
+export type { Sandbox, SandboxRequest, SandboxResult, ScriptLimits, ScriptToolCall } from "./sandbox";
+export { CloudflareIsolateSandbox } from "./isolate-sandbox";

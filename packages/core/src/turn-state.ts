@@ -116,9 +116,11 @@ class TurnFold {
         this.parts[event.index] = event.block;
         break;
       case "tool.call":
+        if (event.parentCallId) break;
         this.calls.set(event.id, { seq, input: event.input });
         break;
       case "tool.result":
+        if (event.parentCallId) break;
         this.results.add(event.id);
         break;
       case "step.completed":

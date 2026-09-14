@@ -35,6 +35,7 @@ export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] 
         step?.content.push(event.block);
         break;
       case "tool.result":
+        if (event.parentCallId) break;
         results.set(event.id, event);
         break;
       case "step.completed":
