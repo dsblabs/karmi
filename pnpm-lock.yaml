@@ -162,6 +162,36 @@ importers:
         specifier: ^4.5.4
         version: 4.5.4
 
+  packages/http:
+    devDependencies:
+      '@cloudflare/vitest-plugin':
+        specifier: ^1.1.4
+        version: 1.1.4(@cloudflare/workers-types@5.20260904.1)(@vitest/runner@4.1.11)(@vitest/snapshot@4.1.11)(vitest@4.1.11(@types/node@26.5.1)(vite@8.2.2(@types/node@26.5.1)(esbuild@0.28.1)(yaml@2.9.0)))
+      '@cloudflare/workers-types':
+        specifier: ^5.20260904.1
+        version: 5.20260904.1
+      '@karmi/core':
+        specifier: workspace:*
+        version: link:../core
+      eslint:
+        specifier: ^10.9.1
+        version: 10.9.1(supports-color@10.2.2)
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+      typescript-eslint:
+        specifier: ^8.69.0
+        version: 8.69.0(eslint@10.9.1(supports-color@10.2.2))(supports-color@10.2.2)(typescript@5.9.3)
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@26.5.1)(vite@8.2.2(@types/node@26.5.1)(esbuild@0.28.1)(yaml@2.9.0))
+      wrangler:
+        specifier: ^4.129.0
+        version: 4.129.0(@cloudflare/workers-types@5.20260904.1)
+      zod:
+        specifier: ^4.5.4
+        version: 4.5.4
+
 packages:
 
   '@ai-sdk/amazon-bedrock@5.0.81':

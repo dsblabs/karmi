@@ -130,6 +130,8 @@ export interface Thread {
   delete(): Promise<void>;
   /** The opaque, serialisable key of this Thread. `scope.thread(key)` reopens it but never creates it. */
   readonly key: string;
+  /** The Agent, User and `threadId` this handle addresses, as decoded from its key. */
+  readonly identity: ThreadIdentity;
   /**
    * Accepts the input and returns the Turn it will run in and the log position to subscribe after.
    * Inputs that arrive while a Turn runs or is parked coalesce, in order, into the one next Turn.
@@ -194,6 +196,7 @@ export function openThread(bindings: KarmiBindings, scope: ScopeId, target: Thre
   const stub = remote<ThreadDurableObject>(bindings.KARMI_THREADS, keys.thread(scope, identity.threadId));
   return {
     key: encodeKey(identity),
+    identity,
     uploads: { put: (body, options) => unwrap(stub.upload(address, body, options ?? {})) },
     delete: () => unwrap(stub.delete(address)),
     send: (input, options) => unwrap(stub.send(address, input, options?.steer === true)),
