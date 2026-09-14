@@ -1,5 +1,6 @@
 import type { Catalogue } from "./catalogue";
 import type { Clock } from "./clock";
+import type { Logger } from "./context";
 import type { McpClientIdentity } from "./mcp-auth";
 import type { Provider } from "./provider";
 import type { ScopeConfigDocument } from "./scope-config";
@@ -8,6 +9,8 @@ import type { SecretsProvider } from "./secrets";
 /** Everything `createKarmi` assembled at boot, shared by the Worker and its Durable Objects. */
 export interface Deployment {
   readonly clock: Clock;
+  /** The Logger every line goes through, before karmi binds its attribution fields. */
+  readonly logger: Logger;
   readonly catalogue: Catalogue;
   /** The parsed `createKarmi({ defaults })`. Every Scope inherits this layer and may only tighten it. */
   readonly defaults: ScopeConfigDocument;

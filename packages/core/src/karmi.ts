@@ -6,7 +6,10 @@ import { wallClock, type Clock } from "./clock";
 import { assertCompatibilityBaseline } from "./compat";
 import type { Deployment } from "./deployment";
 import { makeDurableObjects, type DurableObjects } from "./durable-objects";
-import { deliveryQueueHandler } from "./delivery-queue";
+import { queueHandler } from "./queue";
+import { consoleLogger } from "./logger";
+import type { Logger } from "./context";
+import { KarmiError } from "./errors";
 import type { Provider } from "./provider";
 import { parseScopeConfig, type ScopeConfigDocument } from "./scope-config";
 import { openScope, type Scope } from "./scope";
@@ -23,6 +26,11 @@ export interface KarmiOptions<Env = unknown> {
   media?: MediaUrlOptions;
   /** The time source. Defaults to wall time. */
   clock?: Clock;
+  /**
+   * Where structured log lines go. Defaults to one JSON line per call on the Worker console. Every line
+   * carries the Scope, Agent, Thread and Turn it concerns, and credentials are redacted before the call.
+   */
+  logger?: Logger;
   /**
    * The Deployment-wide config layer every Scope inherits and may only tighten. It has the same shape as a
    * Scope config.
@@ -55,7 +63,7 @@ export interface Karmi {
   /** The two Durable Object classes the Worker re-exports by name. */
   readonly durableObjects: DurableObjects;
   readonly catalogue: Catalogue;
-  /** The queue consumer that runs Deliverers. Export it as the Worker's `queue` handler. */
+  /** The queue consumer that runs Deliverers and the UsageHandler. Export it as the Worker's `queue` handler. */
   readonly queueHandler: ExportedHandlerQueueHandler;
   /**
    * The two fixed OAuth routes, the client document and the callback. Mount with
@@ -80,9 +88,16 @@ export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
       scopes: bindings.KARMI_SCOPES,
       ...(bindings.KARMI_KEYRING !== undefined && { keyring: bindings.KARMI_KEYRING }),
     });
+  const catalogue = assembleCatalogue(options.catalogue);
+  if (catalogue.usageHandler && !bindings.KARMI_QUEUE)
+    throw new KarmiError(
+      "bindings.missing",
+      "A UsageHandler needs KARMI_QUEUE; see @karmi/core/wrangler.baseline.jsonc.",
+    );
   const deployment: Deployment = {
     clock: options.clock ?? wallClock,
-    catalogue: assembleCatalogue(options.catalogue),
+    logger: options.logger ?? consoleLogger(),
+    catalogue,
     defaults: parseScopeConfig(options.defaults ?? {}, providers),
     providers,
     secrets: layerDeploymentCredentials(options.credentials, store),
@@ -94,7 +109,7 @@ export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
     media: mediaUrls(options.media),
     durableObjects,
     catalogue: deployment.catalogue,
-    queueHandler: deliveryQueueHandler(deployment, bindings),
+    queueHandler: queueHandler(deployment, bindings),
     oauth: oauthRoutes(deployment, bindings),
     scope: (id) => openScope(deployment, bindings, id),
   };

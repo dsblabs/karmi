@@ -1,7 +1,11 @@
 import { z } from "zod";
 import {
   defineDeliverer,
+  defineUsageHandler,
+  usageKey,
+  type Logger,
   type ThreadEvent,
+  type UsageRecord,
   defineAgent,
   defineFragment,
   defineHook,
@@ -17,6 +21,29 @@ import { createTestKarmi, fakeMcpServer } from "../src/testing/index";
 export const trace: string[] = [];
 export const deliveries: { key: string; events: ThreadEvent[]; ref: unknown }[] = [];
 export const deliveryFailure = { remaining: 0 };
+/** Every Usage record the UsageHandler accepted, deduplicated by `usageKey`. Tests read and reset it. */
+export const usage = { records: [] as UsageRecord[], seen: new Set<string>(), failures: 0 };
+const meter = defineUsageHandler({
+  onUsage: (records) => {
+    if (usage.failures > 0) {
+      usage.failures--;
+      throw new Error("Metering unavailable");
+    }
+    for (const record of records) {
+      if (usage.seen.has(usageKey(record))) continue;
+      usage.seen.add(usageKey(record));
+      usage.records.push(record);
+    }
+  },
+});
+/** Every line the Deployment Logger received, after karmi's redaction. Tests read and reset it. */
+export const logs: { level: string; message: string; fields?: Record<string, unknown> }[] = [];
+const logger: Logger = {
+  debug: (message, fields) => logs.push({ level: "debug", message, ...(fields && { fields }) }),
+  info: (message, fields) => logs.push({ level: "info", message, ...(fields && { fields }) }),
+  warn: (message, fields) => logs.push({ level: "warn", message, ...(fields && { fields }) }),
+  error: (message, fields) => logs.push({ level: "error", message, ...(fields && { fields }) }),
+};
 const receipt = defineDeliverer({
   name: "receipt",
   granularity: "turn",
@@ -36,7 +63,10 @@ const weather = defineTool({
   description: "Current weather for a city",
   input: z.object({ city: z.string() }),
   annotations: { readOnlyHint: true, openWorldHint: true },
-  execute: ({ city }) => `Sunny in ${city}`,
+  execute: ({ city }, ctx) => {
+    ctx.logger.info("weather called", { city, apiKey: "weather-secret" });
+    return `Sunny in ${city}`;
+  },
 });
 
 // Read-only: a batch of these should overlap.
@@ -636,8 +666,10 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
       mcpCrm,
       mcpLocked,
     ],
+    usageHandler: meter,
   },
   {
+    logger,
     mcpServers: [github, legacy, drive, crm, locked],
     credentials: { shared: "deployment-key" },
     defaults: {

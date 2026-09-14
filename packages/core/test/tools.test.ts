@@ -275,7 +275,7 @@ describe("Spill", () => {
   it("stores an oversized result whole, shows head + tail + marker, and read_output pages it back", async () => {
     provider.script([
       [reply.toolCall("big_output", { lines: 100 }, "c1")],
-      [reply.toolCall("read_output", { ref: "7", offset: 50, limit: 3 }, "c2")],
+      [reply.toolCall("read_output", { ref: "8", offset: 50, limit: 3 }, "c2")],
       "Read it",
     ]);
     const thread = fresh();
@@ -284,8 +284,8 @@ describe("Spill", () => {
     expect(spilled).toMatchObject({
       isError: false,
       output: {
-        id: "7",
-        key: `test/threads/tool-${n}/tool-output/7`,
+        id: "8",
+        key: `test/threads/tool-${n}/tool-output/8`,
         mimeType: "text/plain; charset=utf-8",
         bytes: 791,
       },
@@ -294,7 +294,7 @@ describe("Spill", () => {
     expect(shown.startsWith("line 1\nline 2\nline 3\nline 4\nline 5\n")).toBe(true);
     expect(shown.endsWith("\nline 96\nline 97\nline 98\nline 99\nline 100")).toBe(true);
     expect(shown).toContain(
-      '[... 717 characters (90 lines) omitted. The full output is stored as ref "7"; call read_output with that ref to read it. ...]',
+      '[... 717 characters (90 lines) omitted. The full output is stored as ref "8"; call read_output with that ref to read it. ...]',
     );
     expect(events).toContainEvent({
       type: "tool.result",

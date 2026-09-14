@@ -7,6 +7,7 @@ import type { ScopeConfigDocument } from "./scope-config";
 import * as z from "zod/mini";
 import type { AgentSpec } from "./agent";
 import type { Catalogue } from "./catalogue";
+import type { ParentLink } from "./delegation";
 import type { Logger, MediaRef, ScopeId, UserId } from "./context";
 import type { HookContextBase, HookContexts, HookToolCall } from "./hook";
 import { errorMessage } from "./errors";
@@ -49,6 +50,8 @@ export interface ToolStepHost {
   user?: UserId;
   threadId: string;
   agent: string;
+  /** The delegating Thread and call, when this Thread is a Delegation child. */
+  parent?: ParentLink;
   turn: number;
   /** Recovery attempt of this Step, starting at 1. */
   attempt: number;
@@ -512,6 +515,11 @@ async function executeScript(host: ToolStepHost, code: string, ctx: ToolContext<
   host.append({
     type: "usage.recorded",
     kind: "script",
+    scope: host.scope,
+    agent: host.agent,
+    ...(host.user !== undefined && { user: host.user }),
+    threadId: host.threadId,
+    ...(host.parent && { parent: host.parent }),
     tier: "isolate",
     wallMs: host.now() - startedAt,
     callId: ctx.callId,

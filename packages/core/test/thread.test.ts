@@ -24,10 +24,11 @@ describe("one text Turn", () => {
       "message.delta",
       "message.delta",
       "message.part",
+      "usage.recorded",
       "step.completed",
       "turn.completed",
     ]);
-    expect(events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(events).toContainEvent({
       type: "step.started",
       kind: "model",
@@ -104,7 +105,7 @@ describe("Turn input", () => {
     const thread = fresh();
     await thread.send(message("One"));
     const events = await thread.send(message("Two"));
-    expect(events[0]).toMatchObject({ type: "turn.started", turn: 2, seq: 7 });
+    expect(events[0]).toMatchObject({ type: "turn.started", turn: 2, seq: 8 });
     expect(lastMessage(events)).toBe("Second");
     expect(provider.requests[1]?.messages).toEqual([
       { role: "user", content: [{ type: "text", text: "One" }] },
@@ -138,7 +139,7 @@ describe("reading the log", () => {
       state: "idle",
       agentVersion: 1,
       usage: { input: 12, output: 3, cacheRead: 0, cacheWrite: 0 },
-      seq: 12,
+      seq: 14,
     });
   });
 
@@ -153,31 +154,34 @@ describe("reading the log", () => {
       "message.delta",
       "message.delta",
       "message.part",
+      "usage.recorded",
       "step.completed",
       "turn.completed",
     ]);
-    expect((await thread.events({ after: 5 })).map((e) => e.seq)).toEqual([6, 7]);
+    expect((await thread.events({ after: 5 })).map((e) => e.seq)).toEqual([6, 7, 8]);
 
-    const parts = await take(thread.subscribe({ granularity: "part" }), 5);
+    const parts = await take(thread.subscribe({ granularity: "part" }), 6);
     expect(parts.map((e) => e.type)).toEqual([
       "turn.started",
       "step.started",
       "message.part",
+      "usage.recorded",
       "step.completed",
       "turn.completed",
     ]);
-    const turns = await take(thread.subscribe({ granularity: "turn", after: 1 }), 3);
-    expect(turns.map((e) => e.type)).toEqual(["step.started", "step.completed", "turn.completed"]);
+    const turns = await take(thread.subscribe({ granularity: "turn", after: 1 }), 4);
+    expect(turns.map((e) => e.type)).toEqual(["step.started", "usage.recorded", "step.completed", "turn.completed"]);
   });
 
   it("streams live events to a subscriber that attached before the Turn", async () => {
     provider.script(["Live"]);
     const thread = fresh();
-    const seen = take(thread.subscribe({ granularity: "turn" }), 4);
+    const seen = take(thread.subscribe({ granularity: "turn" }), 5);
     await thread.send(message("Go"));
     expect((await seen).map((e) => e.type)).toEqual([
       "turn.started",
       "step.started",
+      "usage.recorded",
       "step.completed",
       "turn.completed",
     ]);
@@ -200,7 +204,7 @@ describe("Thread identity", () => {
     await thread.send(message("Hello"));
     const reopened = scope.thread(thread.key);
     expect(reopened.key).toBe(thread.key);
-    expect((await reopened.events()).length).toBe(6);
+    expect((await reopened.events()).length).toBe(7);
 
     const unknown = scope.thread(scope.thread({ agent: "concierge", user: "guest-1", threadId: "never-sent" }).key);
     await expect(unknown.status()).rejects.toMatchObject({ code: "thread.notFound" });
@@ -241,7 +245,14 @@ describe("Turn failure paths", () => {
   it("rotates to the fallback model at the next Step start after a Provider error", async () => {
     provider.script([[reply.error({ code: "unavailable" })], "Fallback here"]);
     const events = await fresh().send(message("Hi"));
-    expect(events).toHaveSequence(["step.started", "step.started", "message.part", "step.completed", "turn.completed"]);
+    expect(events).toHaveSequence([
+      "step.started",
+      "step.started",
+      "message.part",
+      "usage.recorded",
+      "step.completed",
+      "turn.completed",
+    ]);
     expect(events).toContainEvent({ type: "step.started", n: 1, attempt: 1, model: "anthropic/claude-sonnet-5" });
     expect(events).toContainEvent({ type: "step.started", n: 1, attempt: 2, model: "anthropic/claude-haiku-4-5" });
     expect(events.filter((e) => e.type === "step.completed")).toHaveLength(1);
@@ -283,6 +294,7 @@ describe("Turn failure paths", () => {
       [1, "step.started"],
       [1, "message.delta"],
       [1, "message.part"],
+      [1, "usage.recorded"],
       [1, "step.completed"],
       [1, "turn.completed"],
       [2, "turn.started"],

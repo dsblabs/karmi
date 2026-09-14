@@ -37,6 +37,7 @@ export type KarmiErrorCode =
   | "media.typeDenied"
   | "media.urlInvalid"
   | "thread.deleted"
+  | "usage.invalid"
   | "name.duplicate"
   | "name.invalid"
   | "name.reserved"

@@ -59,7 +59,7 @@ import { errorMessage, KarmiError } from "./errors";
 import type { Compacted, HookContextBase, HookContexts, HookResults, TurnEnd } from "./hook";
 import { hooksAt } from "./hooks";
 import { keys } from "./keys";
-import { consoleLogger } from "./logger";
+import { bindLogger } from "./logger";
 import { sha256Hex } from "./digest";
 import { parseMcpReference } from "./mcp-catalog";
 import { McpRegistry, type McpServerSnapshot } from "./mcp-registry";
@@ -93,6 +93,7 @@ import type {
   ThreadEvent,
   ThreadEventData,
   ThreadEventType,
+  UsageRecordData,
   TurnInput,
 } from "./thread-events";
 import {
@@ -107,6 +108,8 @@ import { runToolStep, type PriorCalls, type ToolCall } from "./tool-step";
 import { foldTurn, type Plan, type Request, type TurnState } from "./turn-state";
 import { resolveToolSet, toolDefinitions, toolsInContext, unloadedDeferred, type ToolSet } from "./tools";
 import { splitModelId, transcriptFromEvents } from "./transcript";
+import type { QueueMessage } from "./queue";
+import type { UsageAttribution, UsageRecord } from "./usage";
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS deleted (id INTEGER PRIMARY KEY CHECK (id = 1));
@@ -117,6 +120,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS deliveries (to_seq INTEGER PRIMARY KEY, from_seq INTEGER NOT NULL, turn INTEGER NOT NULL, binding_json TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
   CREATE INDEX IF NOT EXISTS deliveries_turn ON deliveries (turn, to_seq);
   CREATE TABLE IF NOT EXISTS inputs (id INTEGER PRIMARY KEY AUTOINCREMENT, turn INTEGER NOT NULL, json TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS usage_outbox (seq INTEGER PRIMARY KEY);
 `;
 
 /** The largest Turn snapshot, in bytes of JSON, a Thread stores. A Spec that produces a larger one is rejected. */
@@ -124,6 +128,8 @@ export const SNAPSHOT_LIMIT = 256 * 1024;
 const MAX_STEP_ATTEMPTS = 3;
 const POLL_TIMEOUT_MS = 15_000;
 const POLL_LIMIT = 256;
+/** How many Usage records one Queue message carries at most. */
+const USAGE_BATCH = 100;
 /** How long a Step may run without progress before the alarm presumes it lost and re-enters the loop. */
 const STEP_WATCHDOG_MS = 60_000;
 const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
@@ -837,6 +843,12 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       data.type,
       JSON.stringify(body),
     );
+    // A record is queued for the UsageHandler in the same write as the event, so an eviction never loses
+    // one. Without a handler or a Queue the record only stays in the log.
+    if (data.type === "usage.recorded" && this.deployment.catalogue.usageHandler && this.env.KARMI_QUEUE) {
+      this.sql.exec("INSERT INTO usage_outbox (seq) VALUES (?)", seq);
+      this.scheduleUsageFlush(at);
+    }
     if (data.type === "turn.completed" || data.type === "approval.requested") {
       const route = this.sql.exec<{ json: string }>("SELECT json FROM delivery_route WHERE id = 1").toArray()[0];
       if (route) {
@@ -892,7 +904,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     // The loop is not awaited. The Durable Object outlives the caller's request, and it is the persisted rows,
     // not `waitUntil`, that survive an eviction.
     void this.run(recovering).catch((error: unknown) => {
-      console.error("Thread loop interrupted", error);
+      this.deployment.logger.error("Thread loop interrupted", { error: errorMessage(error) });
     });
   }
 
@@ -939,6 +951,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       });
       return;
     }
+    if (job.kind === "usage") return this.flushUsage();
     if (job.kind === "delegation") return this.syncDelegations();
     if (job.kind === "delegation-notify") return this.notifyParent();
     if (job.kind === "delegation-deadline") {
@@ -1708,7 +1721,76 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private logger(row: ThreadRow): Logger {
-    return consoleLogger({ scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn });
+    return bindLogger(this.deployment.logger, {
+      scope: row.scope_id,
+      agent: row.agent_id,
+      ...(row.user_id !== null && { user: row.user_id }),
+      thread: row.thread_id,
+      turn: row.turn,
+    });
+  }
+
+  /** The attribution every Usage record of this Thread carries. */
+  private usageAttribution(row: ThreadRow): UsageAttribution {
+    const origin = this.delegations.origin();
+    return {
+      scope: row.scope_id,
+      agent: row.agent_id,
+      ...(row.user_id !== null && { user: row.user_id }),
+      threadId: row.thread_id,
+      ...(origin && { parent: origin.parent }),
+    };
+  }
+
+  /** The Usage record of one model or compaction call, built from the Step's credentials and the call's usage. */
+  private modelUsage(
+    row: ThreadRow,
+    kind: "model" | "compaction",
+    model: string,
+    { profile, started }: StepCall,
+    usage: Usage,
+  ): UsageRecordData {
+    return {
+      type: "usage.recorded",
+      kind,
+      ...this.usageAttribution(row),
+      ...usage,
+      model,
+      provider: profile.adapter,
+      profile: started.profile,
+      ...(started.credential && {
+        credentialSource: started.credential.source,
+        credentialVersion: started.credential.version,
+      }),
+      ...(started.fallback && { fallback: started.fallback }),
+    };
+  }
+
+  /**
+   * Sends the Usage records waiting in the outbox to the Queue, at most `USAGE_BATCH` per message, and
+   * re-arms itself while more wait. A failed send leaves the outbox as it was for the retry.
+   */
+  private async flushUsage(): Promise<void> {
+    if (!this.env.KARMI_QUEUE) throw new KarmiError("bindings.missing", "Usage delivery requires KARMI_QUEUE.");
+    const rows = this.sql
+      .exec<EventRow>(
+        "SELECT * FROM events WHERE seq IN (SELECT seq FROM usage_outbox) ORDER BY seq LIMIT ?",
+        USAGE_BATCH + 1,
+      )
+      .toArray();
+    const batch = rows.slice(0, USAGE_BATCH);
+    const records: UsageRecord[] = [];
+    for (const row of batch) {
+      const event: ThreadEvent = { seq: row.seq, turn: row.turn, at: row.at, ...decodeEvent(row.json) };
+      if (event.type === "usage.recorded") records.push(event);
+    }
+    if (records.length > 0) await this.env.KARMI_QUEUE.send({ kind: "usage", records } satisfies QueueMessage);
+    this.sql.exec(`DELETE FROM usage_outbox WHERE seq <= ?`, batch.at(-1)?.seq ?? 0);
+    if (rows.length > USAGE_BATCH) this.scheduleUsageFlush(this.deployment.clock.now());
+  }
+
+  private scheduleUsageFlush(dueAt: number): void {
+    this.scheduler.set({ id: "usage", kind: "usage", dueAt, payload: null });
   }
 
   // Turn-level Hooks are dispatched by name with the Turn's context. `before-turn` and `before-compact`
@@ -1857,7 +1939,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       model: native,
       attachments: attachmentsOf(dropped),
     };
-    return this.recordCompaction(row, snapshot, compacted, completed, channelRef);
+    return this.recordCompaction(row, snapshot, compacted, call, completed, channelRef);
   }
 
   /** Opens a compact Step by resolving the credentials for the summarising call and logging its `step.started`. */
@@ -1898,11 +1980,15 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     row: ThreadRow,
     snapshot: TurnSnapshot,
     compacted: Compacted,
+    call: StepCall,
     completed: () => unknown,
     channelRef: unknown,
   ): Promise<Outcome<CompactResult>> {
     this.update({ usage_json: JSON.stringify(addUsage(decodeUsage(this.row().usage_json), compacted.usage)) });
     this.append(row.turn, compacted, channelRef);
+    // A Hook's summary made no model call, so there is nothing to bill.
+    if (compacted.strategy !== "hook")
+      this.append(row.turn, this.modelUsage(row, "compaction", compacted.model, call, compacted.usage), channelRef);
     completed();
     await this.turnHooks(row, snapshot, "after-compact", { compacted });
     return ok("compacted");
@@ -1981,8 +2067,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     model: string,
     events: ThreadEvent[],
     channelRef: unknown,
-    { profile, credentials }: StepCall,
+    call: StepCall,
   ): Promise<StepResult> {
+    const { profile, credentials } = call;
     const provider = this.deployment.providers[profile.adapter];
     if (!provider) return stepError(`Provider adapter "${profile.adapter}" is not registered.`);
     const signal = this.turnAbort.signal;
@@ -2000,7 +2087,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         media: this.media(row, snapshot.media),
         credentials,
       });
-      return await this.recordStream(row, stream, signal, channelRef);
+      return await this.recordStream(row, stream, signal, channelRef, splitModelId(model)[1], call);
     } catch (error) {
       if (isPlatformFailure(error)) throw error;
       return stepError(errorMessage(error));
@@ -2058,6 +2145,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     stream: AsyncIterable<ProviderEvent>,
     signal: AbortSignal,
     channelRef: unknown,
+    model: string,
+    call: StepCall,
   ): Promise<StepResult> {
     const parts: ContentBlock[] = [];
     for await (const event of stream) {
@@ -2078,6 +2167,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         case "message.end": {
           const usage = addUsage(decodeUsage(this.row().usage_json), event.usage);
           this.update({ usage_json: JSON.stringify(usage) });
+          this.append(row.turn, this.modelUsage(row, "model", model, call, event.usage), channelRef);
           this.append(
             row.turn,
             { type: "step.completed", kind: "model", n: row.step, stopReason: event.stopReason, usage: event.usage },
@@ -2548,7 +2638,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       dueAt: this.deployment.clock.now(),
       payload: null,
     });
-    void this.notifyParent().catch((error) => console.error("Delegation notification deferred", error));
+    void this.notifyParent().catch((error) =>
+      this.deployment.logger.warn("Delegation notification deferred", { error: errorMessage(error) }),
+    );
   }
 
   private scriptExecution(row: ThreadRow, snapshot: TurnSnapshot) {
@@ -2591,12 +2683,14 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   ): ReturnType<typeof runToolStep> {
     const stub = this.scopeStub(row);
     const signal = this.turnAbort.signal;
+    const origin = this.delegations.origin();
     return runToolStep(
       {
         scope: row.scope_id,
         ...(row.user_id !== null && { user: row.user_id }),
         threadId: row.thread_id,
         agent: row.agent_id,
+        ...(origin && { parent: origin.parent }),
         turn: row.turn,
         attempt,
         spec: snapshot.spec,
@@ -2775,11 +2869,16 @@ function exhausted(used: Budget, max: Budget): boolean {
 }
 
 function addUsage(total: Usage, usage: Usage): Usage {
+  const optional = (key: "cacheWrite1h" | "reasoning" | "serverToolCalls") =>
+    total[key] === undefined && usage[key] === undefined ? {} : { [key]: (total[key] ?? 0) + (usage[key] ?? 0) };
   return {
     input: total.input + usage.input,
     output: total.output + usage.output,
     cacheRead: total.cacheRead + usage.cacheRead,
     cacheWrite: total.cacheWrite + usage.cacheWrite,
+    ...optional("cacheWrite1h"),
+    ...optional("reasoning"),
+    ...optional("serverToolCalls"),
   };
 }
 

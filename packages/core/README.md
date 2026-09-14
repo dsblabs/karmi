@@ -252,6 +252,28 @@ Delivery uses the persisted event log at the Deliverer's granularity, including 
 
 Delivery is at-least-once, independent of Turn success; deduplicate side effects using the Thread key and event `seq` within your Channel's Scope. Queued delivery and late delivery alarms skip destroyed Scopes. Configure `KARMI_QUEUE` and export `karmi.queueHandler`; the published Wrangler baseline retries three times and routes exhausted messages to `my-karmi-dlq`. Create both queues when provisioning the deployment and operate the DLQ using [Cloudflare's dead-letter queue guidance](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/).
 
+## Usage records and logging
+
+Every model Step, compact Step and Script run appends a `usage.recorded` event in the same write as the Step it accounts for. A model or compaction record carries the call's tokens (input, output, cache read and write, one-hour cache write, reasoning), `model`, `provider`, `profile`, the credential's `credentialSource` and `credentialVersion`, any `fallback`, `serverToolCalls`, and the attribution `{ scope, agent, user?, threadId, parent?, turn, seq }`. A Script record carries its `tier`, `wallMs` and `callId`. Delegation children record their own spend with `parent` set; nothing is counted twice. `thread.status().usage` sums the tokens of the Thread.
+
+`cost { amount, currency: "USD", source, basis, upstream?, byok? }` is present only when OpenRouter or the Vercel AI Gateway reported one on the final stream part. karmi has no price table. Cloudflare AI Gateway reports no cost in the response, so such a record carries `gateway { provider: "cloudflare", id }` with the `cf-aig-log-id` for the Platform to join against the gateway log.
+
+List a `UsageHandler` in the Catalogue to receive records in batches through `KARMI_QUEUE`:
+
+```ts
+const meter = defineUsageHandler({
+  async onUsage(records) {
+    for (const record of records) await bill(usageKey(record), record); // idempotent by threadId:seq
+  },
+});
+const karmi = createKarmi({ catalogue: { agents: [agent], usageHandler: meter } });
+export default { queue: karmi.queueHandler };
+```
+
+Delivery is at-least-once with `usageKey(record)` (`threadId:seq`) as the idempotency key. A thrown error retries the batch and never fails the Turn. Without a handler the records stay in each Thread's log. A handler without `KARMI_QUEUE` is a boot error.
+
+Tools, Hooks and Retrievers log through `ctx.logger`. Every line carries the Scope, Agent, User, Thread and Turn it concerns. The default writes one JSON line per call on the Worker console; pass `createKarmi({ logger })` to send lines elsewhere. Before a line reaches any Logger, a `SensitiveValue`, a field named like a credential (`token`, `secret`, `password`, `authorization`, `apiKey`, `cookie`) and a bearer token inside text are replaced by a marker. Tracing is the event log; karmi ships no OpenTelemetry.
+
 Media travels as refs. Bind `KARMI_MEDIA` to R2, then upload through the owning Thread:
 
 ```ts
