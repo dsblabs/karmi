@@ -5,15 +5,22 @@ import { KarmiError } from "./errors";
 import { keys, mediaKeyScope } from "./keys";
 import type { ScopeConfigDocument } from "./scope-config";
 
+/** The forms in which bytes can be handed to `put`. */
 export type MediaBody = ReadableStream<Uint8Array> | ArrayBuffer | string;
+/** What a caller may say about the bytes it stores. */
 export interface MediaOptions {
+  /** The MIME type to record when the bytes cannot be sniffed. A sniffed type wins over the claim. */
   mimeType?: string;
+  /** A display name kept on the MediaRef. */
   name?: string;
 }
+/** Stores bytes under the current Thread and returns the MediaRef that points at them. */
 export interface MediaWriter {
   put(body: MediaBody, options?: MediaOptions): Promise<MediaRef>;
 }
+/** The size limit of one media object when the Scope sets none, in bytes. */
 export const DEFAULT_MEDIA_BYTES = 100 * 1024 * 1024;
+/** The size of one part of a multipart upload, which is also the largest buffer held in memory. */
 const PART_BYTES = 5 * 1024 * 1024;
 
 interface MediaOwner {
@@ -24,7 +31,11 @@ interface MediaOwner {
   signal?: AbortSignal;
 }
 
-/** One bounded buffer serves sniffing and multipart writes, regardless of input chunk sizes. */
+/**
+ * Stores `body` in R2 under the Thread and returns its MediaRef with the MIME type sniffed and the
+ * size measured. It throws `media.tooLarge` or `media.typeDenied` when the Scope's limits reject it.
+ * Memory is bounded by one part-sized buffer regardless of how the input is chunked.
+ */
 export async function putMedia(
   { bucket, scope, threadId, limits = {}, signal }: MediaOwner,
   body: MediaBody,
@@ -103,11 +114,16 @@ async function sniff(bytes: Uint8Array, claim?: string): Promise<string> {
   }
   return claim?.split(";")[0]?.trim().toLowerCase() || "application/octet-stream";
 }
+/** Whether the MIME type `mime` matches `pattern`, which may be exact, `type/*` or `*\/*`. */
 export function matchesType(pattern: string, mime: string): boolean {
   return pattern === mime || pattern === "*/*" || pattern === `${mime.split("/")[0]}/*`;
 }
 
-/** Scope checks precede all reads; a ref from a fork may point to another Thread in this Scope. */
+/**
+ * A `MediaWriter` extended with `get`, which reads the bytes a MediaRef points at. `get` returns
+ * undefined when the ref belongs to another Scope, the object is gone, or its size or type no longer
+ * match the ref. A ref from a Fork may point at another Thread of the same Scope.
+ */
 export function mediaAccess(bucket: R2Bucket | undefined, scope: string, writer: MediaWriter) {
   return {
     ...writer,

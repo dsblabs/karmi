@@ -4,13 +4,17 @@ import { fakeOAuthServer, type FakeMcpOAuth, type FakeMcpOAuthOptions, type Fake
 import { toJsonSchema, type JsonSchema, type Schema } from "../schema";
 import type { ToolAnnotations } from "../tool";
 
-// An in-process remote MCP server: a real Streamable HTTP endpoint answering over `fetch`, in either the
-// 2026-07-28 (stateless) or the 2025 (initialize + Mcp-Session-Id) era. Tests reach it only through the
-// Scope's `scopedFetch`, so egress rules apply to it like to any real server.
+// An in-process remote MCP server. It is a real Streamable HTTP endpoint answering over `fetch` in either
+// the 2026-07-28 (stateless) or the 2025-06-18 (initialize + Mcp-Session-Id) Era. Tests reach it only
+// through the Scope's Scoped fetch, so egress rules apply to it as to any real server.
 
+/** The MCP protocol Era the fake speaks. */
 export type FakeMcpEra = "2026-07-28" | "2025-06-18";
 
-/** MCP content as a fake tool returns it; `text` is the common case, the others exercise rendering. */
+/**
+ * One MCP content block as a fake tool returns it. `text` is the common case and the other kinds exercise
+ * rendering.
+ */
 export type FakeMcpContent =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string }
@@ -18,55 +22,70 @@ export type FakeMcpContent =
   | { type: "resource_link"; uri: string; name: string; description?: string }
   | { type: "resource"; resource: { uri: string; mimeType?: string } & ({ text: string } | { blob: string }) };
 
+/** What a fake tool's `execute` returns. A string becomes a single text block. */
 export type FakeMcpResult =
   | string
   | { content: FakeMcpContent[]; structuredContent?: unknown; isError?: boolean }
-  /** A multi round-trip answer: the server wants input the Harness will not give. */
+  /** An answer that asks the caller for more input, which the Harness never gives. */
   | { resultType: "input_required"; inputRequests: Record<string, unknown> }
   /** A JSON-RPC error instead of a result. */
   | { error: { code: number; message: string } };
 
+/** A tool the fake server lists and calls. */
 export interface FakeMcpTool {
   name: string;
   description?: string;
-  /** A zod schema (validated, so a bad call answers `-32602`) or raw JSON Schema. */
+  /** A zod schema for the arguments. Calls are validated against it, and a bad call answers `-32602`. */
   input?: Schema;
+  /** Raw JSON Schema advertised in `tools/list` instead of one derived from `input`. */
   inputSchema?: JsonSchema;
   annotations?: Partial<ToolAnnotations>;
-  /** Receives the arguments as `input` parsed them (or verbatim without a schema); typed loosely so a fixture reads naturally. */
+  /**
+   * Answers a call. It receives the arguments as `input` parsed them, or verbatim without a schema. The loose
+   * type lets a fixture read naturally.
+   */
   execute: (input: any) => FakeMcpResult | Promise<FakeMcpResult>;
 }
 
+/** Options for `fakeMcpServer`. */
 export interface FakeMcpServerOptions {
-  /** Becomes the host `<name>.mcp.test`; register the server under `url`. */
+  /** The server name. Its URL is `https://<name>.mcp.test/mcp`, which is what the Scope config registers. */
   name: string;
+  /** The tools listed and served at start. `server.tools` can replace them later. */
   tools?: FakeMcpTool[];
+  /** The protocol Era the server speaks. Defaults to 2026-07-28. */
   era?: FakeMcpEra;
-  /** `ttlMs`/`cacheScope` stamped on `tools/list`; only the 2026 era carries them. */
+  /** The `ttlMs` stamped on `tools/list`. Only the 2026 Era carries it. */
   ttlMs?: number;
+  /** The `cacheScope` stamped on `tools/list`. Only the 2026 Era carries it. */
   cacheScope?: "public" | "private";
-  /** A header every request must carry, else 401. */
+  /** A header every request must carry. A request without it is answered 401. */
   auth?: { header: string; value: string };
-  /** Put the server behind OAuth: its own authorization server lives at the same origin. */
+  /** Puts the server behind OAuth. Its authorization server lives at the same origin. */
   oauth?: FakeMcpOAuthOptions;
 }
 
+/** One JSON-RPC request the server received. */
 export interface FakeMcpCall {
   method: string;
   params: unknown;
   headers: Record<string, string>;
 }
 
+/** The fake server: its endpoint, its tools, and the record of what it received. */
 export interface FakeMcpServer {
   readonly name: string;
+  /** The endpoint, `https://<name>.mcp.test/mcp`. */
   readonly url: string;
-  /** Replace to change the catalogue between Turns. */
+  /** The tools served. Replace the array to change the Catalogue between Turns. */
   tools: FakeMcpTool[];
   /** Every JSON-RPC request received, in order. */
   readonly calls: FakeMcpCall[];
+  /** A `fetch` that answers this server's requests. `routeFetch` composes several. */
   readonly fetch: typeof fetch;
-  /** The authorization server and its records; present when `oauth` was configured. */
+  /** The authorization server and its records. Present when `oauth` was configured. */
   readonly oauth?: FakeMcpOAuth;
+  /** Forgets every recorded call and every session. */
   reset(): void;
 }
 
@@ -74,6 +93,7 @@ const MODERN = "2026-07-28";
 const SERVER_INFO_META = "io.modelcontextprotocol/serverInfo";
 type Rpc = { jsonrpc: "2.0"; id?: number | string; method: string; params?: Record<string, unknown> };
 
+/** Creates an in-process MCP server reachable at `https://<name>.mcp.test/mcp`. */
 export function fakeMcpServer(options: FakeMcpServerOptions): FakeMcpServer {
   const era = options.era ?? MODERN;
   const calls: FakeMcpCall[] = [];
@@ -194,7 +214,7 @@ function describe(tool: FakeMcpTool): McpTool {
   };
 }
 
-/** One `fetch` over several fakes, by host; anything else goes to `fallback`. */
+/** A `fetch` that routes each request to the fake whose host matches. Any other host goes to `fallback`. */
 export function routeFetch(servers: readonly FakeMcpServer[], fallback: typeof fetch = fetch): typeof fetch {
   const byHost = new Map(servers.map((server) => [new URL(server.url).hostname, server.fetch]));
   return ((input: RequestInfo | URL, init?: RequestInit) => {

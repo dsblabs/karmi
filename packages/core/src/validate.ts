@@ -9,10 +9,10 @@ import { chooseProfile, type Ceilings, type ProviderConfig, type ScopeConfigDocu
 import type { Schema } from "./schema";
 import type { Tool } from "./tool";
 
-// The three layers of Agent Spec validation: shape (zod), references (Catalogue), Scope-resolved (ceilings,
-// Provider profiles, registered MCP servers, the other Agents in the Scope). Connection-value checks join
-// the Scope layer with the OAuth ticket.
+// Agent Spec validation runs in three layers: shape (zod), references (the Catalogue) and Scope-resolved
+// (ceilings, Provider profiles, registered MCP servers and the other Agents in the Scope).
 
+/** Every code a validation Issue may carry. */
 export const ISSUE_CODES = [
   "shape.invalid-type",
   "shape.unknown-key",
@@ -52,31 +52,40 @@ export const ISSUE_CODES = [
   "ref.agent.unknown",
   "memory.profile.conflict",
 ] as const;
+/** The code of a validation Issue. */
 export type IssueCode = (typeof ISSUE_CODES)[number];
 
+/** One finding of Agent Spec validation. An error fails the Spec and a warning does not. */
 export interface Issue {
   severity: "error" | "warning";
   code: IssueCode;
   /** JSON-pointer into the Spec, `""` for the whole document. */
   path: string;
   message: string;
+  /** Machine-readable detail, such as the names involved. */
   context?: Record<string, unknown>;
 }
 
 type ErrorIssue = Issue & { severity: "error" };
 type WarningIssue = Issue & { severity: "warning" };
 
+/** A failed validation. The first issue is always an error. */
 export type ValidationFailure = { ok: false; issues: [ErrorIssue, ...Issue[]] };
 
+/** The outcome of `validateAgentSpec`: the normalised Spec with its warnings, or the issues that failed it. */
 export type ValidationResult =
   { ok: true; normalized: NormalizedAgentSpec; warnings: WarningIssue[] } | ValidationFailure;
 
-/** What the Scope layer sees: the resolved (Deployment ≤ Scope) config and the Scope's other Agents. */
+/** The Scope the Scope layer validates against: its resolved config and its other Agents. */
 export interface ScopeContext {
+  /** Whether the KARMI_LOADER binding exists. False fails a Spec that asks for isolate Scripts. */
   loaderAvailable?: boolean;
   config: ScopeConfigDocument;
   agents: readonly { agentId: string; spec: AgentSpec }[];
-  /** The Deployment's own profiles, where a profile's `fallback.profile` points; `config.providers` when absent. */
+  /**
+   * The Deployment's own Provider profiles, which a profile's `fallback.profile` names. Defaults to
+   * `config.providers`.
+   */
   deploymentProviders?: Record<string, ProviderConfig>;
 }
 
@@ -84,13 +93,14 @@ function toList<T>(value: T | T[]): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
-/** The first issue of a failed parse; zod never fails without one. */
+/** The first issue of a failed zod parse. Throws when there is none, which zod never reports. */
 export function firstIssue(error: z.core.$ZodError): z.core.$ZodIssue {
   const [issue] = error.issues;
   if (!issue) throw new Error("A failed zod parse reported no issue.");
   return issue;
 }
 
+/** A zod issue path as a JSON pointer, `""` for the root. */
 export function pointer(path: readonly PropertyKey[]): string {
   return path.map((segment) => `/${String(segment)}`).join("");
 }
@@ -136,7 +146,10 @@ class Issues {
   }
 }
 
-/** Without a Scope only the shape and reference layers run, so a Platform can check a Spec anywhere. */
+/**
+ * Validates an Agent Spec against the Catalogue and, when given, the Scope. Without a Scope only the shape
+ * and reference layers run, so a Platform can check a Spec anywhere.
+ */
 export function validateAgentSpec(spec: unknown, catalogue: Catalogue, scope?: ScopeContext): ValidationResult {
   const parsed = z.safeParse(AgentSpecSchema, spec);
   if (!parsed.success) {
@@ -343,7 +356,7 @@ class ReferenceChecker {
         );
       }
     }
-    // An OAuth grant for an MCP server is the Connection `mcp:<server>`; the ref implies it.
+    // An OAuth grant for an MCP server is the Connection `mcp:<server>`, so a server reference implies it.
     for (const { server } of this.mcpRefs) required.add(`mcp:${server}`);
     for (const connection of Object.keys(declared)) {
       if (!required.has(connection))
@@ -356,7 +369,10 @@ class ReferenceChecker {
     }
   }
 
-  /** Every Tool name the model may see, as far as the Catalogue can tell; whole-server MCP refs add more at Turn start. */
+  /**
+   * Every Tool name the model may see, as far as the Catalogue can tell. Whole-server MCP references add
+   * more at Turn start.
+   */
   private grantedToolNames(): Set<string> {
     const capabilities = this.spec.capabilities ?? {};
     const granted = new Set<string>([
@@ -399,7 +415,8 @@ class ReferenceChecker {
     // A whole-server ref brings Tools only the Scope's registry knows, so literal names cannot be checked.
     const wholeServers = this.mcpRefs.some((ref) => ref.tool === undefined);
 
-    // With deferral on, `tool_search` is the only way to a deferred Tool; a rule that names it to deny it contradicts the Spec.
+    // With deferral on, `tool_search` is the only way to reach a deferred Tool, so a rule that denies it
+    // contradicts the Spec.
     const defer = this.spec.context?.tools?.defer ?? AGENT_SPEC_DEFAULTS.context.tools.defer;
     rules.forEach((rule, i) => {
       const path = `/policy/${i}`;
@@ -432,8 +449,9 @@ class ReferenceChecker {
       });
     });
 
-    // Provider Tools run inside the provider's turn, so there is no call to pause on: `ask` cannot be honoured.
-    // Only an explicit `ask` is an error; a Provider Tool no rule names is included, since the grant itself is the consent.
+    // Provider Tools run inside the provider's turn, so there is no call to pause on and `ask` cannot be honoured.
+    // Only an explicit `ask` is an error. A Provider Tool no rule names is included, because the grant is the
+    // consent.
     for (const providerTool of providerTools) {
       const index = rules.findIndex((rule) => {
         return (
@@ -452,7 +470,7 @@ class ReferenceChecker {
     }
   }
 
-  /** Reports a repeated reference; returns true when the caller should skip it. */
+  /** Reports a repeated reference. Returns true when the caller should skip it. */
   private rejectDuplicate(seen: Set<string>, name: string, path: string): boolean {
     if (seen.has(name)) {
       this.issues.error("ref.duplicate", path, `"${name}" is referenced more than once.`, { name });
@@ -589,7 +607,8 @@ class ScopeChecker {
     }
   }
 
-  // Mirrors `tighten` in scope-config.ts: numbers are maxima, booleans and tiers are the most a Spec may ask, lists are allow-lists.
+  // This mirrors `tighten` in scope-config.ts. Numbers are maxima, booleans and tiers are the most a Spec may
+  // ask for, and lists are allow-lists.
   private overCeiling(asked: Record<string, unknown>, ceiling: Record<string, unknown>, path: string): void {
     for (const [key, max] of Object.entries(ceiling)) {
       const value = asked[key];

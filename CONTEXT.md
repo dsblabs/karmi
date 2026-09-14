@@ -96,6 +96,14 @@ _Avoid_: session, conversation, chat, channel
 One run of the Harness loop on a Thread, from a Turn input to `turn.completed` or `turn.failed`. Driven entirely by the Thread's Durable Object as a sequence of Steps, whoever triggered it; a connected client only subscribes. One Turn at a time per Thread; a Turn may be **parked** (awaiting an approval, a scheduled wait, a budget `continue`, or a Job) and still holds the Thread while parked.
 _Avoid_: request, run, session, invocation
 
+**Park**:
+The state of a Turn that has stopped to wait, still holding its Thread: for an Approval, a Job, a budget `continue`, an OAuth consent, or a suspended Scope. A parked Turn resumes from its log when the answer arrives; it is neither running nor finished.
+_Avoid_: pause (for the state), suspend (that is a Scope), block
+
+**Tombstone**:
+The row a destroyed Thread, Agent or Scope leaves behind so its identity is never reused. A tombstoned item refuses every operation except the lifecycle reads that report on it; the durable cleanup behind it runs later in scheduler batches.
+_Avoid_: soft delete, deleted flag
+
 **Step**:
 The unit of a Turn that is persisted and recovered at a boundary: a **model Step** (one streamed model call) or a **tool Step** (one tool batch — parallel read-only Tools, or one mutating Tool). The event log is the only state at a boundary; after an eviction the unfinished Step re-runs, and a half-finished tool Step re-runs only Tools with no persisted result — and only those annotated read-only or idempotent; any other unfinished call gets a Harness-synthesised **interrupted** result (`isError`, `interrupted: { attempt }`) telling the model the action may or may not have happened, never a silent second run. Steps are kicked in-process; the DO alarm is a watchdog, not the driver.
 _Avoid_: iteration, tick, workflow step, phase
@@ -201,9 +209,29 @@ _Avoid_: overflow, artifact (for spilled output), truncation (for the storage)
 The reference by which binary content travels through karmi: `{ id, key, mimeType, bytes, name? }` pointing at an R2 object under `{scope}/media/{threadId}/`, minted only by the Framework (`uploads.put()`, a Tool's `ctx.media.put()`, or the Harness spilling model/Tool-produced bytes at ingress) with the MIME type sniffed and the size measured. Bytes never enter the event log — events carry the ref; provider adapters re-inline base64 at request-build per the model's capabilities, and Channels read via short-lived presigned URLs from `karmi.media.url(ref)`. Media lives and dies with its Thread; a ref whose object is gone degrades to a text placeholder, never a failed Turn.
 _Avoid_: attachment (for the ref), file handle, URL (for the ref), blob
 
+**Holder**:
+Whose OAuth grant an MCP server call runs under: the Agent (`agent:<id>`) for an agent-level server, or the User (`user:<id>`) for a user-level one. A user-level server on a user-less Thread has no holder, so no grant can ever resolve for it. Grants and private Catalogue caches are keyed by holder.
+_Avoid_: principal, owner, subject
+
+**Partition**:
+The slice of a Catalogue cache one set of credentials sees: the holder for an OAuth server, or the single `scope` partition for a server with static or no auth. A server may mark its list `public`, in which case a partition with nothing cached reads another holder's copy.
+_Avoid_: namespace, bucket, shard
+
+**Step-up**:
+A second consent flow for an MCP server that answered `403 insufficient_scope`, requesting the union of the scopes already granted and the scopes the server challenged with.
+_Avoid_: re-auth, scope escalation
+
+**Era**:
+Which MCP protocol revision a server speaks: the 2026-07-28 stateless Streamable HTTP form or the 2025 form with `initialize` and `Mcp-Session-Id`. Stored with the Catalogue cache so the next connect adopts it without probing.
+_Avoid_: protocol version (in code), mode
+
 **Deferred Tool**:
 A Tool the Agent may call but whose definition is kept out of the model's context until loaded: the model sees only its name in an index and loads it through the always-present `tool_search` built-in. Which Tools defer is a `context.tools` setting on the Agent Spec (`auto` — defer all deferrable Tools once their definitions exceed a share of the window — `always`, or `never`), with per-reference `alwaysLoad` pins; Framework built-ins and Skill Tools never defer. A load is a `tools.loaded` Thread event, so loaded Tools persist across Turns until Compaction drops them. Permission Policy applies to the whole Tool set before deferral: denied Tools are never indexed, `ask` Tools pause at call time as usual.
 _Avoid_: lazy tool, hidden tool, tool search (for the Tool itself), dynamic tools
+
+**Load point**:
+A `tools.loaded` event in the Thread log. From that event on, the deferred Tools it names (or the Skill it activates) are in the model's context, until a Compaction cuts the log before it. The loaded set of a Turn is the union of every load point since the last Compaction.
+_Avoid_: activation event, tool load
 
 **Deliverer**:
 A Catalogue item — code, by name — that pushes a Thread's output to a Channel when no live subscriber is attached. Chosen per Thread from the last inbound input; invoked from a Queue, at-least-once.

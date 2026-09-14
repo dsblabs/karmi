@@ -11,8 +11,9 @@ import type { ThreadIdentity } from "./thread";
 // The ScopeConfig Durable Object's OAuth rows: registered clients per issuer (secrets through the
 // SecretsProvider, never in a row), one grant per (server, holder) with its refresh token, and the
 // pending authorizations between redirect and callback. Tokens sit in the Scope's own SQLite like the
-// Connection values beside them; the refresh token never leaves this object.
+// Connection values beside them. The refresh token never leaves this object.
 
+/** The SQL that creates the OAuth tables in the ScopeConfig Durable Object's SQLite. */
 export const OAUTH_SCHEMA = `
   CREATE TABLE IF NOT EXISTS mcp_clients (issuer TEXT PRIMARY KEY, client_id TEXT NOT NULL, secret_ref TEXT, info_json TEXT NOT NULL, created_at INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS mcp_grants (server_id TEXT NOT NULL, holder TEXT NOT NULL, issuer TEXT NOT NULL, access_token TEXT NOT NULL, refresh_token TEXT, expires_at INTEGER, scope TEXT, discovery_json TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY (server_id, holder));
@@ -43,20 +44,24 @@ type StateRow = {
   expires_at: number;
 };
 
-// The one decode point per JSON column; the rows are this object's own.
+// Each JSON column has one decoder. Only this module writes the rows, so they are not validated on read.
 const decodeDiscovery = (json: string): OAuthDiscoveryState => JSON.parse(json);
 const decodeClientInfo = (json: string): Omit<StoredOAuthClientInformation, "client_secret"> => JSON.parse(json);
 const decodeThread = (json: string | null): ThreadIdentity | undefined =>
   json === null ? undefined : JSON.parse(json);
 
-/** Where a pending authorization returns to: the Thread whose Step parked, and the page the human asked for. */
+/** A pending authorization as stored, with where its callback returns to. */
 export interface PendingAuthorizationRow {
   nonce: string;
   serverId: string;
   holder: McpHolder;
+  /** The User the consent was requested for. */
   user?: string;
+  /** The Thread whose Step parked awaiting consent. The callback wakes it. */
   thread?: ThreadIdentity;
+  /** The page the human is redirected to after the callback. */
   returnTo?: string;
+  /** When the authorization lapses, as epoch milliseconds. */
   expiresAt: number;
 }
 
@@ -69,6 +74,7 @@ const decodeGrant = (row: GrantRow): GrantRecord => ({
   ...(row.discovery_json !== null && { discovery: decodeDiscovery(row.discovery_json) }),
 });
 
+/** What a SqlGrantStore needs from the Durable Object that owns it. */
 export interface OAuthStoreHost {
   sql: SqlStorage;
   clock: Clock;
@@ -79,6 +85,7 @@ export interface OAuthStoreHost {
 /** A DCR-issued client secret is stored as this Scope credential, named from a digest of its issuer. */
 const secretName = async (issuer: string) => `__mcp-client-${(await sha256Hex(issuer)).slice(0, 16)}`;
 
+/** The GrantStore over the ScopeConfig Durable Object's SQLite, bound to one server and Holder. */
 export class SqlGrantStore implements GrantStore {
   /** The pending authorization this store works on: the callback's, or the one `mintPending` created. */
   private nonce: string | undefined;
@@ -102,7 +109,7 @@ export class SqlGrantStore implements GrantStore {
     const info: StoredOAuthClientInformation = { ...decodeClientInfo(row.info_json), client_id: row.client_id, issuer };
     if (row.secret_ref === null) return info;
     const secret = await this.host.secrets.resolve({ scope: this.host.scope, ref: row.secret_ref });
-    // A registration whose secret is gone is no registration; dropping it makes the SDK register again.
+    // Dropping a registration whose secret is gone makes the SDK register again.
     if (!secret) {
       this.dropClient(issuer);
       return undefined;
@@ -243,6 +250,7 @@ export function readPending(sql: SqlStorage, nonce: string, now: number): Pendin
   };
 }
 
+/** Whether `value` is a well-formed McpHolder. */
 export function isHolder(value: string): value is McpHolder {
   return value.startsWith("agent:") || value.startsWith("user:");
 }

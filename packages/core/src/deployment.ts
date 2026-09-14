@@ -9,13 +9,20 @@ import type { SecretsProvider } from "./secrets";
 export interface Deployment {
   readonly clock: Clock;
   readonly catalogue: Catalogue;
-  /** Parsed `createKarmi({ defaults })`: the layer every Scope inherits and may only tighten. */
+  /** The parsed `createKarmi({ defaults })`. Every Scope inherits this layer and may only tighten it. */
   readonly defaults: ScopeConfigDocument;
+  /** The Providers by name. */
   readonly providers: Readonly<Record<string, Provider>>;
-  /** Where Provider credentials resolve from, with `createKarmi({ credentials })` layered in front. */
+  /**
+   * The Secrets provider that Provider credentials resolve from, with `createKarmi({ credentials })` layered
+   * in front.
+   */
   readonly secrets: SecretsProvider;
-  /** The transport under every `scopedFetch`: the global `fetch` unless a test supplies one. */
+  /** The transport under every Scoped fetch. It is the global `fetch` unless a test supplies one. */
   readonly fetch: typeof fetch;
-  /** The OAuth client this Deployment presents to MCP authorization servers; absent, OAuth servers cannot be used. */
+  /**
+   * The OAuth client this Deployment presents to MCP authorization servers. Without it, OAuth servers cannot
+   * be used.
+   */
   readonly oauth?: McpClientIdentity;
 }

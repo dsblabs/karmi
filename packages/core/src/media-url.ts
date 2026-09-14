@@ -3,13 +3,22 @@ import { AwsClient } from "aws4fetch";
 import type { MediaRef } from "./context";
 import { KarmiError } from "./errors";
 
-/** R2 S3 credentials are Deployment secrets, never part of Scope config or stored refs. */
+/**
+ * The R2 S3 credentials that sign media URLs. They are Deployment secrets and never part of Scope
+ * config or stored refs.
+ */
 export interface MediaUrlOptions {
+  /** The Cloudflare account id. */
   accountId: string;
+  /** The R2 bucket name. */
   bucket: string;
   accessKeyId: string;
   secretAccessKey: string;
 }
+/**
+ * The `karmi.media.url` API, which returns a presigned GET URL for a MediaRef that expires after
+ * `ttl` seconds (1 to 604800). Without `options` every call throws `bindings.missing`.
+ */
 export function mediaUrls(options?: MediaUrlOptions) {
   const signer = options && new AwsClient({ ...options, service: "s3", region: "auto" });
   return {

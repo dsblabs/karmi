@@ -24,23 +24,29 @@ import {
   type McpClientIdentity,
 } from "./mcp-auth";
 
-// The OAuth client the ScopeConfig Durable Object runs for one (server, holder): the SDK's `auth()` does
-// discovery, PKCE, registration and the token requests; this provider is where it reads and writes what
+// The OAuth client the ScopeConfig Durable Object runs for one (server, Holder). The SDK's `auth()` does
+// discovery, PKCE, registration and the token requests. This provider is where it reads and writes what
 // must persist, through a store the Durable Object implements on its SQLite. Nothing here logs a token.
 
 /** One grant as stored: the tokens, the issuer they came from and the discovery that found it. */
 export interface GrantRecord {
+  /** The authorization server that issued the tokens. */
   issuer: string;
   accessToken: string;
   refreshToken?: string;
+  /** When the access token expires, as epoch milliseconds. Absent when the server did not say. */
   expiresAt?: number;
+  /** The scopes granted. */
   scope?: string;
+  /** The discovery result that found the issuer, reused on refresh. */
   discovery?: OAuthDiscoveryState;
 }
 
 /** One pending authorization: the PKCE verifier and discovery saved between the redirect and the callback. */
 export interface PendingAuthorization {
+  /** The identifier the callback's `state` carries back. */
   nonce: string;
+  /** The PKCE code verifier. */
   verifier?: string;
   discovery?: OAuthDiscoveryState;
 }
@@ -51,32 +57,47 @@ export interface PreregisteredClient {
   client_secret?: string;
 }
 
-/** What the provider persists; bound to one (Scope, server, holder) and, on a callback, one pending nonce. */
+/**
+ * The persistence a GrantProvider reads and writes. A store is bound to one (Scope, server, Holder) and,
+ * on a callback, to one pending nonce.
+ */
 export interface GrantStore {
+  /** The registered client for `issuer`, with its secret resolved. */
   client(issuer: string): Promise<StoredOAuthClientInformation | undefined>;
+  /** Stores the registered client for `issuer`. */
   saveClient(issuer: string, info: StoredOAuthClientInformation): Promise<void>;
+  /** Forgets the registered client for `issuer`. */
   dropClient(issuer: string): void;
+  /** The stored grant, if any. */
   grant(): GrantRecord | undefined;
+  /** Replaces the stored grant. */
   saveGrant(record: GrantRecord): void;
+  /** Deletes the stored grant. */
   dropGrant(): void;
   /** The authorization this provider is completing, or the one it minted with `mintPending`. */
   pending(): PendingAuthorization | undefined;
+  /** Creates a new pending authorization and makes it the current one. */
   mintPending(): PendingAuthorization;
+  /** Updates the current pending authorization. */
   savePending(patch: Partial<Omit<PendingAuthorization, "nonce">>): void;
-  /** Discovery outside any pending authorization lands on the grant. */
+  /** Stores discovery on the grant, for use outside any pending authorization. */
   saveDiscovery(discovery: OAuthDiscoveryState): void;
 }
 
+/** What a GrantProvider is built from. */
 export interface GrantProviderInput {
   scope: ScopeId;
   identity: McpClientIdentity;
+  /** The pre-registered client for the server, when configured. It wins over the client document and DCR. */
   preregistered?: PreregisteredClient;
   store: GrantStore;
+  /** The current time, as epoch milliseconds, for token expiry. */
   now: () => number;
 }
 
+/** The `OAuthClientProvider` the SDK's `auth()` drives, backed by a GrantStore. */
 export class GrantProvider implements OAuthClientProvider {
-  /** Set by `redirectToAuthorization`: where the human must go. */
+  /** The URL the human must visit. Set by `redirectToAuthorization`. */
   authorizationUrl: URL | undefined;
   /** The issuer the SDK resolved for the current flow. */
   issuer: string | undefined;
@@ -102,7 +123,10 @@ export class GrantProvider implements OAuthClientProvider {
     return clientMetadata(this.input.identity);
   }
 
-  /** The pending row is minted before the flow starts, so discovery saved ahead of this call lands on it. */
+  /**
+   * The `state` for the authorization redirect. It names the current pending authorization, minting one if
+   * none exists.
+   */
   state(): string {
     const { store, scope } = this.input;
     return encodeOAuthState(scope, (store.pending() ?? store.mintPending()).nonce);
@@ -140,7 +164,7 @@ export class GrantProvider implements OAuthClientProvider {
     const issuer = ctx?.issuer ?? tokens.issuer ?? this.issuer ?? previous?.issuer;
     if (issuer === undefined) throw new KarmiError("mcp.oauth.failed", "Tokens arrived without an issuer.");
     const expiresAt = tokenExpiry(tokens.expires_in, now());
-    // A server that rotates refresh tokens sends a new one; one that does not expects the old one to keep working.
+    // A server that does not rotate refresh tokens sends none, and the old one must keep working.
     const refreshToken = tokens.refresh_token ?? previous?.refreshToken;
     const discovery = store.pending()?.discovery ?? previous?.discovery;
     store.saveGrant({
@@ -190,10 +214,12 @@ export class GrantProvider implements OAuthClientProvider {
   }
 }
 
+/** What the flow functions need for one server. */
 export interface FlowInput {
   provider: GrantProvider;
   serverId: string;
   serverUrl: string;
+  /** The Scope's scoped fetch. */
   fetch: typeof fetch;
 }
 
@@ -223,7 +249,9 @@ export async function beginAuthorization(input: FlowInput, scope: string | undef
   return provider.authorizationUrl;
 }
 
-/** Redeems the callback's code under the pending authorization; the provider stores what comes back. */
+/**
+ * Redeems the callback's code under the pending authorization. The provider stores the tokens that come back.
+ */
 export async function completeAuthorization(input: FlowInput, code: string, iss: string | undefined): Promise<void> {
   let result: Awaited<ReturnType<typeof auth>>;
   try {
@@ -241,8 +269,8 @@ export async function completeAuthorization(input: FlowInput, code: string, iss:
 }
 
 /**
- * Trades the refresh token for a new access token; `false` when the grant cannot be refreshed and the
- * human must consent again. A rejected refresh token drops the grant, so the next attempt asks anew.
+ * Trades the refresh token for a new access token. Returns false when the grant cannot be refreshed and
+ * the human must consent again. A rejected refresh token drops the grant, so the next attempt asks anew.
  */
 export async function refreshGrant(input: FlowInput): Promise<boolean> {
   const { provider } = input;
@@ -285,7 +313,7 @@ async function rediscover(input: FlowInput, store: GrantStore): Promise<OAuthDis
 }
 
 // A flow that stopped because the authorization server takes only a pre-registered client is a Deployment
-// configuration error with a checklist; anything else is the SDK's own account of what went wrong.
+// configuration error with a checklist. Anything else is reported with the SDK's own message.
 function flowError(input: FlowInput, caught: unknown): KarmiError {
   if (caught instanceof KarmiError) return caught;
   const { provider, serverId } = input;

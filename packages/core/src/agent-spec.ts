@@ -4,12 +4,15 @@ import { IDENTIFIER } from "./names";
 import { toJsonSchema, type JsonSchema } from "./schema";
 import { SKILL_INVOKERS } from "./skill";
 
-// Shape layer of Agent Spec validation: what a Spec looks like before any Catalogue or Scope is consulted.
+// The shape layer of Agent Spec validation. It checks what a Spec looks like before any Catalogue or Scope
+// is consulted.
 
 const identifier = z.string().check(z.regex(IDENTIFIER, "must match [A-Za-z0-9_-]{1,64}"));
+/** The schema of a Catalogue item name: a non-empty string. */
 export const name = z.string().check(z.minLength(1));
 const modelId = z.string().check(z.regex(/^[a-z0-9_-]+\/.+$/, "must be provider/model"));
 const modelGlob = z.union([z.string().check(z.minLength(1)), z.array(z.string().check(z.minLength(1)))]);
+/** The schema of a positive integer, used for every numeric limit in a Spec. */
 export const positiveInt = z.int().check(z.positive());
 const settings = z.optional(z.record(z.string(), z.unknown()));
 
@@ -59,9 +62,10 @@ const ConnectionDeclarationSchema = z.strictObject({
   required: z.optional(z.boolean()),
 });
 
+/** The abstract names a Spec may grant under the `providerTools` Capability. */
 export const PROVIDER_TOOL_NAMES = ["web_search", "web_fetch"] as const;
 
-// The numeric knobs of each Capability, shared with the Scope ceilings that bound them.
+/** The numeric limits of each Capability. The Scope ceilings that bound them use the same schemas. */
 export const CapabilityLimitSchemas = {
   scripts: z.strictObject({
     cpuMs: z.optional(positiveInt),
@@ -87,10 +91,12 @@ export const CapabilityLimitSchemas = {
     maxCallsPerThread: z.optional(positiveInt),
   }),
 };
+/** The schema of a Script tier: `isolate` or `container`. */
 export const ScriptTierSchema = z.enum(["isolate", "container"]);
+/** The schema of a Provider Tool name. */
 export const ProviderToolNameSchema = z.enum(PROVIDER_TOOL_NAMES);
 
-// Each Capability owns its block; the key set is closed so a typo can never grant something by accident.
+// Each Capability owns its block. The key set is closed so a typo can never grant something by accident.
 const CapabilitiesSchema = z.strictObject({
   scripts: z.optional(
     z.strictObject({
@@ -112,7 +118,8 @@ const CapabilitiesSchema = z.strictObject({
 
 // A Memory profile is JSON Schema a form can be rendered from: named properties, no composition, no references.
 const jsonType = z.enum(["string", "number", "integer", "boolean", "array", "object", "null"]);
-// Recursive, so the annotation is the loose base type; `MemoryProfileProperty` in agent.ts is the readable one.
+// The schema is recursive, so its annotation is the loose base type. `MemoryProfileProperty` in agent.ts is
+// the readable equivalent.
 const ProfilePropertySchema: z.ZodMiniType = z.lazy(() =>
   z.strictObject({
     type: z.optional(z.union([jsonType, z.array(jsonType)])),
@@ -137,6 +144,7 @@ const MemoryProfileSchema = z.strictObject({
   required: z.optional(z.array(z.string())),
 });
 
+/** The schema of one Permission Policy rule. */
 export const PolicyRuleSchema = z.strictObject({
   match: z.strictObject({
     tool: z.optional(z.union([z.string().check(z.minLength(1)), z.array(z.string().check(z.minLength(1)))])),
@@ -165,6 +173,7 @@ const ContextSchema = z.strictObject({
   ),
 });
 
+/** The schema of an Agent Spec. Parsing turns every bare reference name into an object. */
 export const AgentSpecSchema = z.strictObject({
   agentId: identifier,
   name: name,
@@ -191,8 +200,9 @@ export type NormalizedAgentSpec = z.output<typeof AgentSpecSchema>;
 export const agentSpecJsonSchema: JsonSchema = toJsonSchema(AgentSpecSchema);
 
 /**
- * What the Harness assumes when a Spec's `context` or `approvals` says nothing. Not written into a
- * stored Spec: absence means "inherit", so a Deployment or Scope default can still apply later.
+ * The values the Harness uses when a Spec's `context`, `approvals` or `delegation` says nothing. They are
+ * never written into a stored Spec, because an absent field means "inherit" and a Deployment or Scope
+ * default may still apply.
  */
 export const AGENT_SPEC_DEFAULTS = Object.freeze({
   delegation: Object.freeze({ maxDepth: 4, maxConcurrent: 8, maxChildren: 32 }),

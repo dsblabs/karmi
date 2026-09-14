@@ -2,21 +2,30 @@ import { isMediaRef } from "./context";
 import type { MediaRef } from "./context";
 import type { ModelCapabilities, ProviderCallOptions, ProviderRequest } from "./provider";
 
+/** A MediaRef prepared for one request: its bytes as base64, or the text that stands in for it. */
 export type EncodedMedia = { type: "text"; text: string } | { type: "inline"; data: string; media: MediaRef };
+/** Every MediaRef of a request mapped to its encoded form. */
 export type RequestMedia = ReadonlyMap<MediaRef, EncodedMedia>;
+/** The capability family a MIME type belongs to. Anything not an image, audio, video or PDF is a `file`. */
 export function mediaKind(mime: string): "image" | "audio" | "video" | "pdf" | "file" {
   if (mime === "application/pdf") return "pdf";
   const kind = mime.split("/")[0];
   return kind === "image" || kind === "audio" || kind === "video" ? kind : "file";
 }
+/** The text block that stands in for a file the model cannot view, naming it with its type and size. */
 export function filePlaceholder(ref: MediaRef): { type: "text"; text: string } {
   return { type: "text", text: `[file: ${ref.name ?? ref.id}, ${ref.mimeType}, ${ref.bytes} bytes — not viewable]` };
 }
+/** The text block that stands in for media whose bytes are unavailable to the model. */
 export function mediaPlaceholder(ref: MediaRef): EncodedMedia {
   return mediaKind(ref.mimeType) === "file" ? filePlaceholder(ref) : { type: "text", text: "[media unavailable]" };
 }
 
-/** Bytes exist only in the adapter's request-local map, never in the transcript. */
+/**
+ * Reads and base64-encodes every MediaRef in the request's messages that the model can accept. Media
+ * the model rejects, or whose bytes are missing, maps to a text placeholder. The bytes live only in
+ * the returned map and never enter the transcript.
+ */
 export async function prepareMedia(
   request: ProviderRequest,
   call: ProviderCallOptions,
@@ -69,7 +78,7 @@ function* references(value: unknown): Generator<MediaRef> {
   }
 }
 
-/** Restores native binary blocks embedded in provider-owned Tool/MCP results. */
+/** Restores the provider-native binary blocks inside a provider-owned Tool or MCP result from `media`. */
 export function hydrateMedia(value: unknown, media: RequestMedia): unknown {
   if (Array.isArray(value)) return value.map((entry) => hydrateMedia(entry, media));
   if (!value || typeof value !== "object") return value;

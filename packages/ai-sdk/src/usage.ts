@@ -14,6 +14,7 @@ const routerSchema = z.object({
   cost_details: z.object({ upstream_inference_cost: costValue.nullish() }).optional(),
 });
 
+/** The Usage of a finished stream, with the billed cost when the gateway or OpenRouter reported one. */
 export function usage(part: Finish, provider: string): Usage {
   const tokens = part.usage;
   const result: Usage = {
@@ -48,6 +49,7 @@ function reportedCost(part: Finish, provider: string): UsageCost | undefined {
   return result;
 }
 
+/** The StopReason of a finished stream, read from the raw finish reason first and the unified one second. */
 export function stopReason(part: Finish): StopReason {
   if (part.finishReason.raw === "pause_turn") return "pause_turn";
   if (part.finishReason.raw === "model_context_window_exceeded") return "context_window_exceeded";

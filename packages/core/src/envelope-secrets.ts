@@ -13,22 +13,28 @@ import {
   type SensitiveValue,
 } from "./secrets";
 
-// The default SecretsProvider: Scope credentials envelope-encrypted under the KARMI_KEYRING Worker
-// secret, with the ciphertext rows in the Scope's own ScopeConfig Durable Object. Deployment references
-// are not held here; `createKarmi({ credentials })` answers those in front of any store.
+// This module is the default Secrets provider. Scope credentials are envelope-encrypted under the
+// KARMI_KEYRING Worker secret, and the ciphertext rows live in the Scope's own ScopeConfig Durable Object.
+// Deployment references are not held here. `createKarmi({ credentials })` answers those in front of any
+// store.
 
+/** The options of the default Secrets provider. */
 export interface EnvelopeSecretsOptions {
-  /** The `KARMI_SCOPES` namespace; the rows live with the Scope. */
+  /** The `KARMI_SCOPES` namespace. The credential rows live in the Scope's Durable Object. */
   scopes: DurableObjectNamespace;
-  /** The `KARMI_KEYRING` secret; absent, every Scope reference is missing and `put` refuses. */
+  /** The `KARMI_KEYRING` secret. Without it every Scope reference resolves as missing and `put` throws. */
   keyring?: string;
 }
 
+/** The default Secrets provider, which stores Scope credentials envelope-encrypted under `KARMI_KEYRING`. */
 export function envelopeSecrets(options: EnvelopeSecretsOptions): SecretsProvider {
   return new EnvelopeStore(options);
 }
 
-/** Only Scope references live here; anything else is simply not ours to answer. */
+/**
+ * The name of a `scope:<name>` reference, or undefined for any other reference, which this store does not
+ * hold.
+ */
 function scopeName({ ref }: CredentialRef): string | undefined {
   const parsed = parseCredentialRef(ref);
   return parsed?.source === "scope" ? parsed.name : undefined;
@@ -66,7 +72,8 @@ class EnvelopeStore implements SecretsProvider {
     if (name === undefined) return undefined;
     const stored = await unwrap(this.stub(ref.scope).credentialGet(ref.scope, name));
     if (!stored?.envelope) return undefined;
-    // A stored credential the Deployment lost the ring for is an outage, never "missing" for a fallback to eat.
+    // The ring is read only after the row is found, so a stored credential without a ring throws
+    // `secrets.unavailable` instead of resolving as missing and engaging a Credential fallback.
     const ring = await this.keyring();
     const value = await open(ring, this.aad(ring, ref.scope, name, stored.version), stored.envelope);
     return { ...info(stored), value: sensitive(value) };

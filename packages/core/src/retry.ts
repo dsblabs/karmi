@@ -1,15 +1,23 @@
-// The one retry helper karmi's internals share: bounded attempts, exponential backoff with jitter, and
-// an AbortSignal that ends the wait at once. Callers decide what is retryable; nothing is by default.
+// The one retry helper karmi's internals share. It bounds the attempts, backs off exponentially with
+// jitter, and stops waiting as soon as the AbortSignal fires. Nothing is retryable unless the caller
+// says so.
 
+/** How `retry` treats failures. */
 export interface RetryOptions {
+  /** Whether a thrown error may be retried. */
   retryable: (error: unknown) => boolean;
-  /** Total attempts including the first; default 3. */
+  /** The total attempts including the first. Defaults to 3. */
   attempts?: number;
-  /** Base delay before the second attempt, doubled each time; default 500 ms. */
+  /** The base delay before the second attempt, doubled each time. Defaults to 500 ms. */
   delayMs?: number;
+  /** Ends a pending wait at once and makes the next attempt throw. */
   signal?: AbortSignal;
 }
 
+/**
+ * Retries `run` up to `attempts` times with exponential backoff and jitter. Nothing is retryable
+ * unless `retryable` says so.
+ */
 export async function retry<T>(run: () => Promise<T>, options: RetryOptions): Promise<T> {
   const attempts = options.attempts ?? 3;
   const base = options.delayMs ?? 500;

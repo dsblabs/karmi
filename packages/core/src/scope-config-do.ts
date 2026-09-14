@@ -23,8 +23,9 @@ import type { CredentialInfo } from "./secrets";
 import { encodeKey, type ThreadIdentity, type ThreadSummary } from "./thread";
 import { validateAgentSpec, type ValidationResult } from "./validate";
 
-// One Durable Object per Scope, named `{scope}/config` (keys.ts). Its SQLite holds the config revisions, the
-// Agent Spec versions and the lifecycle state; the Scope handle (scope.ts) is the only caller.
+// This module is the Durable Object every Scope has one of, named `{scope}/config` (keys.ts). Its SQLite
+// holds the config revisions, the Agent Spec versions, the credential rows, the OAuth grants and the
+// lifecycle state. The Scope handle (scope.ts) is the only caller.
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS scope_head (scope_id TEXT PRIMARY KEY, state TEXT NOT NULL, current_revision INTEGER NOT NULL, destroy_operation_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
@@ -42,25 +43,29 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS user_connections (user_id TEXT NOT NULL, name TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (user_id, name));
 `;
 
-/** Versions kept per Agent; older ones are dropped on put. */
+/** The number of versions kept per Agent. A put drops older ones. */
 export const AGENT_HISTORY_DEPTH = 20;
 
+/** The lifecycle state of a Scope. Suspension is reversible and destruction is not. */
 export type ScopeState = "active" | "suspended" | "destroying" | "destroyed";
 
+/** A Scope config document with the revision it was stored as. */
 export interface ConfigRecord {
   revision: number;
   document: ScopeConfigDocument;
 }
 
+/** One stored version of an Agent Spec. */
 export interface AgentRecord {
   agentId: string;
   version: number;
   spec: NormalizedAgentSpec;
   createdAt: number;
-  /** The Catalogue changed since this version was validated; re-put to revalidate. */
+  /** Whether the Catalogue changed since this version was validated. A new put revalidates it. */
   catalogueChanged: boolean;
 }
 
+/** An Agent as `scope.agents.list` reports it: its current version and display fields. */
 export interface AgentSummary {
   agentId: string;
   version: number;
@@ -69,22 +74,28 @@ export interface AgentSummary {
   updatedAt: number;
 }
 
+/** One entry of an Agent's version history. */
 export interface AgentVersion {
   version: number;
   createdAt: number;
 }
 
+/** The lifecycle state of a Scope and its current config revision. */
 export interface ScopeStatus {
   state: ScopeState;
   configRevision: number;
 }
 
+/** The progress of one destroy operation. */
 export interface DestroyStatus {
   operationId: string;
   state: "destroying" | "destroyed";
 }
 
-/** What a Thread reports about itself when its Turn snapshots; the index row is created or touched from it. */
+/**
+ * What a Thread reports about itself when its Turn snapshots. The Thread index row is created or touched from
+ * it.
+ */
 export interface ThreadActivity {
   parent?: import("./delegation").ParentLink;
   threadId: string;
@@ -98,11 +109,14 @@ export interface ThreadActivity {
 export interface TurnSnapshotSource {
   state: ScopeState;
   agent: AgentRecord;
-  /** Deployment defaults merged under the Scope revision; secret-free by construction. */
+  /** The Scope revision resolved over the Deployment defaults. It holds no secrets. */
   config: ScopeConfigDocument;
 }
 
-/** A stored Scope credential as the envelope store reads it: metadata plus the envelope, gone once revoked. */
+/**
+ * A stored Scope credential as the envelope store reads it: the metadata plus the Envelope, which revoke
+ * removes.
+ */
 export interface StoredCredential extends CredentialInfo {
   name: string;
   envelope?: Envelope;
@@ -110,55 +124,66 @@ export interface StoredCredential extends CredentialInfo {
 
 export type { Outcome } from "./outcome";
 
-// The one decode point for each JSON column this Durable Object writes; both are validated before they are stored.
+// These are the decode points for the JSON columns this Durable Object writes. Every value is validated
+// before it is stored, so decoding does not validate again.
 const decodeConfig = (json: string): ScopeConfigDocument => JSON.parse(json);
-/** JSON carries no explicit `undefined`, so a stored normalized Spec is also a plain `AgentSpec`. */
+// JSON carries no explicit `undefined`, so a stored normalized Spec is also a plain `AgentSpec`.
 const decodeSpec = (json: string): NormalizedAgentSpec & AgentSpec => JSON.parse(json);
 const decodeCatalog = (json: string): McpCatalog => JSON.parse(json);
 
-/** Which cached MCP catalogue: one server, one credential partition. */
+/** The key of one cached MCP catalogue: a server and a credential Partition. */
 export interface McpCatalogKey {
   serverId: string;
   partition: string;
 }
 
-/** An access token as it leaves this object: for one Turn, in memory, never the refresh token. */
+/** An access token as it leaves this object, for one Turn in memory. It never carries the refresh token. */
 export interface McpGrantView {
   token: string;
   expiresAt?: number;
   scope?: string;
 }
 
+/** The input to `mcpAuthorize`: the Holder and server, plus what the callback should do afterwards. */
 export interface McpAuthorizeInput extends McpHolderRef {
-  /** The Thread whose parked Step the callback wakes. */
+  /** The Thread whose Parked Step the callback wakes. */
   thread?: ThreadIdentity;
-  /** Scopes to request, replacing the server's configured ones; a step-up passes the union. */
+  /** The OAuth scopes to request, replacing the server's configured ones. A Step-up passes the union. */
   scope?: string;
-  /** Where the callback sends the browser afterwards. */
+  /** The URL the callback sends the browser to afterwards. */
   returnTo?: string;
 }
 
+/** The query parameters the OAuth callback route receives. */
 export interface McpCallbackInput {
+  /** The state nonce that identifies the pending authorization. */
   nonce: string;
+  /** The authorization code, present on success. */
   code?: string;
+  /** The issuer the server identifies itself as. */
   iss?: string;
+  /** The server's error code, present on failure. */
   error?: string;
 }
 
+/** What `mcpCallback` reports: which pending authorization completed, and whether it was granted. */
 export interface McpCallbackResult {
   serverId: string;
   holder: McpHolder;
+  /** The Thread whose Parked Step the callback wakes. */
   thread?: ThreadIdentity;
+  /** The URL the callback sends the browser to afterwards. */
   returnTo?: string;
-  /** Granted, or why not: the server's error or the exchange's failure. */
+  /** Whether the grant was stored, or why not: the server's error or the exchange's failure. */
   outcome: ConnectOutcome;
 }
 
+/** Whether a consent flow ended in a stored grant, with the reason when it did not. */
 export type ConnectOutcome = { granted: true } | { granted: false; reason: string };
 
 type PendingInput = ConstructorParameters<typeof SqlGrantStore>[3];
 
-/** An access token view of a grant; never the refresh token. */
+/** The access token view of a grant. It never carries the refresh token. */
 function grantView(grant: { accessToken: string; expiresAt?: number; scope?: string }): McpGrantView {
   return {
     token: grant.accessToken,
@@ -222,6 +247,11 @@ type AgentHeadRow = {
   deleted_at: number | null;
 };
 
+/**
+ * The Durable Object behind one Scope. It stores the config revisions, Agent Spec versions, Connection
+ * values, credential rows, OAuth grants, MCP catalogue cache and lifecycle state. Every method returns an
+ * Outcome and `scope.ts` is the only caller.
+ */
 export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   abstract readonly deployment: Deployment;
 
@@ -235,11 +265,12 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return this.ctx.storage.sql;
   }
 
-  /** Refreshes in flight by `server/holder`, so concurrent Turns share one token request and never race a rotation. */
+  // Refreshes in flight by `server/holder`. Concurrent Turns share one token request so they never race a
+  // rotation.
   private readonly refreshing = new Map<string, Promise<Outcome<McpGrantView | undefined>>>();
 
-  // Every entry point: the row appears on first use, and once destruction started nothing else may enter
-  // except the lifecycle reads that report on it.
+  // Every entry point calls this first. The head row appears on first use. Once destruction has started,
+  // only the lifecycle reads that report on it may enter.
   private enter(scope: ScopeId, refuseDestroyed = true): Outcome<HeadRow> {
     let head = this.sql.exec<HeadRow>("SELECT * FROM scope_head").toArray()[0];
     if (!head) {
@@ -252,7 +283,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       );
       head = { scope_id: scope, state: "active", current_revision: 0, destroy_operation_id: null };
     } else if (head.scope_id !== scope) {
-      // Only a keys.ts bug can get here; refusing is what keeps it from becoming a cross-Scope bug.
+      // Only a keys.ts bug can get here. Refusing keeps it from becoming a cross-Scope bug.
       throw new Error(`ScopeConfig for "${head.scope_id}" was addressed as "${scope}".`);
     }
     if (refuseDestroyed && (head.state === "destroying" || head.state === "destroyed"))
@@ -336,7 +367,8 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     spec: unknown,
     ifVersion?: number,
   ): Promise<Outcome<{ agentId: string; version: number }>> {
-    // Awaited first so validation, the CAS check and the writes below run without yielding in between.
+    // The fingerprint is awaited first so validation, the compare-and-set check and the writes below run
+    // without yielding in between.
     const fingerprint = await this.deployment.catalogue.fingerprint();
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -453,8 +485,9 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   }
 
   /**
-   * The Scope side of a Turn snapshot. A code-defined Agent is seeded on first use; a stored Spec whose
-   * Catalogue changed is revalidated before it may run again. The Thread index row is created or touched here.
+   * The Scope side of a Turn snapshot. A code-defined Agent is seeded on first use. A stored Spec whose
+   * Catalogue changed is revalidated before it may run again. The Thread index row is created or touched
+   * here.
    */
   async turnSnapshot(scope: ScopeId, agentId: string, thread: ThreadActivity): Promise<Outcome<TurnSnapshotSource>> {
     const fingerprint = await this.deployment.catalogue.fingerprint();
@@ -501,7 +534,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     });
   }
 
-  /** Threads of an Agent, most recently active first; `user` narrows to one User, `null` to user-less Threads. */
+  /** Removes a Thread from the index. */
   threadForget(scope: ScopeId, threadId: string): Outcome<void> {
     const head = this.enter(scope, false);
     if (!head.ok) return head;
@@ -510,6 +543,10 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok(undefined);
   }
 
+  /**
+   * The Threads of an Agent, most recently active first. `user` narrows to one User and `null` to Threads
+   * without a User.
+   */
   threadsList(scope: ScopeId, agent: string, user?: string | null, parent?: string | null): Outcome<ThreadSummary[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -549,8 +586,8 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     );
   }
 
-  // Agent-level Connection values: set through a write-only API, read only by a Turn at call time,
-  // never part of a Spec, a snapshot or a listing.
+  // Agent-level Connection values are set through a write-only API and read only by a Turn at call time.
+  // They are never part of a Spec, a snapshot or a listing.
   connectionsSet(scope: ScopeId, agentId: string, name: string, value: unknown): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -572,7 +609,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok(undefined);
   }
 
-  /** Set values first, then the OAuth grants this Agent holds as `mcp:<serverId>`. */
+  /** The set Connection values, followed by the OAuth grants this Agent holds as `mcp:<serverId>`. */
   connectionsList(scope: ScopeId, agentId: string): Outcome<{ name: string; updatedAt: number }[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -588,7 +625,8 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     ]);
   }
 
-  // User-level Connection values, keyed (User, name): the User's own grants, usable by every Agent of the Scope.
+  // User-level Connection values are keyed by (User, name). They are the User's own grants, usable by
+  // every Agent of the Scope.
   userConnectionSet(scope: ScopeId, user: string, name: string, value: unknown): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -637,8 +675,9 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok(row ? JSON.parse(row.value_json) : undefined);
   }
 
-  // OAuth grants for MCP servers. This object is the only one that talks to an authorization server: it
-  // holds the refresh tokens, mints and redeems pending authorizations, and hands out access tokens only.
+  // The OAuth grants for MCP servers. This object is the only one that talks to an authorization server.
+  // It holds the refresh tokens, mints and redeems pending authorizations, and hands out access tokens
+  // only.
   private oauthServer(head: HeadRow, serverId: string): Outcome<OAuthServer> {
     const config = resolveScopeConfig(this.deployment.defaults, this.document(head.current_revision));
     const server = config.mcp?.servers?.[serverId];
@@ -710,15 +749,16 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       provider,
       serverId: server.id,
       serverUrl: server.config.url,
-      // Only the SSRF guard: the authorization server's host is discovered, not registered.
+      // Only the SSRF guard applies, because the authorization server's host is discovered, not registered.
       fetch: scopedFetch({ fetch: this.deployment.fetch }),
     };
   }
 
   /**
-   * The holder's access token for one server, refreshed first when it is about to expire, or when the
-   * caller's `usedToken` was refused; nothing when there is no grant. A caller whose token another Turn
-   * already rotated gets the current one back; concurrent refreshes of one grant share a single request.
+   * The Holder's access token for one server, or undefined when there is no grant. The token is refreshed
+   * first when it is about to expire or when the caller's `usedToken` was refused. A caller whose token
+   * another Turn already rotated gets the current one back. Concurrent refreshes of one grant share a
+   * single request.
    */
   async mcpRefresh(
     scope: ScopeId,
@@ -763,7 +803,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     }
   }
 
-  /** Starts a consent flow and answers with where the human must go; the callback lands on `mcpCallback`. */
+  /** Starts a consent flow and returns the URL the human must visit. The callback arrives at `mcpCallback`. */
   async mcpAuthorize(scope: ScopeId, input: McpAuthorizeInput): Promise<Outcome<{ authUrl: string }>> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -790,7 +830,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     }
   }
 
-  /** The fixed callback route's other half: redeems the code under the pending authorization and stores the grant. */
+  /** Completes the consent flow. It redeems the code under the pending authorization and stores the grant. */
   async mcpCallback(scope: ScopeId, input: McpCallbackInput): Promise<Outcome<McpCallbackResult>> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -822,7 +862,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     }
   }
 
-  /** Drops the holder's grant and the private catalogue cached under it; a public one is not the holder's to lose. */
+  /** Drops the Holder's grant and the private catalogue cached under it. A public catalogue is kept. */
   mcpDisconnect(scope: ScopeId, serverId: string, holder: McpHolder): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -848,8 +888,8 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok(row ? JSON.parse(row.value_json) : undefined);
   }
 
-  // The envelope store's rows: ciphertext and wrapped keys only. Sealing and opening happen in the
-  // envelope SecretsProvider, so this object never sees a value or the keyring.
+  // The envelope store's rows hold ciphertext and wrapped keys only. Sealing and opening happen in the
+  // envelope Secrets provider, so this object never sees a value or the key ring.
   credentialGet(scope: ScopeId, name: string): Outcome<StoredCredential | undefined> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -857,7 +897,10 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok(row && decodeCredential(row));
   }
 
-  /** Stores `version`, which must follow the stored one, so a put sealed against a stale version never lands. */
+  /**
+   * Stores `envelope` as `version`, which must follow the stored version. A put sealed against a stale version
+   * fails.
+   */
   credentialPut(scope: ScopeId, name: string, version: number, envelope: Envelope): Outcome<CredentialInfo> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -884,7 +927,10 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     });
   }
 
-  /** Drops the wrapped DEK and ciphertext; the row stays so the version keeps counting and `describe` says revoked. */
+  /**
+   * Drops the wrapped data key and ciphertext. The row stays so the version keeps counting and `describe`
+   * reports it revoked.
+   */
   credentialRevoke(scope: ScopeId, name: string): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -904,7 +950,9 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     );
   }
 
-  /** Swaps the envelope of one version in place; a concurrent put or revoke makes it a no-op. */
+  /**
+   * Swaps the Envelope of one version in place. Returns false when a concurrent put or revoke changed the row.
+   */
   credentialRewrap(scope: ScopeId, name: string, version: number, envelope: Envelope): Outcome<boolean> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -920,9 +968,12 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok(changed > 0);
   }
 
-  // The MCP catalogue cache: one `tools/list` per (server, partition), refreshed by whoever holds the
-  // credentials to fetch it; this object only stores what it is handed.
-  /** A partition without a catalogue of its own may read another holder's `public` one, so a grant-less Turn still sees the tools. */
+  // The MCP catalogue cache holds one `tools/list` per (server, Partition). The caller that holds the
+  // credentials fetches it. This object only stores what it is handed.
+  /**
+   * The cached catalogue for each key. A Partition without a catalogue of its own reads the `public`
+   * one, so a Turn without a grant still sees the tools.
+   */
   mcpCatalogGet(scope: ScopeId, keys: McpCatalogKey[]): Outcome<(McpCatalog | undefined)[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;
@@ -974,8 +1025,8 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok(undefined);
   }
 
-  // The tombstone, the operation row and the credential wipe land in one transaction, so a destroy can
-  // never half-happen: once the Scope is destroying, no credential of its own can be opened again.
+  // The Tombstone, the operation row and the credential wipe are written in one transaction so a destroy
+  // cannot half-happen. Once the Scope is destroying, none of its credentials can be opened again.
   destroy(scope: ScopeId): Outcome<{ operationId: string }> {
     const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;
@@ -1004,7 +1055,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok({ operationId });
   }
 
-  // The walk that empties the Scope lands with wayfinder #67; until then an operation stays "destroying".
+  /** The state of the destroy operation `operationId`. Throws `destroy.notFound` when there is none. */
   destroyStatus(scope: ScopeId, operationId: string): Outcome<DestroyStatus> {
     const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;

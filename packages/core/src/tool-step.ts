@@ -30,16 +30,20 @@ import {
 import { inContext, outputLimits, type AvailableTool } from "./tools";
 
 // One tool Step: the model's tool-call batch run under the Harness gate. Read-only Tools run in
-// parallel, anything else alone; every call is logged before it runs and its result as soon as it
-// lands, so a re-run after an eviction knows exactly what already happened. Calls the Policy asks
-// about, and calls a Tool handed to a Job, park the Step: allowed calls run first, then the Step
+// parallel and anything else runs alone. Every call is logged before it runs and its result is logged
+// as soon as it is known, so a re-run after an eviction knows what already happened. A call the Policy
+// asks about, or a call a Tool handed to a Job, parks the Step: allowed calls run first, then the Step
 // returns the reason it waits and re-runs once the log holds the answers.
 
-/** What the Step reads from and writes to: the Thread DO, narrowed to what a batch needs. */
+/** The Thread Durable Object as one tool Step sees it, narrowed to what a batch reads and writes. */
 export interface ToolStepHost {
+  /** Receives every result before it is logged. Scripts use it to read a nested call's value. */
   captureResult?(result: ToolResult): void;
+  /** The Clock's current time, in epoch milliseconds. */
   now(): number;
+  /** The Script sandbox and its limits, present when the `scripts` Capability is granted. */
   scripts?: ScriptExecution;
+  /** The `callId` of the `run_script` call this Step runs inside, when it is a nested Script call. */
   parentCallId?: string;
   scope: ScopeId;
   user?: UserId;
@@ -50,40 +54,58 @@ export interface ToolStepHost {
   attempt: number;
   spec: AgentSpec;
   catalogue: Catalogue;
+  /** The Step's Tool set by name, denied Tools included. */
   available: ReadonlyMap<string, AvailableTool>;
-  /** What the model's context has loaded; a call to anything else is answered, never run. */
+  /**
+   * The Tools and Skills the model's context has loaded. A call to anything else gets an error result and
+   * never runs.
+   */
   loaded: Loaded;
+  /** The bucket spilled outputs are stored in, or undefined when none is bound. */
   bucket: R2Bucket | undefined;
+  /** The Scope's media size limits. */
   mediaLimits?: ScopeConfigDocument["media"];
   logger: Logger;
-  /** The Turn's signal; the Step and each call derive their own from it. */
+  /** The Turn's abort signal. The Step and each call derive their own from it. */
   signal: AbortSignal;
   append(data: ThreadEventData): ThreadEvent;
   /** Logs `approval.requested` for the call and arms its timeout. */
   ask(call: ToolCall): void;
-  /** Starts the consent flow and logs `approval.requested { kind: "connect" }`; a failure to start is the call's result. */
+  /**
+   * Starts the consent flow for a missing OAuth grant and logs `approval.requested { kind: "connect" }`. A
+   * failure to start becomes the call's error result.
+   */
   connect(call: ToolCall, request: ConnectRequest): Promise<{ ok: true } | { ok: false; message: string }>;
-  /** A Connection value by name at one level: the User's own store, or the Agent's. */
+  /** The Connection value stored under `name` at one level, the User's or the Agent's, or undefined. */
   connection(level: Connection["level"], name: string): Promise<unknown>;
 }
 
+/** One tool call from the model: its id, the Tool name and the raw input. */
 export interface ToolCall {
   id: string;
   name: string;
   input: unknown;
 }
 
-/** How an asked call stands: requested (by the Policy, or for a Connection), and answered or not. */
+/**
+ * The Approval state of one call: the request, whether the Policy or a Connection asked, and the answer
+ * once logged.
+ */
 export interface CallApproval {
+  /** The seq of the `approval.requested` event. */
   request: number;
   kind: "tool" | "connect";
   answer?: ApprovalAnswer & { source: ApprovalSource };
 }
 
+/** The logged outcome of a Job a call was handed to. */
 export type JobOutcome =
   { type: "job.completed"; result: ToolResult } | { type: "job.failed"; message: string } | { type: "job.cancelled" };
 
-/** What the log already holds for this Step's calls, so a re-run neither re-fires Hooks nor re-runs finished work. */
+/**
+ * The calls of this Step the log already records. A re-run reads it so that it neither re-fires Hooks nor
+ * repeats finished work.
+ */
 export interface PriorCalls {
   /** Calls with a logged `tool.call`, keyed by tool-call id: their seq (the callId) and effective input. */
   started: ReadonlyMap<string, { seq: number; input: unknown }>;
@@ -98,7 +120,10 @@ export interface PriorCalls {
 const INTERRUPTED_TEXT =
   "This call was interrupted before it reported a result. It may or may not have taken effect; check before repeating it.";
 
-/** Resolves when every call has a result, or with why the Step parks. */
+/**
+ * Runs one tool-call batch. Resolves with undefined once every call has a result, or with the reason the
+ * Step parks.
+ */
 export async function runToolStep(
   host: ToolStepHost,
   batch: readonly ToolCall[],
@@ -116,7 +141,7 @@ export async function runToolStep(
   const step = new AbortController();
   const stepSignal = AbortSignal.any([host.signal, step.signal]);
   const started = new Set<string>();
-  // Each call gets a leaf of the tree, cut when the call is over so nothing it left behind keeps running.
+  // Each call gets its own abort controller, aborted when the call is over so nothing it started keeps running.
   const connects = new Set<string>();
   const run = async (call: ToolCall) => {
     const leaf = new AbortController();
@@ -187,7 +212,7 @@ async function runCall(
     return execute(host, call, entry, started.input, started.seq, signal, finish, true);
   }
 
-  // A re-run may repeat only work that is safe to repeat; anything else gets an honest "interrupted".
+  // A re-run may repeat only work that is safe to repeat. Any other started call gets an interrupted result.
   if (started && !(annotations.readOnlyHint || annotations.idempotentHint)) {
     return finish(started.seq, error(INTERRUPTED_TEXT), { interrupted: { attempt: host.attempt } });
   }
@@ -246,7 +271,10 @@ async function finishJob(host: ToolStepHost, tool: Tool, seq: number, outcome: J
   return finish(seq, spilled.result, spilled.output ? { output: spilled.output } : {});
 }
 
-/** The gate before a call first runs: the Policy, a human's answer, then the before-tool Hooks, which may rewrite the input. */
+/**
+ * Admits a call before it first runs: the Policy, then a human's answer, then the before-tool Hooks, which
+ * may rewrite the input. Returns the input to run with, or the error result to log instead.
+ */
 async function admit(
   host: ToolStepHost,
   call: ToolCall,

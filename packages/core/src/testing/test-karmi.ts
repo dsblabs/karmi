@@ -11,35 +11,44 @@ import { fakeProvider, type FakeProvider } from "./fake-provider";
 import { routeFetch, type FakeMcpServer } from "./fake-mcp-server";
 import { memorySecrets, type MemorySecrets } from "./memory-secrets";
 
+/** A Thread whose `send` waits for the Turn to end. */
 export interface TestThread extends Omit<Thread, "send"> {
-  /** Resolves when the Turn ends or parks (completed, failed or paused) with everything it logged from this call on. */
+  /** Sends the input and resolves with every event the Turn logged once it completes, fails or is Parked. */
   send(input: TurnInput, options?: SendOptions): Promise<ThreadEvent[]>;
 }
 
+/** A Scope whose Threads are `TestThread`s. */
 export interface TestScope extends Omit<Scope, "thread"> {
   thread(target: ThreadIdentity | string): TestThread;
 }
 
+/** What `createTestKarmi` returns: the karmi under test and the doubles it was built with. */
 export interface TestKarmi {
   karmi: Karmi;
+  /** The Clock every time-driven part of `karmi` reads. `clock.advance` moves it. */
   clock: TestClock;
-  /** Every Agent runs against this one; script it per test with `provider.script(...)`. */
+  /** The fake Provider every Agent runs against. Script it per test with `provider.script(...)`. */
   provider: FakeProvider;
-  /** The in-memory SecretsProvider every `scope:<name>` reference resolves through, unless `options.secrets` replaced it. */
+  /**
+   * The in-memory SecretsProvider every `scope:<name>` reference resolves through, unless `options.secrets`
+   * replaced it.
+   */
   secrets: MemorySecrets;
   /** The Scope `test`, ready to use. */
   scope: TestScope;
 }
 
-/**
- * A karmi for the test Worker: the Catalogue under test, a fake Provider named `fake` that serves every
- * model id, an in-memory SecretsProvider, and the Scope `test`. Export `karmi.durableObjects` from the same module.
- */
+/** Options for `createTestKarmi`. The Test kit supplies `catalogue` and `clock` itself. */
 export interface TestKarmiOptions extends Omit<KarmiOptions, "catalogue" | "clock"> {
-  /** In-process MCP servers the Scope's `scopedFetch` reaches by their `url`; register them in the Scope config. */
+  /** In-process MCP servers the Scope's Scoped fetch routes to by `url`. Register each in the Scope config too. */
   mcpServers?: FakeMcpServer[];
 }
 
+/**
+ * Creates a karmi for the test Worker. It runs the Catalogue under test against a fake Provider named `fake`
+ * that serves every model id, an in-memory SecretsProvider, and the Scope `test`. Export
+ * `karmi.durableObjects` from the same module.
+ */
 export function createTestKarmi(catalogue: CatalogueInput, options: TestKarmiOptions = {}): TestKarmi {
   const clock = testClock(resolveBindings(env, options.bindings));
   const provider = fakeProvider(["OK"]);
@@ -50,7 +59,7 @@ export function createTestKarmi(catalogue: CatalogueInput, options: TestKarmiOpt
   };
   const { mcpServers, ...rest } = options;
   const karmi = createKarmi({
-    // A client identity out of the box, so an OAuth fake needs no more than `mcpServers`.
+    // A default Client identity, so a test with an OAuth fake needs no more than `mcpServers`.
     oauth: { origin: "https://karmi.test", clientName: "karmi test" },
     ...rest,
     ...(mcpServers && { fetch: routeFetch(mcpServers, options.fetch) }),

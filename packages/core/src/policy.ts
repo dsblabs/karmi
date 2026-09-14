@@ -2,12 +2,17 @@ import type { PolicyRule } from "./agent";
 import { matchGlob } from "./glob";
 import type { ToolAnnotations } from "./tool";
 
-// Permission Policy evaluation: ordered rules, first match wins, no match means ask. The rule list a
-// Turn evaluates is Scope rules, then Deployment rules, then the Spec's own (resolveScopeConfig
-// already orders the first two); a Thread's remembered allows come before all of them.
+// Permission Policy evaluation. Rules are ordered, the first match wins and no match means ask. A Turn
+// evaluates the Scope rules, then the Deployment rules, then the Spec's own, and `resolveScopeConfig`
+// already orders the first two. A Thread's remembered allows come before all of them.
 
+/** The effect of a Policy rule. */
 export type PolicyEffect = PolicyRule["effect"];
 
+/**
+ * The Policy effect for one Tool: a remembered allow, the first matching rule's effect, or `ask` when nothing
+ * matches.
+ */
 export function evaluatePolicy(
   rules: readonly PolicyRule[],
   tool: { name: string; annotations: ToolAnnotations },
@@ -32,7 +37,7 @@ function matchesRule(rule: PolicyRule, tool: { name: string; annotations: ToolAn
   return true;
 }
 
-/** The effect of the first rule that names the Tool, or a remembered allow; undefined when no rule matches. */
+/** The remembered allow or the effect of the first rule that names the Tool. Undefined when no rule matches. */
 export function explicitEffect(
   rules: readonly PolicyRule[],
   tool: { name: string; annotations: ToolAnnotations },

@@ -1,5 +1,5 @@
 import tseslint from "typescript-eslint";
-import { extensionlessImportRules, restrictedSyntax, rules } from "../../eslint.guardrails.js";
+import { extensionlessImportRules, jsdocPlugin, jsdocRules, restrictedSyntax, rules } from "../../eslint.guardrails.js";
 
 // The compatibility baseline (ADR-0002): no decorators anywhere. An adapter may use Node builtins; this one needs none.
 export default tseslint.config(
@@ -14,6 +14,12 @@ export default tseslint.config(
   },
   {
     files: ["src/**/*.ts"],
-    rules: { ...rules, "no-restricted-syntax": ["error", ...restrictedSyntax] },
+    ignores: ["src/vendor/**"],
+    plugins: jsdocPlugin,
+    rules: {
+      ...jsdocRules,
+      ...rules,
+      "no-restricted-syntax": ["error", ...restrictedSyntax],
+    },
   },
 );

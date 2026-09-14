@@ -119,51 +119,61 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS inputs (id INTEGER PRIMARY KEY AUTOINCREMENT, turn INTEGER NOT NULL, json TEXT NOT NULL);
 `;
 
-/** Eager snapshot ceiling; a larger one is a Spec problem, not something to page lazily. */
+/** The largest Turn snapshot, in bytes of JSON, a Thread stores. A Spec that produces a larger one is rejected. */
 export const SNAPSHOT_LIMIT = 256 * 1024;
 const MAX_STEP_ATTEMPTS = 3;
 const POLL_TIMEOUT_MS = 15_000;
 const POLL_LIMIT = 256;
-/** A Step past this without progress is presumed lost; the alarm re-enters the loop. */
+/** How long a Step may run without progress before the alarm presumes it lost and re-enters the loop. */
 const STEP_WATCHDOG_MS = 60_000;
 const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 /** What a Turn may spend before asking to continue, when the Agent has no `longRunning` grant. */
 export const DEFAULT_BUDGET: Readonly<Budget> = Object.freeze({ steps: 25, wallMs: 10 * 60_000, tokens: 500_000 });
-/** A granted `longRunning` bound the Spec leaves out; JSON has no Infinity. */
+/** The value of a `longRunning` bound the Spec leaves out. It stands in for Infinity, which JSON cannot store. */
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 const CANCELLED = Symbol("cancelled");
 
-/** What a Turn runs under, persisted locally at its first Step so a Spec change lands on the next Turn. */
+/**
+ * The resolved Scope and Agent configuration one Turn runs under. It is persisted in the Thread at the Turn's
+ * first Step, so a Spec change takes effect on the next Turn.
+ */
 export interface TurnSnapshot {
+  /** The `scripts` Capability under the Scope ceiling. Absent without the grant. */
   scripts?: ScriptLimits;
+  /** The Scope's media limits. */
   media?: ScopeConfigDocument["media"];
   agentVersion: number;
-  /** Stored normalized; a JSON round trip already dropped every explicit `undefined`. */
+  /** The Agent Spec, normalised. A JSON round trip has dropped every explicit `undefined`. */
   spec: AgentSpec;
-  /** The chosen Provider profile, secret-free, and its name. */
+  /** The chosen Provider profile without its credential. */
   profile: ProviderConfig;
   profileName: string;
-  /** The Deployment profile the chosen one falls back to, and on which reasons; absent without opt-in. */
+  /** The Deployment profile the chosen one falls back to, and on which reasons. Absent without opt-in. */
   fallback?: { name: string; profile: ProviderConfig; on: FallbackReason[] };
-  /** Scope rules, then Deployment rules, then the Spec's own. */
+  /** The Permission Policy rules in order: the Scope's, then the Deployment's, then the Spec's own. */
   policy: PolicyRule[];
   /** The Spec's `approvals.timeout` under the Scope ceiling, in milliseconds. */
   approvalTimeout: number;
-  /** The `longRunning` grant under the Scope ceiling, or the small defaults without one. */
+  /** The `longRunning` grant under the Scope ceiling, or `DEFAULT_BUDGET` without one. */
   budget: Budget;
+  /** The `delegation` grant under the Scope ceiling. Absent without the grant. */
   delegation?: NonNullable<Capabilities["delegation"]>;
-  /** The `scheduling` grant under the Scope ceiling and the Deployment caps; absent without the grant. */
+  /** The `scheduling` grant under the Scope ceiling and the Deployment caps. Absent without the grant. */
   scheduling?: SchedulingLimits;
-  /** The Spec's `context` with the Framework defaults filled in; `window` stays open for the model's own. */
+  /** The Spec's `context` with the Framework defaults filled in. `window` is absent when the model's own applies. */
   context: { window?: number; windowCeiling?: number; reserveTokens: number; keepRecentTokens: number };
-  /** The MCP servers the Spec references, as registered, and the egress globs they run under; absent without references. */
+  /**
+   * The MCP servers the Spec references, as registered, and the egress globs they run under. Absent when the
+   * Spec references none.
+   */
   mcp?: { servers: Record<string, McpServerConfig>; hosts?: string[] };
 }
 
-/** What `prepare` works out before a Turn starts: its snapshot when the Scope answered, and its Tool sources. */
+/** What `prepare` works out before a Turn starts: its snapshot, when the Scope answered, and its Tool sources. */
 interface PreparedTurn {
   snapshot?: TurnSnapshot;
   mcp?: McpTurnSource;
+  /** A fingerprint of the whole Tool set the Turn runs with. */
   toolsVersion: string;
 }
 
@@ -182,24 +192,30 @@ type ThreadRow = {
   cancelled: number;
   agent_version: number | null;
   snapshot_json: string | null;
-  /** A `FallbackEngaged` once a model Step of this Turn fell back after a Provider error. */
+  /** A `FallbackEngaged` once a model Step of this Turn has fallen back after a Provider error. */
   fallback_json: string | null;
   usage_json: string;
 };
 
 type EventRow = { seq: number; turn: number; at: number; type: ThreadEventType; json: string };
 
-/** What one model call runs under: the profile, its credentials for this call only, and what `step.started` records. */
+/**
+ * What one model call runs under: the profile, its credentials for this call only, and what `step.started`
+ * records about them.
+ */
 interface StepCall {
   profile: ProviderConfig;
   credentials: ProviderCredentials;
   started: StepCredentials;
 }
 
-/** A model Step outcome: the Provider finished, or it failed and the next fallback should try. */
+/** The outcome of one model Step attempt: the Provider finished, or it failed and the next fallback should try. */
 type StepResult = { ok: true; stopReason: StopReason; message: ContentBlock[] } | { ok: false; error: ProviderError };
 
-/** An `approval.requested` before its `timeoutAt` is stamped; distributive so each kind keeps its own fields. */
+/**
+ * An `approval.requested` before its `timeoutAt` is stamped. The type is distributive so each kind keeps its
+ * own fields.
+ */
 type ApprovalRequest =
   Extract<ThreadEventData, { type: "approval.requested" }> extends infer E
     ? E extends { timeoutAt: number }
@@ -209,23 +225,31 @@ type ApprovalRequest =
 
 type ModelPlan = Extract<Plan, { kind: "model" }>;
 type ToolPlan = Extract<Plan, { kind: "tool" }>;
-/** How a compact Step ended: with a `thread.compacted`, or called off (nothing to drop, or a Hook's `skip`). */
+/**
+ * How a compact Step ended: with a `thread.compacted`, or called off because nothing could be dropped or a
+ * Hook said `skip`.
+ */
 type CompactResult = "compacted" | "skipped";
 type Summary = Pick<Compacted, "strategy" | "summary" | "raw" | "usage">;
-/** The events the next model call is built from, and the seq a new cut must pass. */
+/** The events the next model call is built from, and the `seq` a new Compaction cut must stay above. */
 type ContextLog = { events: ThreadEvent[]; floor: number };
 /** Whether the Turn loop goes on after a helper, or the helper already ended or parked the Turn. */
 type Next = "continue" | "stop";
 
-// The one decode point for each JSON column this Durable Object writes. The rows are its own, so the
-// shapes are trusted; a shape change handles old rows here.
+// These are the only decode points for the JSON columns this Durable Object writes. The rows are its own,
+// so the shapes are trusted. A shape change handles old rows here.
 const decodeUsage = (json: string): Usage => JSON.parse(json);
-// Snapshots taken before Compaction landed carry no `context`; they run under the defaults.
+// Older snapshots carry no `context` and run under the defaults.
 const decodeSnapshot = (json: string): TurnSnapshot => ({ context: resolveContext({}, {}), ...JSON.parse(json) });
 const decodeBinding = (json: string): DeliveryBinding => JSON.parse(json);
 const decodeEvent = (json: string): ThreadEventData => JSON.parse(json);
 const decodeInput = (json: string): TurnInput => JSON.parse(json);
 
+/**
+ * The Durable Object that owns one Thread: its event log, inputs, Schedules and Delegations. It drives every
+ * Turn itself. The Worker reaches it through `openThread`, and a Deployment subclasses it to supply the
+ * `deployment`.
+ */
 export abstract class ThreadDurableObject extends ScheduledDurableObject {
   abstract readonly deployment: Deployment;
 
@@ -235,13 +259,13 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private syncAgain = false;
   private head = 0;
   private active = false;
-  /** Subscribers parked on an empty poll; each append wakes them all. */
+  /** Subscribers waiting on an empty poll. Each append wakes them all. */
   private waiters: (() => void)[] = [];
-  /** Root of the Turn's AbortSignal tree; aborted when the Turn ends or is cancelled. */
+  /** The root of the Turn's AbortSignal tree. It is aborted when the Turn ends or is cancelled. */
   private turnAbort = new AbortController();
-  /** The running Turn's MCP servers: catalogues and lazily opened sessions, dropped when the Turn ends. */
+  /** The running Turn's MCP servers, as catalogues and lazily opened sessions. Dropped when the Turn ends. */
   private mcp: { turn: number; source: McpTurnSource | undefined } | undefined;
-  /** The Turn whose snapshot and catalogues are being fetched; an input arriving meanwhile is for the one after. */
+  /** The Turn whose snapshot and catalogues are being fetched. An input arriving meanwhile is for the Turn after it. */
   private preparing: number | undefined;
 
   constructor(ctx: DurableObjectState, env: KarmiBindings) {
@@ -258,7 +282,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       );
     if (!columns("thread").has("platform_failure")) {
       ctx.storage.sql.exec("ALTER TABLE thread ADD COLUMN platform_failure INTEGER NOT NULL DEFAULT 0");
-      // Preserve the raw watchdog installed by versions predating the jobs table.
+      // A Thread written before the jobs table existed has no watchdog row, so a running Turn gets one here.
       ctx.storage.sql.exec(
         "INSERT OR IGNORE INTO jobs (id, kind, dueAt, payload, attempt, generation) SELECT 'watchdog', 'watchdog', 0, 'null', 0, ? FROM thread WHERE state = 'running'",
         crypto.randomUUID(),
@@ -277,8 +301,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return this.ctx.storage.sql;
   }
 
-  // Every entry point: an explicit key creates the Thread on first touch, a bare key never does, and a
-  // Thread answers only to the identity it was created with.
+  // Every entry point passes through here. An address with `create` makes the Thread on first touch, one
+  // without never does, and a Thread answers only to the identity it was created with.
   private enter(address: ThreadAddress): Outcome<ThreadRow> {
     if (this.sql.exec("SELECT id FROM deleted").toArray().length)
       return fail(new KarmiError("thread.deleted", "This Thread has been deleted."));
@@ -452,9 +476,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return ok({ turn, seq: this.head });
   }
 
-  /** Queues one input and wakes the loop; returns the Turn it will run in and its `inputs` row. */
+  /** Queues one input and wakes the loop. Returns the Turn it will run in and its `inputs` row id. */
   private enqueue(row: ThreadRow, input: TurnInput, steer: boolean): { turn: number; id: number } {
-    // A steer joins the Turn in flight; anything else coalesces into the one next Turn, which is the one
+    // A steer joins the Turn in flight. Anything else coalesces into the one next Turn, which is the one
     // after the Turn being prepared right now.
     const joins = steer && row.state !== "idle";
     const next = this.preparing === undefined ? row.turn + 1 : this.preparing + 1;
@@ -569,14 +593,15 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       .exec<{ turn: number }>("SELECT turn FROM events WHERE seq = ? AND type = 'approval.requested'", seq)
       .toArray()[0];
     if (!requested) return fail(new KarmiError("approval.notFound", `No Approval was requested at seq ${seq}.`));
-    // A request of a finished Turn was answered by the answer, the clock or the cancel that ended it.
+    // A request of a finished Turn was already answered, timed out, or cancelled with that Turn.
     const request =
       row.state === "idle" || requested.turn !== row.turn ? undefined : this.readTurn(row).requests.get(seq);
     if (!request || request.answered)
       return fail(new KarmiError("approval.resolved", `The Approval at seq ${seq} has already been answered.`));
     if (answer.decision !== "allow" && answer.decision !== "deny")
       return fail(new KarmiError("approval.invalid", `An Approval answer is "allow" or "deny".`));
-    // Only completing OAuth can grant a Connection; a hand-written allow would retry a call that still has no token.
+    // Only completing OAuth can grant a Connection. A hand-written allow would retry a call that still has
+    // no token.
     if (request.kind === "connect" && answer.decision === "allow")
       return fail(
         new KarmiError(
@@ -603,13 +628,16 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const current = this.row();
     if (current.turn !== row.turn || current.state === "idle") return ok(undefined);
     const pending = this.readTurn(current).requests.get(seq);
-    // The child owns remembered grants; the parent only records the answer.
+    // The child owns remembered grants. The parent only records the answer.
     if (pending && !pending.answered) this.resolve(current, seq, pending, { ...answer, remember: false }, "answer");
     await this.settle(current);
     return ok(undefined);
   }
 
-  /** The OAuth callback's word on a `connect` request for `serverId`: granted retries the call, anything else refuses it. */
+  /**
+   * Answers the `connect` requests for `serverId` from the OAuth callback. A grant retries the call. Anything
+   * else refuses it.
+   */
   async connected(address: ThreadAddress, serverId: string, outcome: ConnectOutcome): Promise<Outcome<void>> {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
@@ -633,7 +661,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const row = entered.value;
     if (row.state === "idle") return ok(undefined);
     if (this.active) {
-      // The loop owns the Turn: it notices the abort at once (or as soon as the park's Hooks return) and ends the Turn itself.
+      // The loop owns the Turn. It notices the abort at once, or as soon as the park's Hooks return, and
+      // ends the Turn itself.
       this.update({ cancelled: 1 });
       this.turnAbort.abort();
       return ok(undefined);
@@ -653,7 +682,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (!status.ok) return status;
     if (status.value.state === "suspended")
       return fail(new KarmiError("scope.suspended", `Scope "${row.scope_id}" is still suspended.`));
-    // The operator resumed on purpose; the Turn goes on under whatever the Scope says now.
+    // The snapshot is dropped so the Turn goes on under the Scope's current configuration.
     this.update({ snapshot_json: null });
     this.wake(row, "resume");
     return ok(undefined);
@@ -675,7 +704,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return ok(undefined);
   }
 
-  /** A Compaction outside any Turn: the Thread must be idle, and stays busy to a `send` until it is done. */
+  /**
+   * Runs a Compaction outside any Turn. The Thread must be idle, and a `send` sees it as busy until the
+   * Compaction is done.
+   */
   async compact(address: ThreadAddress, options: CompactOptions): Promise<Outcome<void>> {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
@@ -822,7 +854,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           turn,
           route.json,
         );
-        // Give a live subscriber time to acknowledge the trigger; the Queue checks again before delivery.
+        // The delivery is due a second later so a live subscriber can acknowledge the event first. The Queue
+        // checks again before delivering.
         this.scheduler.set({ id: `delivery:${seq}`, kind: "delivery", dueAt: at + 1000, payload: { toSeq: seq } });
       }
     }
@@ -856,7 +889,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   private kick(recovering: boolean): void {
     this.armWatchdog();
-    // DO lifetime is independent of the caller. Persisted work, rather than waitUntil, survives eviction.
+    // The loop is not awaited. The Durable Object outlives the caller's request, and it is the persisted rows,
+    // not `waitUntil`, that survive an eviction.
     void this.run(recovering).catch((error: unknown) => {
       console.error("Thread loop interrupted", error);
     });
@@ -920,12 +954,12 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       this.scheduler.cancel("watchdog");
       return;
     }
-    // A live invocation owns the Step. Its alarm is also the keep-alive heartbeat while streaming.
+    // While an invocation is still running the Step, the alarm only re-arms itself as a heartbeat.
     if (this.active) this.armWatchdog();
     else this.kick(row.state === "running");
   }
 
-  // The Turn loop: one instance at a time, driven by `send`, the watchdog alarm and the answers that
+  // The Turn loop. One instance runs at a time, driven by `send`, the watchdog alarm and the answers that
   // wake a parked Turn. It resumes whatever the row says is in flight, then drains queued inputs.
   private async run(recovering: boolean): Promise<void> {
     if (this.active) return;
@@ -956,8 +990,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         }
         this.armWatchdog();
         await this.turn(row);
-        // A parked Turn or a platform failure waits for its answer or watchdog, rather than spinning here;
-        // an answer or cancel that landed during the park's Hooks is picked up by the next iteration.
+        // A parked Turn or a platform failure waits for its answer or the watchdog rather than spinning
+        // here. An answer or cancel that landed during the park's Hooks is picked up by the next iteration.
         const after = this.row();
         if (after.platform_failure || (after.state === "parked" && !after.cancelled)) return;
       }
@@ -967,9 +1001,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   /**
-   * Everything a Turn needs before its first event: the Scope snapshot and the MCP catalogues (refreshed
-   * when stale), so `turn.started` can carry the version of the whole Tool set. A Scope that refuses
-   * leaves the snapshot out; the first Step takes it again and ends the Turn with the reason.
+   * Gathers what a Turn needs before its first event: the Scope snapshot and the MCP catalogues, refreshed
+   * when stale, so `turn.started` can carry the version of the whole Tool set. When the Scope refuses, the
+   * snapshot is left out. The first Step then asks again and ends the Turn with the reason.
    */
   private async prepare(row: ThreadRow): Promise<PreparedTurn> {
     const fingerprint = await this.deployment.catalogue.fingerprint();
@@ -984,10 +1018,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return { snapshot: source.snapshot, ...(mcp && { mcp }), toolsVersion };
   }
 
-  /** Prepares and starts the next Turn from the queued inputs; false when nothing is queued. */
+  /** Prepares and starts the next Turn from the queued inputs. Returns false when nothing is queued. */
   private async startNextTurn(row: ThreadRow): Promise<boolean> {
     if (!this.hasInputs()) return false;
-    // The new Turn's signal tree starts here: the catalogue refreshes below already run under it.
+    // The new Turn's signal tree starts here so the catalogue refreshes in `prepare` run under it.
     this.turnAbort = new AbortController();
     this.preparing = row.turn + 1;
     try {
@@ -1024,7 +1058,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return true;
   }
 
-  /** Counts an interrupted Step's recovery; stops when the Step has no attempts left and the Turn failed. */
+  /** Counts an interrupted Step's recovery. Fails the Turn and returns `stop` when the Step has no attempts left. */
   private async recover(row: ThreadRow): Promise<Next> {
     const plan = this.readTurn(row).plan;
     if (isRerun(plan)) {
@@ -1046,7 +1080,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return event?.type === "turn.started" ? event.input : undefined;
   }
 
-  /** Brings a parked Turn back to running; the loop is kicked unless the caller is the loop. */
+  /** Brings a parked Turn back to running. The loop is kicked unless the caller is the loop. */
   private wake(row: ThreadRow, reason: ResumeReason, kick = true): void {
     this.append(row.turn, { type: "turn.resumed", reason }, this.turnInput(row.turn)?.channelRef);
     this.update({ state: "running" });
@@ -1070,7 +1104,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (end.type !== "turn.paused") this.scheduler.cancel("delegation-deadline");
     if (end.type !== "turn.paused" && this.hasInputs()) this.armWatchdog();
     else this.scheduler.cancel("watchdog");
-    // The snapshot is gone from the row by now; a Turn that never took one has no Hooks to run.
+    // The row no longer holds the snapshot, so it is read from the copy taken on entry. A Turn that never
+    // took one has no Hooks to run.
     const snapshot = row.snapshot_json === null ? undefined : decodeSnapshot(row.snapshot_json);
     if (snapshot) {
       if (end.type === "turn.failed")
@@ -1078,16 +1113,17 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       await this.turnHooks(row, snapshot, "after-turn", { end });
     }
     this.turnAbort.abort();
-    // Sessions never outlive the Turn, parked or not; a woken Turn opens fresh ones from the cached catalogues.
+    // MCP sessions never outlive the Turn, parked or not. A woken Turn opens fresh ones from the cached
+    // catalogues.
     const mcp = this.mcp;
     this.mcp = undefined;
     await mcp?.source?.close();
     await this.syncDelegations();
   }
 
-  // Approvals: one request per asked call or per exhausted budget, answered once, by a human, the
-  // clock or a cancel. Answering is one append; `settle` decides whether the Turn goes on.
-  /** `timeoutAt` is measured from the request's own `at`, so the two never drift apart. */
+  // Approvals are one request per asked call or per exhausted budget, answered once by a human, a timeout
+  // or a cancel. Answering is one append, and `settle` decides whether the Turn goes on.
+  /** Appends an `approval.requested` event and arms its timeout. `timeoutAt` is measured from the event's own `at`. */
   private request(row: ThreadRow, snapshot: TurnSnapshot, data: ApprovalRequest, channelRef: unknown): void {
     const at = this.deployment.clock.now();
     const timeoutAt = at + snapshot.approvalTimeout;
@@ -1126,12 +1162,15 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     await this.settle(row);
   }
 
-  /** After an answer or a Job outcome: a parked Turn with nothing left to wait for goes on, or ends on a refused continue. */
+  /**
+   * Continues a parked Turn that has nothing left to wait for, or ends it when a `continue` was refused. Called
+   * after an answer or a Job outcome.
+   */
   private async settle(row: ThreadRow): Promise<void> {
     if (this.row().state !== "parked") return;
     const turn = this.readTurn(row);
     if (this.waiting(turn) !== undefined) return;
-    // An allowed `continue` leaves no request behind; a refused one ends the Turn.
+    // An allowed `continue` leaves no request behind, so any `continue` still here was refused.
     for (const request of turn.requests.values()) {
       if (request.kind !== "continue" || request.child) continue;
       await this.finish(this.row(), { type: "turn.completed", stopReason: "budget", message: turn.lastMessage });
@@ -1159,9 +1198,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     await this.finish(this.row(), failure("cancelled", "The Turn was cancelled."));
   }
 
-  // One Turn from wherever the log says it stands: model Steps and tool Steps alternate until a model
-  // Step ends without tool calls. `attempt` on a model Step indexes the fallback list, so an eviction
-  // re-runs the same model and only a Provider failure rotates; on a tool Step it counts recoveries.
+  // This runs one Turn from wherever the log says it stands. Model Steps and tool Steps alternate until a
+  // model Step ends without tool calls. On a model Step, `attempt` indexes the fallback list, so an
+  // eviction re-runs the same model and only a Provider failure rotates. On a tool Step it counts recoveries.
   private async turn(row: ThreadRow): Promise<void> {
     if (this.turnAbort.signal.aborted) this.turnAbort = new AbortController();
     try {
@@ -1173,7 +1212,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         this.armWatchdog();
         return;
       }
-      // A bug, not an eviction: end the Turn honestly rather than leave it to the watchdog.
+      // Anything else is a bug, not an eviction, so the Turn ends as failed instead of waiting for the
+      // watchdog to re-run it.
       await this.finish(this.row(), failure("internal", errorMessage(caught)));
     }
   }
@@ -1197,7 +1237,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       if (plan.kind !== "compact" && plan.fresh && exhausted(turn.budget, snapshot.budget))
         return this.parkOnBudget(row, snapshot, turn, channelRef);
       let next: Next;
-      // The context log is read once here and handed down: the boundary check and the Step both use it.
+      // The context log is read once here and handed down, because the boundary check and the Step both
+      // use it.
       const context = plan.kind === "model" && plan.fresh ? this.contextLog() : undefined;
       const limits = this.limits(snapshot);
       if (plan.kind === "compact")
@@ -1213,8 +1254,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   /**
-   * The Tool set of one Step: the snapshot's references under the Thread's remembered allows and what
-   * the context has loaded so far. Resolved per Step, since a Step may load Tools for the next one.
+   * Builds the resolver for one Step's Tool set: the snapshot's references under the Thread's remembered
+   * allows and what the context has loaded so far. It is resolved per Step, since a Step may load Tools
+   * for the next one.
    */
   private toolSet(row: ThreadRow, channelRef: unknown): (snapshot: TurnSnapshot) => Promise<ToolSet> {
     return async (snapshot) => {
@@ -1260,7 +1302,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     };
   }
 
-  /** This Turn's MCP source, opened once per Turn; a recovered or resumed Turn rebuilds it from the cached catalogues. */
+  /**
+   * Returns this Turn's MCP source, opened once per Turn. A recovered or resumed Turn rebuilds it from the
+   * cached catalogues.
+   */
   private async mcpSource(row: ThreadRow, snapshot: TurnSnapshot): Promise<McpTurnSource | undefined> {
     if (this.mcp?.turn !== row.turn) this.mcp = { turn: row.turn, source: await this.openMcp(row, snapshot) };
     return this.mcp.source;
@@ -1294,7 +1339,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     );
   }
 
-  /** What every Fragment of this Turn sees; `model` is the one in use when a model Step names it. */
+  /**
+   * Builds the context every Fragment of this Turn sees. `model` is the one a model Step names, or the Spec's
+   * default.
+   */
   private fragmentContext(
     row: ThreadRow,
     snapshot: TurnSnapshot,
@@ -1311,7 +1359,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     };
   }
 
-  /** A Turn input naming a Skill is a User command: the Skill is activated before the first model Step. */
+  /**
+   * Activates the Skill the Turn input names, if any, before the first model Step. Fails the Turn when the
+   * Skill is not available.
+   */
   private async activateCommand(
     row: ThreadRow,
     snapshot: TurnSnapshot,
@@ -1321,7 +1372,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const input = this.turnInput(row.turn);
     if (input?.kind !== "message" || input.skill === undefined) return "continue";
     const name = input.skill;
-    // Already active, from an earlier Turn or from before an eviction: nothing to add.
+    // A Skill already active from an earlier Turn, or from before an eviction, is not loaded again.
     if (set.loaded.skills.has(name)) return "continue";
     const entry = set.skills.find((candidate) => candidate.skill.name === name && candidate.invokableBy !== "model");
     if (!entry) {
@@ -1341,7 +1392,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return "continue";
   }
 
-  /** At a batch boundary, steer inputs join the conversation before the next model Step. */
+  /**
+   * Appends queued steer inputs to the Turn at a batch boundary, so they enter the conversation before the
+   * next model Step.
+   */
   private joinSteers(row: ThreadRow, turn: TurnState, channelRef: unknown): TurnState {
     if (isRerun(turn.plan)) return turn;
     const steers = this.sql.exec<{ json: string }>("SELECT json FROM inputs WHERE steer = 1 ORDER BY id").toArray();
@@ -1352,7 +1406,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return this.readTurn(row);
   }
 
-  /** Parks the Turn on its spent budget, asking to continue unless an unanswered ask already exists. */
+  /**
+   * Parks the Turn on its spent budget and asks to continue, unless an unanswered `continue` request already
+   * exists.
+   */
   private parkOnBudget(row: ThreadRow, snapshot: TurnSnapshot, turn: TurnState, channelRef: unknown): Promise<void> {
     const asked = [...turn.requests.values()].some((request) => request.kind === "continue" && !request.answered);
     if (!asked)
@@ -1374,7 +1431,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const { modelAttempt, attempt, engaged, target } = gated;
     const { model } = target;
     this.update({ step: plan.n, attempt: modelAttempt, ...(plan.fresh && { recoveries: 0, platform_failure: 0 }) });
-    // Resolved now, for this one call, and never written anywhere: only its source and version are logged.
+    // The credential is resolved for this one call and never written anywhere. Only its source and version
+    // are logged.
     const call = await this.stepCredentials(row, snapshot, target.fallback ? engaged : undefined);
     if (!call.ok) return stop(this.finish(this.row(), call.failure));
     this.append(
@@ -1402,8 +1460,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       const next = await this.compactOnOverflow(snapshot, plan, context, channelRef);
       if (next !== undefined) return next;
     }
-    // The failed attempt stays in the log; the transcript ignores Steps that never completed. A failure
-    // the profile opted to fall back on moves the rest of the Turn to the Deployment profile.
+    // The failed attempt stays in the log, because the transcript ignores Steps that never completed. A
+    // failure the profile opted to fall back on moves the rest of the Turn to the Deployment profile.
     if (!result.ok) {
       const reason = fallbackReason(result.error.code);
       const engage =
@@ -1417,8 +1475,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   /**
-   * An overflow asks for a Compaction before anything else is tried; one that drops nothing (or a
-   * Compaction this Step already followed) leaves the failure to take its ordinary course.
+   * Runs a Compaction after a `context_window_exceeded` stop. Returns `continue` when it compacted, `stop`
+   * when it failed the Turn, and undefined when nothing could be dropped so the overflow takes its
+   * ordinary course as a Provider failure.
    */
   private async compactOnOverflow(
     snapshot: TurnSnapshot,
@@ -1439,7 +1498,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return compacted.value === "compacted" ? "continue" : undefined;
   }
 
-  /** Which model and profile this attempt of a model Step tries, or why the Step is out of attempts. */
+  /**
+   * Works out which model this attempt of a model Step tries and whether it runs on the fallback profile, or
+   * why the Step is out of attempts.
+   */
   private modelTarget(
     row: ThreadRow,
     snapshot: TurnSnapshot,
@@ -1468,9 +1530,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   /**
-   * The profile and credentials one model call runs under. On the fallback when a Provider error engaged
-   * it earlier in the Turn, or right away when the profile's own credential is missing and it opted into
-   * `missing`; a credential nobody can resolve fails the Turn rather than burning attempts.
+   * Resolves the profile and credentials one model call runs under. It uses the fallback profile when a
+   * Provider error engaged it earlier in the Turn, or right away when the profile's own credential is
+   * missing and it opted into `missing`. A credential nobody can resolve fails the Turn rather than
+   * spending attempts.
    */
   private async stepCredentials(
     row: ThreadRow,
@@ -1482,7 +1545,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       failure: failure("credential.missing", `Credential "${ref}" of Agent "${row.agent_id}" is missing or revoked.`),
     });
     const fallback = async (reason: FallbackReason) => {
-      // `engaged` only ever holds a reason the snapshot opted into, so the fallback profile is there.
+      // `engaged` only ever holds a reason the snapshot opted into, so the fallback profile is normally
+      // present. The check guards a snapshot written by an older version.
       if (!snapshot.fallback)
         return {
           ok: false as const,
@@ -1535,13 +1599,14 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       this.append(row.turn, { type: "step.completed", kind: "tool", n: plan.n }, channelRef);
       return "continue";
     }
-    // An answer may have landed while the batch was still running; only a real wait parks.
+    // An answer may have landed while the batch was still running, so the Turn parks only on a wait that
+    // is still open.
     const waitsOn = this.waiting(this.readTurn(row));
     if (waitsOn !== undefined) return stop(this.finish(this.row(), { type: "turn.paused", reason: waitsOn }));
     return "continue";
   }
 
-  /** What the current Step still waits on, if anything. */
+  /** Returns what the current Step still waits on, or undefined when nothing is pending. */
   private waiting(turn: TurnState): Extract<PauseReason, "approval" | "job"> | undefined {
     for (const request of turn.requests.values()) if (!request.answered) return "approval";
     for (const job of turn.jobs.values()) if (!job.outcome) return "job";
@@ -1585,8 +1650,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return foldTurn(events, this.deployment.clock.now());
   }
 
-  // The Step boundary: the first Step takes the Turn snapshot from the Scope and persists it; every
-  // Step checks the Scope is still active.
+  // This is the Step boundary. The first Step takes the Turn snapshot from the Scope and persists it, and
+  // every Step checks the Scope is still active.
   private async snapshot(
     row: ThreadRow,
   ): Promise<{ ok: true; snapshot: TurnSnapshot } | { ok: false; failure: TurnEnd }> {
@@ -1611,7 +1676,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return { ok: true, snapshot };
   }
 
-  /** Asks the Scope for this Turn's snapshot and builds it; nothing is persisted here. */
+  /** Asks the Scope for this Turn's snapshot and builds it. Nothing is persisted here. */
   private async scopeSnapshot(
     row: ThreadRow,
     input: TurnInput | undefined,
@@ -1646,9 +1711,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return consoleLogger({ scope: row.scope_id, agent: row.agent_id, thread: row.thread_id, turn: row.turn });
   }
 
-  // Turn-level Hooks, dispatched by name with the Turn's context. `before-turn` and `before-compact`
-  // may refuse by throwing, and the first `before-compact` decision wins; the observing points only
-  // log a failure.
+  // Turn-level Hooks are dispatched by name with the Turn's context. `before-turn` and `before-compact`
+  // may refuse by throwing, and the first `before-compact` decision wins. The observing points only log
+  // a failure.
   private async turnHooks<P extends "before-turn" | "after-turn" | "on-error" | "before-compact" | "after-compact">(
     row: ThreadRow,
     snapshot: TurnSnapshot,
@@ -1683,16 +1748,16 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return { ok: true };
   }
 
-  // Compaction: a Step of its own, run before a fresh model Step when the context is over its limit,
-  // after a `context_window_exceeded` stop, or on `thread.compact()`. Its only lasting trace is
-  // `thread.compacted`; the log before the cut is never touched.
-  /** The events the next model call is built from: from the last Compaction's `firstKeptSeq` on. */
+  // Compaction is a Step of its own. It runs before a fresh model Step when the context is over its
+  // limit, after a `context_window_exceeded` stop, or on `thread.compact()`. Its only lasting trace is
+  // `thread.compacted`. The log before the cut is never touched.
+  /** Reads the events the next model call is built from, starting at the last Compaction's `firstKeptSeq`. */
   private contextLog(): ContextLog {
     const { seq, firstKeptSeq } = this.lastCompaction();
     return { events: this.read(firstKeptSeq - 1, "part", Number.MAX_SAFE_INTEGER), floor: seq };
   }
 
-  /** The last Compaction's seq (0 without one) and the first seq still in the model's context. */
+  /** Returns the last Compaction's `seq`, 0 without one, and the first `seq` still in the model's context. */
   private lastCompaction(): { seq: number; firstKeptSeq: number } {
     const last = this.sql
       .exec<{ seq: number; json: string }>(
@@ -1703,7 +1768,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return { seq: last?.seq ?? 0, firstKeptSeq: compacted?.type === "thread.compacted" ? compacted.firstKeptSeq : 1 };
   }
 
-  /** What the model's context has loaded: every load point from the last Compaction's `firstKeptSeq` on. */
+  /** Folds every Load point since the last Compaction's `firstKeptSeq` into what the model's context has loaded. */
   private loaded(): Loaded {
     const rows = this.sql
       .exec<{ json: string }>(
@@ -1729,7 +1794,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     };
   }
 
-  /** A compact Step inside a Turn: a failure ends the Turn. An interrupted one re-runs whole, as only its start was logged. */
+  /**
+   * Runs a compact Step inside a Turn. A failure ends the Turn. An interrupted one re-runs whole, as only its
+   * start was logged.
+   */
   private async runCompactStep(
     row: ThreadRow,
     snapshot: TurnSnapshot,
@@ -1767,7 +1835,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (before.result && "skip" in before.result) return skipped(completed);
     const dropped = events.filter((event) => event.seq < cut.firstKeptSeq);
     const [, native] = splitModelId(spec.model.id);
-    // A Hook's summary stands in for the Harness's call; the provider strategy cannot take one (documented).
+    // A Hook's summary stands in for the Harness's call. Under the provider strategy the provider writes
+    // its own block, so a Hook's summary is ignored there.
     const hookSummary = before.result && profile.compaction !== "provider" ? before.result.summary : undefined;
     let summary: Summary;
     if (hookSummary !== undefined) summary = { strategy: "hook", summary: hookSummary, usage: ZERO_USAGE };
@@ -1791,7 +1860,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return this.recordCompaction(row, snapshot, compacted, completed, channelRef);
   }
 
-  /** Opens a compact Step: its credentials resolved for the summarising call and its `step.started` logged. */
+  /** Opens a compact Step by resolving the credentials for the summarising call and logging its `step.started`. */
   private async startCompact(
     row: ThreadRow,
     snapshot: TurnSnapshot,
@@ -1821,7 +1890,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return call;
   }
 
-  /** The summary lands in one breath: its usage, the event and the Step's end, then the observing Hooks. */
+  /**
+   * Records a finished Compaction. Its usage, the `thread.compacted` event and the Step's end are written
+   * together, then the `after-compact` Hooks run.
+   */
   private async recordCompaction(
     row: ThreadRow,
     snapshot: TurnSnapshot,
@@ -1837,9 +1909,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   /**
-   * One summarising call. The Harness asks for prose; under the provider strategy it asks for the
-   * provider's own block, and takes the prose reply instead when the provider sends none (a context
-   * under the provider's compaction minimum), so a small window never fails a Turn.
+   * Makes one summarising model call and returns the summary. Under the `harness` strategy it asks for
+   * prose. Under the `provider` strategy it asks for the provider's own block and takes a prose reply
+   * instead when the provider sends none, which happens for a context under the provider's compaction
+   * minimum, so a small window never fails a Turn.
    */
   private async summarise(
     row: ThreadRow,
@@ -1979,7 +2052,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     };
   }
 
-  /** Logs a Provider stream as it arrives and ends the model Step on its terminal event. */
+  /** Logs a Provider stream as it arrives and ends the model Step on the stream's terminal event. */
   private async recordStream(
     row: ThreadRow,
     stream: AsyncIterable<ProviderEvent>,
@@ -1988,7 +2061,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   ): Promise<StepResult> {
     const parts: ContentBlock[] = [];
     for await (const event of stream) {
-      // A cancelled Turn has ended; nothing of this stream belongs in the log any more.
+      // A cancelled Turn has ended, so nothing of this stream belongs in the log any more.
       if (signal.aborted) return stepError("The Turn was cancelled.");
       switch (event.type) {
         case "delta":
@@ -2021,7 +2094,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return stepError("The Provider stream ended without a terminal event.");
   }
 
-  /** A call that needs the holder's consent: ScopeConfig starts the flow, then a `connect` request parks the Step on its URL. */
+  /**
+   * Handles a Tool call that needs a user-level Connection. ScopeConfig starts the OAuth flow, then a `connect`
+   * request parks the Step on its URL.
+   */
   private async requestConnection(
     row: ThreadRow,
     snapshot: TurnSnapshot,
@@ -2070,8 +2146,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return remote<ThreadDurableObject>(this.env.KARMI_THREADS, keys.thread(address.scope, address.threadId));
   }
 
-  // Schedules: rows in this DO, one alarm job each. A firing is a plain `send`, so it coalesces like any
-  // other input; the built-ins address this Thread and nothing else.
+  // Schedules are rows in this Durable Object with one alarm job each. A firing is a plain `send`, so it
+  // coalesces like any other input. The scheduling built-ins address this Thread and nothing else.
   schedule(address: ThreadAddress, request: unknown): Outcome<{ scheduleId: string; nextAt: number }> {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
@@ -2105,7 +2181,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     };
   }
 
-  /** Validates, caps, stores and arms one Schedule; an existing id is returned as is, so a re-run creates nothing twice. */
+  /**
+   * Validates, caps, stores and arms one Schedule. An existing id is returned as is, so a re-run creates
+   * nothing twice.
+   */
   private createSchedule(
     row: ThreadRow,
     request: unknown,
@@ -2150,7 +2229,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   /**
    * The alarm for one Schedule. The firing is queued as an input and coalesces if a Turn is running or
-   * parked; a cron whose last firing is still queued drops this tick instead of stacking a second one.
+   * parked. A cron whose last firing is still queued drops this tick instead of stacking a second one.
    */
   private fireSchedule(scheduleId: string): void {
     const record = this.scheduleStore.get(scheduleId);
@@ -2273,7 +2352,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private async admitDelegation(row: ThreadRow, child: DelegationRecord): Promise<string | undefined> {
-    // The intent precedes remote writes, so cancellation can find partially reserved descendants.
+    // The record is saved before any remote reservation so a cancel can find and release a partly reserved
+    // child.
     this.delegations.save(child);
     try {
       const limit = await this.reserveDelegation(row, child.origin.chain, child.id);
@@ -2446,7 +2526,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private async releaseChild(child: DelegationRecord): Promise<void> {
-    // Keep release retryable even if a remote ancestor is unavailable after the outcome was logged.
+    // The delegation job is armed first so the release is retried when a remote ancestor is unavailable.
     this.scheduler.set({ id: "delegation", kind: "delegation", dueAt: this.deployment.clock.now(), payload: null });
     await this.releaseDelegation(child.origin.chain, child.id, !child.reserved);
     child.released = true;
@@ -2561,6 +2641,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
 export type { TurnEnd } from "./hook";
 
+/** Whether `event` ends or parks a Turn. */
 export function isTurnEnd(event: ThreadEventData): event is TurnEnd {
   return event.type === "turn.completed" || event.type === "turn.failed" || event.type === "turn.paused";
 }
@@ -2570,13 +2651,16 @@ const stop = async (work: Promise<void>): Promise<"stop"> => {
   await work;
   return "stop";
 };
-/** A compact Step called off still closes: the fold must see it completed. */
+/**
+ * Ends a called-off compact Step as completed and returns `skipped`. The fold needs the Step's end so it does
+ * not re-run it.
+ */
 const skipped = (completed: () => unknown): Outcome<CompactResult> => {
   completed();
   return ok("skipped");
 };
 const compactionFailed = (message: string) => fail(new KarmiError("compaction.failed", message));
-/** A Step the log left unfinished: the loop picks it up rather than starting a new one. */
+/** Whether the plan re-runs a Step the log left unfinished rather than starting a new one. */
 const isRerun = (plan: Plan): boolean => plan.kind === "compact" || (plan.kind !== "finish" && !plan.fresh);
 const turnEndMessage = (end: TurnEnd): string =>
   end.type === "turn.failed" ? end.message : `The Turn ${end.type === "turn.paused" ? "was parked" : "ended"}.`;
@@ -2585,7 +2669,10 @@ const stepError = (message: string): StepResult => ({
   error: { code: "unknown", message, retryable: false },
 });
 
-/** The secret-free snapshot of one Turn from what the Scope resolved; the fallback target is the Deployment's profile by that name, whatever the Scope calls its own. */
+/**
+ * Builds the secret-free snapshot of one Turn from what the Scope resolved. The fallback target is the
+ * Deployment's profile of that name, never a Scope profile.
+ */
 function buildSnapshot(
   source: TurnSnapshotSource,
   deploymentProfiles: Record<string, ProviderConfig>,
@@ -2635,7 +2722,7 @@ function buildSnapshot(
   };
 }
 
-/** Only the servers the Spec references travel in the snapshot; a Spec that names none carries nothing. */
+/** The `mcp` part of a snapshot: only the servers the Spec references. Empty when the Spec names none. */
 function mcpSnapshot(spec: AgentSpec, config: ScopeConfigDocument): Pick<TurnSnapshot, "mcp"> {
   const servers: Record<string, McpServerConfig> = {};
   for (const ref of spec.tools ?? []) {
@@ -2648,12 +2735,15 @@ function mcpSnapshot(spec: AgentSpec, config: ScopeConfigDocument): Pick<TurnSna
   return { mcp: { servers, ...(hosts && { hosts }) } };
 }
 
-/** The one decode point for `thread.fallback_json`; a row from before the column reads as not engaged. */
+/** Decodes `thread.fallback_json`. A row from before the column existed reads as no fallback engaged. */
 function decodeFallback(json: string | null): FallbackEngaged | undefined {
   return json === null ? undefined : JSON.parse(json);
 }
 
-/** A grant lifts each bound it names and leaves the others open; the Scope ceiling caps all of them. */
+/**
+ * The Turn budget of a `longRunning` grant: each bound it names, unbounded for the rest, capped by the Scope
+ * ceiling. Without a grant it is `DEFAULT_BUDGET` under the same cap.
+ */
 function resolveBudget(grant: Capabilities["longRunning"], ceiling: Ceilings["longRunning"]): Budget {
   const limits = (bounds: { maxSteps?: number; maxWallMs?: number; maxTokens?: number }): Budget => ({
     steps: bounds.maxSteps ?? UNBOUNDED,
@@ -2670,7 +2760,7 @@ function resolveBudget(grant: Capabilities["longRunning"], ceiling: Ceilings["lo
   };
 }
 
-/** The Spec's context knobs with the defaults filled in; the window itself waits for the model's own. */
+/** The Spec's `context` settings with the defaults filled in. `window` stays absent so the model's own applies. */
 function resolveContext(spec: Pick<AgentSpec, "context">, ceilings: Ceilings): TurnSnapshot["context"] {
   return {
     ...(spec.context?.window !== undefined && { window: spec.context.window }),

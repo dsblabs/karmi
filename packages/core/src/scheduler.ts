@@ -3,6 +3,7 @@ import type { KarmiBindings } from "./bindings";
 import type { Clock } from "./clock";
 import type { Deployment } from "./deployment";
 
+/** The kinds of durable alarm job a Durable Object can schedule. Each is handled by the object that owns it. */
 export type JobKind =
   | "delegation"
   | "delegation-notify"
@@ -13,17 +14,25 @@ export type JobKind =
   | "schedule"
   | "scope-maintenance"
   | "delivery";
+/** One durable alarm job as it is handed to its handler. */
 export interface ScheduledJob {
   id: string;
   kind: JobKind;
+  /** When the job is due, as epoch milliseconds. */
   dueAt: number;
   payload: unknown;
-  /** Dispatch attempts of this job, independent of the Thread Step attempt budget. */
+  /**
+   * How many times this job has been dispatched, counting this one. It is unrelated to the Step attempt
+   * budget.
+   */
   attempt: number;
 }
 type JobRow = Omit<ScheduledJob, "payload"> & { payload: string; generation: string };
 
-/** Owns the single alarm; handlers may replace their own job without losing the replacement. */
+/**
+ * The job table behind a Durable Object's single alarm. A handler may replace or cancel its own job
+ * while running, and the replacement survives the run.
+ */
 class Scheduler {
   constructor(
     private storage: DurableObjectStorage,
@@ -57,7 +66,8 @@ class Scheduler {
       .toArray();
     try {
       for (const job of due) {
-        // Another handler or incoming RPC may have cancelled/replaced a selected job while we yielded.
+        // The generation check skips a job that a handler or an incoming RPC cancelled or replaced
+        // after the due list was read.
         const current = this.storage.sql
           .exec<{ attempt: number }>(
             "UPDATE jobs SET attempt = attempt + 1 WHERE id = ? AND generation = ? RETURNING attempt",
@@ -75,7 +85,8 @@ class Scheduler {
             attempt: current.attempt,
           });
         } catch (error) {
-          // Keep failed work durable without a hot alarm loop; a replacement belongs to its caller.
+          // A failed job is pushed one second out rather than deleted, so it stays durable without
+          // re-arming the alarm in a tight loop.
           this.storage.sql.exec(
             "UPDATE jobs SET dueAt = ? WHERE id = ? AND generation = ?",
             this.clock().now() + 1000,
@@ -100,7 +111,10 @@ class Scheduler {
   }
 }
 
-/** Shared alarm ownership for Thread and ScopeConfig; job kinds stay internal to the Framework. */
+/**
+ * A Durable Object whose alarm is driven by a job table. The Thread and ScopeConfig objects extend it
+ * and override `runJob` for the job kinds they own.
+ */
 export abstract class ScheduledDurableObject extends DurableObject<KarmiBindings> {
   abstract readonly deployment: Deployment;
   protected readonly scheduler: Scheduler;
@@ -114,6 +128,7 @@ export abstract class ScheduledDurableObject extends DurableObject<KarmiBindings
     return this.scheduler.run((job) => this.runJob(job));
   }
 
+  /** Handles one due job. A subclass overrides it for the job kinds it owns. */
   protected async runJob(job: ScheduledJob): Promise<void> {
     throw new Error(`Job kind "${job.kind}" is not implemented by this Durable Object.`);
   }

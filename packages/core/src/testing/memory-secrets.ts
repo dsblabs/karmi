@@ -7,12 +7,13 @@ import {
   type SensitiveValue,
 } from "../secrets";
 
-// The test kit's SecretsProvider: a real implementation of the seam that keeps everything in a Map.
+// The Test kit's SecretsProvider. It is a real implementation of the seam that keeps every credential in a Map.
 
 interface Entry extends CredentialInfo {
   value: SensitiveValue;
 }
 
+/** The in-memory SecretsProvider of the Test kit, with every optional method implemented. */
 export interface MemorySecrets extends Required<SecretsProvider> {
   /** Forgets everything, so one store can serve many tests. */
   clear(): void;
@@ -25,7 +26,10 @@ const invalid = (ref: string) =>
     `"${ref}" is not a credential reference (scope:<name> or deployment:<name>).`,
   );
 
-/** Every reference kind is writable here, so a test can stage Deployment credentials too. */
+/**
+ * Creates an in-memory SecretsProvider. Both `scope:` and `deployment:` references are writable, so a test
+ * can stage Deployment credentials too.
+ */
 export function memorySecrets(): MemorySecrets {
   const entries = new Map<string, Entry>();
   const locate = ({ scope, ref }: CredentialRef) => {

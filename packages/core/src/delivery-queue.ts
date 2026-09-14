@@ -7,6 +7,11 @@ import { openScope } from "./scope";
 import type { ThreadDurableObject } from "./thread-do";
 import { decodeKey } from "./thread";
 
+/**
+ * Builds the Queue consumer that runs Deliverers. Each message names a Thread and a `seq` range. The handler
+ * reads those events from the Thread and hands them to the bound Deliverer, retrying the message on any failure.
+ * Threads of a destroying or destroyed Scope are skipped and the message is acknowledged.
+ */
 export function deliveryQueueHandler(deployment: Deployment, bindings: KarmiBindings): ExportedHandlerQueueHandler {
   const { catalogue } = deployment;
   return async (batch) => {

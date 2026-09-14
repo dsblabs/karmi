@@ -5,19 +5,24 @@ import type { ThreadEventData } from "./thread-events";
 import type { Tool } from "./tool";
 import type { ContextConfig } from "./agent";
 
-// Progressive disclosure, the pure part: which Tools the model starts a call with, which it has loaded
-// since, and how `tool_search` finds one. A load point is a `tools.loaded` event; the loaded set is the
-// union of them from the last Compaction on, so a Compaction that drops a load point unloads its Tools.
+// Progressive disclosure of Tools, without any I/O. This module decides which Tools the model starts a
+// Turn with, which it has loaded since, and how `tool_search` finds one. A Load point is a `tools.loaded`
+// event. The loaded set is the union of the Load points since the last Compaction, so a Compaction that
+// drops a Load point unloads its Tools.
 
-/** What the model has loaded in the context it currently sees: deferred Tools by name, and active Skills. */
+/** The deferred Tools and the active Skills the model's current context has loaded, by name. */
 export interface Loaded {
   tools: ReadonlySet<string>;
   skills: ReadonlySet<string>;
 }
 
-/** The most matches one search answers: enough to pick from, few enough to keep the load point small. */
+/**
+ * The most matches one `tool_search` returns. It keeps a Load point small while giving the model enough to
+ * pick from.
+ */
 export const SEARCH_LIMIT = 5;
 
+/** The loaded set that the `tools.loaded` events among `events` add up to. */
 export function foldLoaded(events: Iterable<ThreadEventData>): Loaded {
   const tools = new Set<string>();
   const skills = new Set<string>();
@@ -40,8 +45,8 @@ export function loadedToolNames(messages: readonly Message[]): Set<string> {
 }
 
 /**
- * Whether this Turn defers its deferrable Tools: all or nothing, so the model never sees half an index.
- * `auto` defers when the deferrable definitions would take at least `threshold` of the window.
+ * Whether this Turn defers its deferrable Tools. It is all or nothing, so the model never sees half an
+ * index. `auto` defers when the deferrable definitions would take at least `threshold` of the window.
  */
 export function deferAll(
   config: Required<NonNullable<ContextConfig["tools"]>>,
@@ -54,8 +59,9 @@ export function deferAll(
 }
 
 /**
- * `tool_search` over the deferred index: `select:a,b` names Tools outright; anything else is keywords
- * scored over each Tool's name, description and argument names, the best `SEARCH_LIMIT` returned.
+ * Searches the deferred index for `tool_search`. A `select:a,b` query names Tools outright. Any other
+ * query is keywords scored over each Tool's name, description and argument names, and the best
+ * `SEARCH_LIMIT` matches are returned.
  */
 export function searchTools(query: string, index: readonly Tool[]): { matches: string[]; unknown: string[] } {
   const trimmed = query.trim();
@@ -81,7 +87,7 @@ export function searchTools(query: string, index: readonly Tool[]): { matches: s
   return { matches: scored.slice(0, SEARCH_LIMIT).map((entry) => entry.name), unknown: [] };
 }
 
-// A term in the name weighs most, then an argument name, then the description; every term counts once.
+// A term in the name weighs most, then an argument name, then the description. Every term counts once.
 function keywordScore(terms: readonly string[], tool: Tool): number {
   const name = tool.name.toLowerCase();
   const description = tool.description.toLowerCase();

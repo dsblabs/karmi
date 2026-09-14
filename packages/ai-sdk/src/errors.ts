@@ -2,8 +2,10 @@ import { APICallError, LoadAPIKeyError, TypeValidationError, UnsupportedFunction
 import { ZodError } from "zod";
 import type { ProviderError, ProviderErrorCode } from "@karmi/core";
 
+/** Thrown while building a request the AI SDK cannot express. It maps to the `invalid_request` code. */
 export class InvalidRequestError extends Error {}
 
+/** Maps an AI SDK or fetch error to a ProviderError with a code, message and retryable flag. */
 export function toProviderError(error: unknown): ProviderError {
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof Error && error.name === "AbortError") return { code: "aborted", message, retryable: false };

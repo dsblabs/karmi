@@ -11,7 +11,7 @@ import type { Tool, ToolAnnotations } from "./tool";
 import { sha256Hex } from "./digest";
 import { validateAgentSpec } from "./validate";
 
-/** Everything a developer defines in code; registration is only by listing here. */
+/** The items a developer defines in code. Listing an item here is the only way to register it. */
 export interface CatalogueInput {
   deliverers?: Deliverer[];
   tools?: Tool[];
@@ -22,6 +22,7 @@ export interface CatalogueInput {
   agents?: Agent[];
 }
 
+/** The assembled Catalogue. It holds every item by name and can describe itself as data. */
 export interface Catalogue {
   readonly deliverers: ReadonlyMap<string, Deliverer>;
   readonly tools: ReadonlyMap<string, Tool>;
@@ -32,10 +33,14 @@ export interface Catalogue {
   readonly agents: ReadonlyMap<string, Agent>;
   /** The Catalogue as data, so a Platform can build its editors from it. */
   describe(): CatalogueDescription;
-  /** Digest of `describe()`, stored with each Agent Spec version so a changed Catalogue flags it for revalidation. */
+  /**
+   * A digest of `describe()`. It is stored with each Agent Spec version so a changed Catalogue flags the
+   * Spec for revalidation.
+   */
   fingerprint(): Promise<string>;
 }
 
+/** The Catalogue as plain data, one list per kind. */
 export interface CatalogueDescription {
   deliverers: { name: string; granularity: NonNullable<Deliverer["granularity"]> }[];
   tools: ToolDescription[];
@@ -46,6 +51,7 @@ export interface CatalogueDescription {
   agents: AgentDescription[];
 }
 
+/** A Tool as data: its name, description, annotations and schemas. */
 export interface ToolDescription {
   name: string;
   description: string;
@@ -55,11 +61,13 @@ export interface ToolDescription {
   requires?: string;
   instructions?: string;
 }
+/** A Fragment as data. */
 export interface FragmentDescription {
   name: string;
   description?: string;
   args?: JsonSchema;
 }
+/** A Skill as data, with the names of its Tools. */
 export interface SkillDescription {
   name: string;
   description: string;
@@ -67,16 +75,19 @@ export interface SkillDescription {
   invokableBy: Skill["invokableBy"];
   settings?: JsonSchema;
 }
+/** A Retriever as data. */
 export interface RetrieverDescription {
   name: string;
   description?: string;
   settings?: JsonSchema;
 }
+/** A Hook as data, with the lifecycle point it runs at. */
 export interface HookDescription {
   name: string;
   point: HookPoint;
   description?: string;
 }
+/** A code-defined Agent as data. */
 export interface AgentDescription {
   agentId: string;
   name: string;
@@ -98,6 +109,10 @@ function assertOneToolNamespace(tools: ReadonlyMap<string, Tool>, skills: Readon
   byName("tool", [...tools.values(), ...[...skills.values()].flatMap((s) => s.tools)]);
 }
 
+/**
+ * Assembles a Catalogue from the items listed. Throws a `KarmiError` when a name repeats within a kind or a
+ * code-defined Agent references a missing item.
+ */
 export function assembleCatalogue(input: CatalogueInput): Catalogue {
   const skills = byName("skill", input.skills ?? []);
   const tools = byName("tool", input.tools ?? []);

@@ -1,6 +1,8 @@
 // Lint guardrails shared by every package; the reasoning lives in docs/agents/typescript.md. A new rule that meets
 // existing violations grandfathers them with `eslint --suppress-rule`; fix them, never add to them.
 
+import jsdoc from "eslint-plugin-jsdoc";
+
 const see = "See docs/agents/typescript.md.";
 
 const extensionlessImportSyntax = [
@@ -52,4 +54,23 @@ export const extensionlessImportRules = {
 export const rules = {
   "@typescript-eslint/no-non-null-assertion": "error",
   "max-lines-per-function": ["error", { max: 60, skipBlankLines: true, skipComments: true }],
+};
+
+// Every exported symbol carries a JSDoc contract; see docs/agents/comments.md.
+export const jsdocPlugin = { jsdoc };
+export const jsdocRules = {
+  "jsdoc/require-jsdoc": [
+    "error",
+    {
+      publicOnly: true,
+      require: { FunctionDeclaration: true, ClassDeclaration: true },
+      contexts: [
+        "TSInterfaceDeclaration",
+        "TSTypeAliasDeclaration",
+        "TSEnumDeclaration",
+        "ExportNamedDeclaration > VariableDeclaration",
+      ],
+    },
+  ],
+  "jsdoc/require-description": ["error", { contexts: ["any"] }],
 };

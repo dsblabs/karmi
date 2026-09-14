@@ -7,9 +7,9 @@ import { matchGlob } from "./glob";
 import type { SkillInvoker } from "./skill";
 import type { Tool } from "./tool";
 
-// The Prompt: the Spec's ordered entries, each a Fragment of the turn context, evaluated for the model
-// actually in use, then the Harness sections in fixed order: instructions → tool instructions →
-// deferred-tool index → skills → (memory → knowledge → event, with their tickets).
+// The Prompt is the Spec's ordered entries, each rendered from the Turn context for the model actually in
+// use, followed by the Harness sections in a fixed order: Tool instructions, the deferred-tool index, then
+// the Skill index.
 
 /** The Harness sections that follow the Spec's instructions. */
 export interface PromptSections {
@@ -21,6 +21,7 @@ export interface PromptSections {
   skills?: readonly { name: string; description: string; invokableBy: SkillInvoker }[];
 }
 
+/** Renders the Prompt for one Turn, or undefined when nothing renders. */
 export async function evaluatePrompt(
   spec: AgentSpec,
   catalogue: Catalogue,
@@ -36,7 +37,8 @@ export async function evaluatePrompt(
       const fragment = catalogue.fragments.get(entry.fragment);
       if (!fragment)
         throw new KarmiError("ref.fragment.unknown", `Fragment "${entry.fragment}" is not in the Catalogue.`);
-      // Validated at put; parsed again so the Fragment sees its schema's defaults and transforms.
+      // The args were validated at put. They are parsed again so the Fragment sees its schema's defaults
+      // and transforms.
       const args = fragment.args ? z.parse(fragment.args, entry.args ?? {}) : undefined;
       text = await fragment.render(ctx, args);
     }
@@ -69,7 +71,10 @@ export function deferredIndex(names: readonly string[]): string | undefined {
   return lines.join("\n");
 }
 
-/** The Skill index: every description, always visible; model-invokable ones point at `use_skill`. */
+/**
+ * The Skill index for the Prompt. It lists every Skill's description and points model-invokable ones at
+ * `use_skill`.
+ */
 export function skillIndex(skills: PromptSections["skills"] = []): string | undefined {
   if (skills.length === 0) return undefined;
   const lines = ["# Skills"];
@@ -82,7 +87,7 @@ export function skillIndex(skills: PromptSections["skills"] = []): string | unde
   return lines.join("\n");
 }
 
-// An MCP Tool is named `server__tool`; everything else comes from the Catalogue.
+// An MCP Tool is named `server__tool`. Every other Tool comes from the Catalogue.
 function toolSource(name: string): string {
   const split = name.indexOf("__");
   return split > 0 ? `MCP server ${name.slice(0, split)}` : "Tools";

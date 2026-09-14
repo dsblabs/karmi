@@ -11,9 +11,11 @@ import type {
   Usage,
 } from "../provider";
 
-// A scripted Provider: a real implementation of the seam whose replies a test writes and whose
-// requests a test reads back. Registered under an ordinary profile, so Agent Specs stay unchanged.
+// A scripted Provider. It is a real implementation of the Provider seam whose replies a test writes and
+// whose requests a test reads back. It is registered under an ordinary Provider profile, so Agent Specs
+// need no test-only changes.
 
+/** One piece of a scripted reply, built with the `reply` helpers. */
 export type ReplyPart =
   | { part: "text"; chunks: string[] }
   | { part: "reasoning"; chunks: string[] }
@@ -23,25 +25,35 @@ export type ReplyPart =
   | { part: "error"; error: ProviderError }
   | { part: "stop"; stopReason: StopReason };
 
-/** What one scripted call answers with: a string is a text reply; an event array is streamed verbatim. */
+/**
+ * The answer to one scripted call. A string is a text reply, reply parts are expanded into events, and a
+ * `ProviderEvent` array is streamed verbatim.
+ */
 export type Reply = string | ReplyPart | (ReplyPart | string)[] | ProviderEvent[];
 
+/** What a `ReplyScript` receives for each call. */
 export interface ReplyContext {
   request: ProviderRequest;
-  /** 0-based count of calls this provider has served. */
+  /** The 0-based number of this call. */
   index: number;
-  /** What the Harness handed the call: the Scope's `fetch`, the Turn's signal, attribution and Logger. */
+  /**
+   * The call options the Harness passed: the Scope's `fetch`, the Turn's abort signal, attribution and Logger.
+   */
   options: ProviderCallOptions;
 }
 
+/** A function that answers each call from the request and the call index. */
 export type ReplyScript = (ctx: ReplyContext) => Reply | Promise<Reply>;
 
+/** Options for `fakeProvider`. */
 export interface FakeProviderOptions {
-  /** Every model is fully capable unless a test says otherwise. */
+  /** Overrides for the capabilities reported for every model. By default every modality is supported. */
   capabilities?: Partial<ModelCapabilities>;
+  /** Answers `countTokens` requests. Without it the Provider has no `countTokens`. */
   countTokens?: (request: ProviderRequest) => number;
 }
 
+/** A scripted Provider that records every request it receives. */
 export interface FakeProvider extends Provider {
   /** Every request received, in order, deep-copied at receipt. */
   readonly requests: ProviderRequest[];
@@ -49,12 +61,19 @@ export interface FakeProvider extends Provider {
   script(next: ReplyScript | Reply[]): void;
 }
 
-/** Build a reply piece by piece: `[reply.reasoning("hmm"), reply.text("Sunny"), reply.toolCall("weather", { city })]`. */
+/**
+ * Helpers that build a reply part by part, e.g.
+ * `[reply.reasoning("hmm"), reply.text("Sunny"), reply.toolCall("weather", { city })]`.
+ */
 export const reply = {
-  /** One `delta` per chunk, then the joined text as a `part`. */
+  /** A text part, streamed as one `delta` per chunk and then the joined text as a `part`. */
   text: (...chunks: string[]): ReplyPart => ({ part: "text", chunks }),
+  /** A thinking part, streamed like `text`. */
   reasoning: (...chunks: string[]): ReplyPart => ({ part: "reasoning", chunks }),
-  /** Without an id the call gets `call_<block index>`, so transcripts stay stable across test order. */
+  /**
+   * A tool call. Without `id` the call gets `call_<block index>`, which keeps transcripts stable across test
+   * order.
+   */
   toolCall: (name: string, input: unknown = {}, id?: string): ReplyPart =>
     id === undefined ? { part: "toolCall", name, input } : { part: "toolCall", id, name, input },
   usage: (usage: Partial<Usage>): ReplyPart => ({ part: "usage", usage }),
@@ -72,8 +91,9 @@ const DEFAULT_CAPABILITIES: ModelCapabilities = { image: true, audio: true, vide
 const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
 /**
- * A scripted Provider: a function of `{ request, index }`, or a list consumed one reply per call.
- * In the list form each element is one call's reply, so a multi-part reply is nested: `[[reply.text("a"), reply.toolCall("w")]]`.
+ * Creates a scripted Provider. `script` is a function of `{ request, index }` or a list consumed one reply per
+ * call. In the list form each element is one call's reply, so a multi-part reply is nested:
+ * `[[reply.text("a"), reply.toolCall("w")]]`.
  */
 export function fakeProvider(script: ReplyScript | Reply[], options: FakeProviderOptions = {}): FakeProvider {
   const requests: ProviderRequest[] = [];

@@ -2,11 +2,16 @@ import type { KarmiBindings } from "../bindings";
 import type { Clock } from "../clock";
 import { milliseconds as toMilliseconds } from "../duration";
 
+/** The Test kit's Clock. It reads wall time plus an offset that `advance` moves forward. */
 export interface TestClock extends Clock {
-  /** Move time forward and fire the due alarms of this test Worker's Durable Objects. */
+  /**
+   * Moves time forward by `duration` (milliseconds or a string such as `"24h"`) and fires every Durable
+   * Object alarm of this test Worker that is now due.
+   */
   advance(duration: number | string): Promise<void>;
 }
 
+/** Creates the Test kit's Clock for the Durable Object namespaces in `bindings`. */
 export function testClock(bindings: KarmiBindings): TestClock {
   let offset = 0;
   const clock: TestClock = {

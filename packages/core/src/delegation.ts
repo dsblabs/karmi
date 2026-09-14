@@ -7,36 +7,56 @@ import type { ThreadAddress } from "./thread";
 import type { Budget, ThreadEvent, TurnInput } from "./thread-events";
 import type { Tool, ToolResult } from "./tool";
 
+/** The delegating Thread and the `delegate` call that opened a child Thread. */
 export interface ParentLink {
   threadKey: string;
+  /** The `ToolContext.callId` of the `delegate` call, stable across re-runs. */
   callId: string;
 }
+/** One Thread above a child in the Delegation chain, with the limits and deadline it imposes. */
 export interface Ancestor {
   address: ThreadAddress;
+  /** The ancestor's Turn during which the Delegation started. */
   turn: number;
+  /** The ancestor's resolved `delegation` Capability. */
   limits: NonNullable<Capabilities["delegation"]>;
+  /** The epoch milliseconds by which the ancestor's Turn must end. */
   deadline: number;
 }
+/** Where a child Thread comes from: its direct parent and every ancestor up to the root. */
 export interface ChildOrigin {
   parent: ParentLink;
+  /** Ancestors from the root down to the direct parent. */
   chain: Ancestor[];
 }
+/** The durable state of one child Thread as its parent tracks it. */
 export interface DelegationRecord {
+  /** The `delegate` call id, which is also the Job id the parent's tool Step waits on. */
   id: string;
+  /** The parent's Turn that started the child. */
   turn: number;
   address: ThreadAddress;
   origin: ChildOrigin;
+  /** The Turn input the child runs. */
   input: TurnInput;
+  /** The child's last log `seq` the parent has read. */
   after: number;
+  /** Whether the child has been counted against every ancestor's concurrency and child limits. */
   reserved: boolean;
+  /** Whether the child's Turn has been sent. */
   started: boolean;
+  /** Whether the child's Turn has ended. */
   done: boolean;
+  /** Whether the child's reservation has been released on every ancestor. */
   released: boolean;
 }
 const decodeRecord = (json: string): DelegationRecord => JSON.parse(json);
 const decodeOrigin = (json: string): ChildOrigin => JSON.parse(json);
 
-/** Durable child starts and cursors: replay never queues a second child Turn. */
+/**
+ * The parent Thread's persisted record of its children, origin and reservations. Because starts and cursors are
+ * durable, a re-run of the tool Step never queues a second child Turn.
+ */
 export class DelegationStore {
   constructor(private sql: SqlStorage) {
     sql.exec(`CREATE TABLE IF NOT EXISTS delegation_origin (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
@@ -110,7 +130,12 @@ const DelegateInput = z.object({
   task: z.string(),
   attachments: z.optional(z.array(MediaRefSchema)),
 });
+/** The input of the built-in `delegate` Tool: the Agent to run, the task text and optional attachments. */
 export type DelegateInput = z.output<typeof DelegateInput>;
+/**
+ * Builds the built-in `delegate` Tool for one Agent. `agents` are the Agents it may name. `execute` starts the
+ * child and returns either the result or `{ pending }` to park the tool Step until the child finishes.
+ */
 export function delegateTool(
   agents: string[],
   execute: (input: DelegateInput, callId: string) => Promise<{ pending: string } | ToolResult>,
@@ -128,9 +153,14 @@ export function delegateTool(
     execute: (input, ctx) => execute(input, ctx.callId),
   };
 }
+/** Wraps `message` as an error Tool result. */
 export function delegationError(message: string): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
+/**
+ * Converts a child's final `turn.completed` or `turn.failed` event into the parent's Tool result. Text and media
+ * blocks are kept. A failed Turn or a budget stop becomes an error result.
+ */
 export function delegationResult(event: Extract<ThreadEvent, { type: "turn.completed" | "turn.failed" }>): ToolResult {
   if (event.type === "turn.failed") return delegationError(`${event.reason}: ${event.message}`);
   const content = event.message.flatMap((block): ToolResult["content"] => {
@@ -140,6 +170,10 @@ export function delegationResult(event: Extract<ThreadEvent, { type: "turn.compl
   });
   return { content, isError: event.stopReason === "budget" };
 }
+/**
+ * Whether delegating to `agent` from the end of `chain` would exceed an ancestor's `maxDepth` or re-enter an
+ * ancestor Agent.
+ */
 export function depthLimit(chain: Ancestor[], agent: string): boolean {
   return chain.some(
     (ancestor, index) =>
@@ -147,10 +181,15 @@ export function depthLimit(chain: Ancestor[], agent: string): boolean {
       chain.length - index > (ancestor.limits.maxDepth ?? AGENT_SPEC_DEFAULTS.delegation.maxDepth),
   );
 }
+/**
+ * The epoch milliseconds by which a new child must finish: the parent's remaining wall budget, capped by
+ * every ancestor's deadline.
+ */
 export function delegationDeadline(now: number, budget: Budget, spent: Budget, chain: Ancestor[]): number {
   return Math.min(now + Math.max(0, budget.wallMs - spent.wallMs), ...chain.map((a) => a.deadline));
 }
 
+/** Fills a `delegation` grant with defaults and caps each limit by the Scope ceiling, when there is one. */
 export function resolveDelegationLimits(
   grant: NonNullable<Capabilities["delegation"]>,
   ceiling: false | NonNullable<Capabilities["delegation"]> | undefined,

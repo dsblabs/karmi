@@ -20,22 +20,25 @@ import type { Tool, ToolContext, ToolOutputResult } from "./tool";
 // One Turn's view of its MCP servers: the catalogues resolved at Turn start, each server's tools as
 // ordinary Tool objects, and a lazily opened session per server that lives until the Turn ends.
 
-/** What `resolveToolSet` asks: the Tools one `mcp:` reference selects, in the server's own order. */
+/** The source `resolveToolSet` asks for the Tools an `mcp:` reference selects. */
 export interface McpToolSource {
+  /** The Tools `ref` selects, in the server's own order. */
   tools(ref: McpReference): readonly Tool[];
+  /** Whether Tool `name` belongs to a server this Turn cannot reach, so a Script cannot call it. */
   scriptUnavailable?(name: string): boolean;
 }
 
-/** A call that cannot run until its holder consents; the tool Step turns it into a `connect` Approval. */
+/** A call that cannot run until its Holder consents. The tool Step turns it into a `connect` Approval. */
 export interface ConnectRequest {
   serverId: string;
+  /** Whether the server holds agent-level or user-level grants. */
   level: "agent" | "user";
   holder: McpHolder;
-  /** The scopes to ask for: the grant's own plus what the server challenged with, on a step-up. */
+  /** The scopes to ask for. On a Step-up it is the union of the grant's own and the server's challenge. */
   scope?: string;
 }
 
-/** Thrown by an MCP Tool's `execute` in place of a result; only the tool Step catches it. */
+/** Thrown by an MCP Tool's `execute` in place of a result. Only the tool Step catches it. */
 export class McpConnectRequired extends Error {
   override readonly name = "McpConnectRequired";
 
@@ -51,14 +54,18 @@ interface ServerEntry {
   tools: Map<string, Tool>;
 }
 
+/** What a McpTurnSource needs from its Turn. */
 export interface McpSourceHost {
   scope: ScopeId;
   registry: McpRegistry;
+  /** The Turn's scoped fetch for MCP hosts. */
   egress: typeof fetch;
   logger: Logger;
+  /** Aborts every session when the Turn ends. */
   signal: AbortSignal;
 }
 
+/** One Turn's MCP servers, exposed as Tools, with a session per server opened on first use. */
 export class McpTurnSource implements McpToolSource {
   private readonly servers = new Map<string, ServerEntry>();
   private readonly sessions = new Map<string, Promise<McpSession>>();
@@ -73,7 +80,8 @@ export class McpTurnSource implements McpToolSource {
       source.servers.set(server.id, entry);
       // The provider lists a connector server itself.
       if (server.config.execution === "provider") continue;
-      // A user-less Thread cannot reach a user-level server: its tools are offered from the cache so a call can say so.
+      // A user-less Thread cannot reach a user-level server. Its tools are still offered from the cache so a
+      // call can report why it is unavailable.
       if (server.oauth && !server.oauth.holder) {
         if (server.catalog) source.adopt(entry, server.catalog);
         continue;
@@ -86,7 +94,10 @@ export class McpTurnSource implements McpToolSource {
     return source;
   }
 
-  /** Each server's `catalogVersion`, for the Turn's `toolsVersion`; a server without a catalogue reports none. */
+  /**
+   * Each server's `catalogVersion` by server id, for the Turn's `toolsVersion`. A server without a catalogue
+   * is left out.
+   */
   versions(): Record<string, string> {
     const versions: Record<string, string> = {};
     for (const [id, { server }] of this.servers) if (server.catalog) versions[id] = server.catalog.catalogVersion;
@@ -107,7 +118,10 @@ export class McpTurnSource implements McpToolSource {
     return false;
   }
 
-  /** The servers the model provider connects to itself, with the token it needs; one without a grant is left out. */
+  /**
+   * The servers the model provider connects to itself, with the token each needs. A server without a grant is
+   * left out.
+   */
   providerServers(): ProviderMcpServer[] {
     const servers: ProviderMcpServer[] = [];
     for (const [id, { server }] of this.servers) {
@@ -128,6 +142,7 @@ export class McpTurnSource implements McpToolSource {
     return servers;
   }
 
+  /** Closes every session opened during the Turn. */
   async close(): Promise<void> {
     const open = [...this.sessions.values()];
     this.sessions.clear();
@@ -174,7 +189,7 @@ export class McpTurnSource implements McpToolSource {
     if (oauth?.holder && !oauth.token)
       throw new McpConnectRequired({ serverId: id, level: oauth.level, holder: oauth.holder });
     let outcome = await this.attempt(entry, tool, input, ctx.signal);
-    // A refused token gets one refresh and one more try; only then does the holder have to consent again.
+    // A refused token gets one refresh and one more try. Only then does the Holder have to consent again.
     if (!outcome.ok && outcome.failure.kind === "unauthorized" && oauth?.holder) {
       const refreshed = await this.host.registry.refreshToken(this.host.scope, server);
       if (refreshed) outcome = await this.attempt(entry, tool, input, ctx.signal);
@@ -198,7 +213,10 @@ export class McpTurnSource implements McpToolSource {
     return failed(failure.message);
   }
 
-  /** One session open plus one call; an open that the server refuses classifies like a refused call. */
+  /**
+   * Opens the session if needed and makes one call. An open the server refuses is classified like a refused
+   * call.
+   */
   private async attempt(
     entry: ServerEntry,
     tool: McpTool,
@@ -222,7 +240,7 @@ export class McpTurnSource implements McpToolSource {
     return session.callTool(tool, input, signal);
   }
 
-  /** A `-32602` says the catalogue may be out of date: list it again over the open session and swap the Tools in place. */
+  /** Lists the catalogue again over the open session after a `-32602` and swaps the Tools in place. */
   private async refetch(entry: ServerEntry): Promise<void> {
     const { server } = entry;
     const session = () => this.session(server.id, server);
@@ -235,7 +253,10 @@ export class McpTurnSource implements McpToolSource {
 const defined = <T>(value: T | undefined): value is T => value !== undefined;
 const failed = (text: string): ToolOutputResult => ({ content: [{ type: "text", text }], isError: true });
 
-/** MCP content into a Tool result: text stays, images ride to the media ingress, binary resources spill to media. */
+/**
+ * Converts MCP content into a Tool result. Text and images stay inline, and the Harness Spills the images at
+ * ingress. Audio and binary resources are written to media here and replaced by a MediaRef.
+ */
 export async function render(result: CallToolResult, media: MediaWriter): Promise<ToolOutputResult> {
   const content: ToolOutputResult["content"] = [];
   for (const block of result.content) {

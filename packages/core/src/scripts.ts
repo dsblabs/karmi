@@ -7,7 +7,9 @@ import { DEFAULT_ANNOTATIONS, type Tool } from "./tool";
 import type { AvailableTool } from "./tools";
 const SCRIPT_EXCLUDED_TOOLS = new Set(["run_script", "delegate"]);
 
+/** The Script limits that apply when the `scripts` grant sets none. */
 export const SCRIPT_DEFAULTS: ScriptLimits = Object.freeze({ cpuMs: 1000, wallMs: 60000, maxToolCalls: 100 });
+/** The Script limits for an Agent: the grant's values, else the defaults, each capped by the Scope ceiling. */
 export function resolveScriptLimits(
   grant: NonNullable<Capabilities["scripts"]>,
   ceiling: Ceilings["scripts"],
@@ -20,7 +22,11 @@ export function resolveScriptLimits(
   };
 }
 
-/** Script reachability ignores model deferral, but never bypasses Policy or a missing User. */
+/**
+ * The Tools a Script may call: every allowed Tool the grant selects, with Deferred Tools treated as
+ * loaded. A Tool the Permission Policy does not allow, or that needs a user-level Connection on a
+ * user-less Thread, is never reachable. `run_script` and `delegate` are excluded.
+ */
 export function scriptTools(
   spec: AgentSpec,
   available: ReadonlyMap<string, AvailableTool>,
@@ -43,7 +49,12 @@ export function scriptTools(
   );
 }
 
+/** The input schema of the `run_script` Tool. */
 export const ScriptInput = z.object({ code: z.string(), description: z.optional(z.string()) });
+/**
+ * The built-in `run_script` Tool for an Agent. Its usage Fragment declares the reachable Tools. Its
+ * `execute` always throws, because the Harness gate runs Scripts with the current tool Step's host.
+ */
 export function scriptTool(spec: AgentSpec, available: () => ReadonlyMap<string, AvailableTool>, user?: string): Tool {
   return {
     kind: "tool",
@@ -53,7 +64,6 @@ export function scriptTool(spec: AgentSpec, available: () => ReadonlyMap<string,
     input: ScriptInput,
     annotations: DEFAULT_ANNOTATIONS,
     instructions: { kind: "fragment", name: "script-usage", render: () => scriptUsage(spec, available(), user) },
-    // Execution needs the current Tool Step host, supplied by the Harness gate.
     execute: () => {
       throw new Error("run_script requires the Harness gate.");
     },
@@ -101,9 +111,11 @@ function schemaType(schema: unknown): string {
   return "unknown";
 }
 
+/** What the Harness gate needs to run one Script. */
 export interface ScriptExecution {
   sandbox: Sandbox;
   limits: ScriptLimits;
+  /** Reads the full value of an earlier Tool result on this Thread by its call id. */
   result(callId: string): Promise<unknown>;
 }
 
