@@ -6,41 +6,56 @@ import type { KarmiErrorCode } from "./errors";
 import type { Tool, ToolResult } from "./tool";
 import type { TurnInput } from "./thread-events";
 
-// Schedules, the pure part: what a request must look like, when it first fires, the caps it runs under,
-// and the SQL rows a Thread keeps for them. Firing is the Thread DO's job; nothing here touches a clock.
+// The pure part of Schedules. It defines what a request must look like, when it first fires, the caps
+// it runs under, and the SQL rows a Thread keeps for them. Firing is the Thread Durable Object's job,
+// and nothing here reads a clock.
 
+/** A Turn input of kind `event`, which is the only input a Schedule can deliver. */
 export type EventInput = Extract<TurnInput, { kind: "event" }>;
 
-/** What a Thread remembers of one Schedule: `once` fires at `at`; `cron` fires at each `nextAt` in `tz`. */
+/**
+ * When a Schedule fires. A `once` timing fires at `at`. A `cron` timing fires at each `nextAt`, evaluated in
+ * `tz`.
+ */
 export type ScheduleTiming = { kind: "once"; at: number } | { kind: "cron"; cron: string; tz: string };
 
+/** What a Thread stores for one Schedule. */
 export interface ScheduleRecord {
   id: string;
   timing: ScheduleTiming;
+  /** The Event delivered at each firing. */
   input: EventInput;
   createdAt: number;
+  /** The next firing, as epoch milliseconds. */
   nextAt: number;
-  /** The `inputs` row of the last firing; a cron whose row is still queued skips its next tick. */
+  /** The `inputs` row of the last firing. A cron whose row is still queued skips its next tick. */
   pendingInput?: number;
 }
 
-/** What `thread.schedules()` and `list_schedules` return. */
+/** One Schedule as `thread.schedules()` and `list_schedules` report it. */
 export interface ScheduleSummary {
   scheduleId: string;
+  /** The firing time of a one-shot Schedule, as epoch milliseconds. */
   at?: number;
+  /** The expression of a recurring Schedule. */
   cron?: string;
+  /** The IANA zone a `cron` is evaluated in. */
   tz?: string;
   nextAt: number;
   createdAt: number;
   input: EventInput;
 }
 
-/** Nothing on any Thread schedules past these, whoever asks. */
+/** The Deployment caps on Schedules. No Thread schedules beyond them, whichever API creates the Schedule. */
 export const SCHEDULE_CAPS = Object.freeze({ maxPending: 100, maxHorizonMs: 366 * 24 * 60 * 60 * 1000 });
 
+/** The resolved bounds one caller may schedule within. */
 export interface SchedulingLimits {
+  /** How many Schedules may be pending on the Thread at once. */
   maxPending: number;
+  /** How far ahead a first firing may lie, in milliseconds. */
   maxHorizonMs: number;
+  /** Whether recurring Schedules are allowed. */
   cron: boolean;
 }
 
@@ -51,7 +66,7 @@ const EventInputSchema = z.object({
   channelRef: z.optional(z.unknown()),
 });
 const timeText = z.string().check(z.minLength(1));
-/** The one decode of a Schedule request, whether it arrived over RPC or from the model. */
+/** The single decoder of a Schedule request, whether it arrived over RPC or from the model. */
 const ScheduleRequestSchema = z.object({
   at: z.optional(z.union([z.number(), timeText])),
   delay: z.optional(z.union([z.number(), timeText])),
@@ -59,15 +74,21 @@ const ScheduleRequestSchema = z.object({
   tz: z.optional(timeText),
   input: EventInputSchema,
 });
+/** A request to create a Schedule, as `thread.schedule()` and the `schedule` Tool accept it. */
 export type ScheduleRequest = z.output<typeof ScheduleRequestSchema>;
 
+/** Why a Schedule was not created: the request was invalid, or it broke a limit. */
 export type ScheduleFailure = { code: Extract<KarmiErrorCode, "schedule.invalid" | "schedule.limit">; message: string };
+/** A decoded request with its timing and first firing, or the failure that rejected it. */
 export type ScheduleResolution =
   { ok: true; timing: ScheduleTiming; nextAt: number; request: ScheduleRequest } | ({ ok: false } & ScheduleFailure);
 
 const invalid = (message: string): ScheduleResolution => ({ ok: false, code: "schedule.invalid", message });
 
-/** Normalises a request into its timing and first firing; every rejection is one `schedule.invalid`. */
+/**
+ * Decodes a request into its timing and first firing after `now`. Every rejection is a `schedule.invalid`
+ * failure.
+ */
 export function resolveSchedule(raw: unknown, now: number): ScheduleResolution {
   const parsed = z.safeParse(ScheduleRequestSchema, raw);
   if (!parsed.success) return invalid('A Schedule needs `input: { kind: "event", type, payload }`.');
@@ -96,9 +117,13 @@ export function resolveSchedule(raw: unknown, now: number): ScheduleResolution {
   return { ok: true, timing: { kind: "once", at: fireAt }, nextAt: fireAt, request };
 }
 
+/** The name of one bound in `SchedulingLimits`. */
 export type ScheduleLimit = keyof SchedulingLimits;
 
-/** The cap a new Schedule would break, if any: its kind, how many are pending and how far ahead it first fires. */
+/**
+ * The limit a new Schedule would break, or undefined when it fits. `pending` counts the Thread's
+ * existing Schedules.
+ */
 export function overLimit(
   limits: SchedulingLimits,
   timing: ScheduleTiming,
@@ -112,7 +137,10 @@ export function overLimit(
   return undefined;
 }
 
-/** A grant that names no bound gets the Deployment cap; the Scope ceiling and the caps are maxima. */
+/**
+ * The limits an Agent's `scheduling` grant resolves to. Each bound is the grant's value capped by the
+ * Scope ceiling and the Deployment cap. A bound the grant leaves unset takes the cap.
+ */
 export function resolveSchedulingLimits(
   grant: NonNullable<Capabilities["scheduling"]>,
   ceiling: false | NonNullable<Capabilities["scheduling"]> | undefined,
@@ -125,12 +153,13 @@ export function resolveSchedulingLimits(
   };
 }
 
-/** The Thread API's limits: the Deployment caps alone. */
+/** The limits the Thread API schedules under, which are the Deployment caps alone. */
 export const API_LIMITS: SchedulingLimits = Object.freeze({ ...SCHEDULE_CAPS, cron: true });
 
-/** The one place a Schedule's alarm job is named. */
+/** The id of the alarm job that fires the Schedule `scheduleId`. */
 export const scheduleJobId = (scheduleId: string): string => `schedule:${scheduleId}`;
 
+/** The `ScheduleSummary` of a stored record. */
 export function summarise(record: ScheduleRecord): ScheduleSummary {
   return {
     scheduleId: record.id,
@@ -143,16 +172,21 @@ export function summarise(record: ScheduleRecord): ScheduleSummary {
 
 const decodeRecord = (json: string): ScheduleRecord => JSON.parse(json);
 
-/** A Thread's pending Schedules; the row is the truth, the scheduler job merely wakes the DO. */
+/**
+ * The pending Schedules of one Thread, stored in its SQLite. The stored row decides what fires. The
+ * scheduler job only wakes the Durable Object at `nextAt`.
+ */
 export class ScheduleStore {
   constructor(private sql: SqlStorage) {
     sql.exec(`CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, next_at INTEGER NOT NULL, json TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS schedules_next ON schedules (next_at);`);
   }
+  /** The record with `id`, or undefined when there is none. */
   get(id: string): ScheduleRecord | undefined {
     const row = this.sql.exec<{ json: string }>("SELECT json FROM schedules WHERE id = ?", id).toArray()[0];
     return row && decodeRecord(row.json);
   }
+  /** Every pending record, soonest first. */
   list(): ScheduleRecord[] {
     return this.sql
       .exec<{ json: string }>("SELECT json FROM schedules ORDER BY next_at, id")
@@ -162,9 +196,11 @@ export class ScheduleStore {
   count(): number {
     return this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM schedules").one().n;
   }
+  /** The soonest `nextAt` of any pending record, or undefined when none is pending. */
   nextAt(): number | undefined {
     return this.sql.exec<{ at: number | null }>("SELECT MIN(next_at) AS at FROM schedules").one().at ?? undefined;
   }
+  /** Inserts the record, or replaces the one with the same id. */
   save(record: ScheduleRecord): void {
     this.sql.exec(
       "INSERT INTO schedules (id, next_at, json) VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET next_at = excluded.next_at, json = excluded.json",
@@ -178,14 +214,19 @@ export class ScheduleStore {
   }
 }
 
-// The Agent's built-ins under the `scheduling` Capability. They address the Thread they run in and
-// nothing else; the host is the Thread DO.
+/**
+ * What the Agent's scheduling Tools call into. The Thread Durable Object implements it for the Thread
+ * the Tools run in, and the Tools can reach no other Thread.
+ */
 export interface SchedulingHost {
+  /** Creates a Schedule under the id the caller chose, or reports why it could not. */
   create(
     request: ScheduleRequest,
     id: string,
   ): { ok: true; summary: ScheduleSummary } | ({ ok: false } & ScheduleFailure);
+  /** Cancels the Schedule `id`. Returns false when there is none. */
   cancel(id: string): boolean;
+  /** Every pending Schedule, soonest first. */
   list(): ScheduleSummary[];
 }
 
@@ -199,6 +240,7 @@ const ScheduleToolInput = z.object({
 const CancelScheduleInput = z.object({ scheduleId: z.string() });
 const ListSchedulesInput = z.object({});
 
+/** The Event type of a firing created by the `schedule` Tool. */
 export const SCHEDULE_FIRED = "schedule.fired";
 
 const text = (value: unknown, isError = false): ToolResult => ({
@@ -206,6 +248,10 @@ const text = (value: unknown, isError = false): ToolResult => ({
   isError,
 });
 
+/**
+ * The `schedule`, `cancel_schedule` and `list_schedules` Tools an Agent holds under the `scheduling`
+ * Capability.
+ */
 export function schedulingTools(host: SchedulingHost): Tool[] {
   const schedule: Tool<typeof ScheduleToolInput, undefined> = {
     kind: "tool",

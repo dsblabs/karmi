@@ -8,7 +8,11 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-/** Native binary families are decoded here once, before anything can enter a persisted event. */
+/**
+ * The inline binary a provider-native block carries, in any of the MCP, Anthropic or AI SDK shapes,
+ * or undefined when the block holds none. Decoding happens here once, before anything can enter a
+ * persisted event.
+ */
 function binary(
   value: Record<string, unknown>,
 ): { data: string | Uint8Array | URL; mimeType: string; format: string } | undefined {
@@ -79,6 +83,11 @@ async function spill(value: unknown, access: IngressAccess): Promise<unknown> {
   return Object.entries(out).some(([key, entry]) => entry !== value[key]) ? out : value;
 }
 
+/**
+ * Replaces inline binary in a provider event's `provider` and `server_tool` blocks with MediaRefs
+ * stored under the Thread. Binary that cannot be stored becomes a text placeholder. Other events
+ * pass through unchanged.
+ */
 export async function ingestProviderEvent(event: ProviderEvent, call: ProviderCallOptions): Promise<ProviderEvent> {
   if (event.type !== "part") return event;
   const block = event.block;
@@ -92,7 +101,7 @@ export async function ingestProviderEvent(event: ProviderEvent, call: ProviderCa
   }
   if (block.type === "server_tool" && block.result) {
     const raw = await spill(block.result.raw, { writer: call.media, fetch: call.fetch, signal: call.signal });
-    // The native summary may itself contain base64; rebuild it from the sanitized result.
+    // The native summary may itself contain base64, so it is rebuilt from the sanitized result.
     return {
       ...event,
       block: {
@@ -104,6 +113,10 @@ export async function ingestProviderEvent(event: ProviderEvent, call: ProviderCa
   return event;
 }
 
+/**
+ * Stores every inline image of a Tool result under the Thread and returns the result with MediaRefs in their
+ * place.
+ */
 export async function ingestToolResult(result: ToolOutputResult, writer: MediaWriter): Promise<ToolResult> {
   const content: ToolContent[] = [];
   for (const block of result.content) {

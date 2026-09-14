@@ -20,6 +20,10 @@ import { metadataSchema, providerOptions } from "./options";
 
 type AssistantPart = Extract<LanguageModelV4Message, { role: "assistant" }>["content"][number];
 
+/**
+ * Builds the AI SDK call options for `request`, with `media` already prepared for the wire. Throws
+ * `InvalidRequestError` for a request the AI SDK cannot express.
+ */
 export function buildRequest(
   request: ProviderRequest,
   call: ProviderCallOptions,
@@ -43,7 +47,7 @@ export function buildRequest(
   if (reasoning) result.reasoning = reasoning === "off" ? "none" : reasoning;
   if (request.config.headers) result.headers = request.config.headers;
   if (request.tools) {
-    // No native deferral here: a deferred definition is offered once the transcript has loaded it.
+    // The AI SDK has no native deferral. A deferred definition is offered once the transcript has loaded it.
     const loaded = loadedToolNames(request.messages);
     result.tools = request.tools.flatMap(({ deferred, ...tool }) =>
       deferred && !loaded.has(tool.name) ? [] : [{ type: "function" as const, ...tool }],

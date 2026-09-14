@@ -17,12 +17,19 @@ import { anthropicOptions } from "./options";
 import { buildParams, countTokensParams } from "./request";
 import { mapStream } from "./stream";
 
+/** Options for the `anthropic` adapter. */
 export interface AnthropicProviderOptions {
-  /** The key for profiles that name no `credential`; a profile's own reference is resolved by karmi and handed to each call. */
+  /**
+   * The API key for profiles that name no `credential`. A profile's own reference is resolved by karmi and
+   * handed to each call.
+   */
   apiKey?: string;
 }
 
-/** The SDK's default credential chain reads local config and environment; karmi always says where a key comes from. */
+/**
+ * An SDK client with the default credential chain disabled. That chain reads local config and environment,
+ * and karmi always says where a key comes from.
+ */
 class Client extends Anthropic {
   protected override _shouldResolveDefaultCredentials(): boolean {
     return false;
@@ -49,7 +56,7 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
       try {
         const api = client(request.config, call);
         const params = buildParams(request, await prepareMedia(request, call, capabilities(request.model)));
-        // Retrying is only safe before the first byte: karmi retries the connection, never a stream.
+        // Retrying is only safe before the first byte, so karmi retries the connection and never a stream.
         const attempts = request.config.gateway?.retry ? 1 : 3;
         const { data, response } = await retry(
           () => api.beta.messages.create({ ...params, stream: true }, { signal }).withResponse(),
@@ -87,7 +94,7 @@ export function anthropic(options: AnthropicProviderOptions = {}): Provider {
   };
 }
 
-// The credentials are exposed here and nowhere else: they go into the client for this one call.
+// The credentials are exposed here and nowhere else. They go into the client for this one call.
 function createClient(config: ProviderConfig, call: ProviderCallOptions, defaultKey: string | undefined): Client {
   const byok = config.gateway?.byok === true;
   const apiKey = byok ? undefined : config.credential ? call.credentials?.provider?.expose() : defaultKey;

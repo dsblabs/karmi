@@ -16,42 +16,55 @@ import { sensitive, type SensitiveValue } from "./secrets";
 // ScopeConfig Durable Object stores catalogues and grants; static credentials resolve here, in the
 // caller's process, and refresh tokens never leave the Durable Object.
 
+/** What `McpRegistry.snapshot` takes. */
 export interface McpSnapshotInput {
-  /** Whose grants apply: the Agent for agent-level OAuth servers, the User for user-level ones. */
+  /** The Agent whose grants apply to agent-level OAuth servers. */
   agent?: string;
+  /** The User whose grants apply to user-level OAuth servers. */
   user?: string;
-  /** Which registered servers; every registered one when absent. */
+  /** The registered servers to include. Absent means every registered one. */
   serverIds?: string[];
 }
 
-/** An OAuth server as one Turn sees it: whose grant, and the access token when the holder has one. */
+/** The grant state of one OAuth server for one Turn. */
 export interface McpOAuthState {
+  /** Whether the server holds agent-level or user-level grants. */
   level: "agent" | "user";
-  /** Absent on a user-less Thread for a user-level server: no Connection can ever resolve. */
+  /**
+   * The grant Holder. Absent on a user-less Thread for a user-level server, where no Connection can resolve.
+   */
   holder?: McpHolder;
-  /** The access token in memory for this Turn; absent until the holder consents. */
+  /** The access token held in memory for this Turn. Absent until the Holder consents. */
   token?: SensitiveValue;
-  /** What the token was granted for, the base of a step-up union. */
+  /** The scopes the token was granted for. A Step-up asks for their union with the server's challenge. */
   scope?: string;
 }
 
-/** One server as a Turn sees it; `headers` are the resolved static credentials, held only in memory. */
+/** One server as a Turn sees it. */
 export interface McpServerSnapshot {
   id: string;
   config: McpServerConfig;
+  /** The Partition its catalogue is cached under. */
   partition: string;
+  /** The resolved static credential headers, held only in memory. */
   headers?: Record<string, SensitiveValue>;
-  /** The credential reference that did not resolve; the server is unusable until it does. */
+  /** The credential reference that did not resolve. The server is unusable until it does. */
   missing?: string;
+  /** The grant state, for an OAuth server. */
   oauth?: McpOAuthState;
   /** The cached catalogue, replaced in place by a refresh. */
   catalog?: McpCatalog;
 }
 
+/** What a Turn takes from the Scope for its MCP servers. */
 export interface McpSnapshot {
   servers: McpServerSnapshot[];
 }
 
+/**
+ * Access to a Scope's MCP servers: snapshots, grants and catalogue refreshes, over the ScopeConfig Durable
+ * Object.
+ */
 export class McpRegistry {
   constructor(
     private readonly deployment: Deployment,
@@ -62,7 +75,7 @@ export class McpRegistry {
     return remote<ScopeConfigDurableObject>(this.scopes, keys.config(scope));
   }
 
-  /** The egress for a Turn's servers: their hosts, narrowed by `egress.mcpHosts`. */
+  /** The scoped fetch for a Turn's servers. It allows their hosts, narrowed by `egress.mcpHosts`. */
   egress(config: ScopeConfigDocument, servers: readonly McpServerSnapshot[]): typeof fetch {
     const hosts = mcpHostAllowList(
       servers.map((server) => server.config.url),
@@ -71,7 +84,10 @@ export class McpRegistry {
     return scopedFetch({ hosts, fetch: this.deployment.fetch });
   }
 
-  /** No network to the servers: the registered ones, their credentials resolved, and whatever catalogue is cached. */
+  /**
+   * The registered servers with their credentials resolved and whatever catalogue is cached. It does not
+   * contact them.
+   */
   async snapshot(scope: ScopeId, config: ScopeConfigDocument, input: McpSnapshotInput): Promise<McpSnapshot> {
     const registered = config.mcp?.servers ?? {};
     const ids = input.serverIds ?? Object.keys(registered);
@@ -130,9 +146,9 @@ export class McpRegistry {
   }
 
   /**
-   * A token the server refused: one refresh through the Durable Object, which hands back the current
-   * token when another Turn already rotated it. The snapshot is updated in place; `false` means the
-   * holder must consent again.
+   * Refreshes the Holder's access token once through the Durable Object after the server refused it. The
+   * Durable Object hands back the current token when another Turn already rotated it. The snapshot is
+   * updated in place. Returns false when the Holder must consent again.
    */
   async refreshToken(scope: ScopeId, server: McpServerSnapshot): Promise<boolean> {
     const { oauth } = server;
@@ -145,7 +161,7 @@ export class McpRegistry {
     return next.token !== undefined;
   }
 
-  /** Starts a consent flow for one server; the answer is where the human must go. */
+  /** Starts a consent flow for one server and returns the URL the human must visit. */
   async authorize(scope: ScopeId, input: McpAuthorizeInput): Promise<{ authUrl: string }> {
     return unwrap(this.stub(scope).mcpAuthorize(scope, input));
   }
@@ -176,7 +192,10 @@ export class McpRegistry {
     return listed.ok || !catalog ? listed : ok(catalog);
   }
 
-  /** One `tools/list` through `session`; the result replaces the cached catalogue, on the server and in the store. */
+  /**
+   * Lists the server's tools once through `session`. The result replaces the cached catalogue on the
+   * snapshot and in the store.
+   */
   async list(
     scope: ScopeId,
     server: McpServerSnapshot,
@@ -212,7 +231,7 @@ export class McpRegistry {
     }
   }
 
-  /** A refresh on request, outside any Turn: one short-lived session, dropped when the list is stored. */
+  /** Refreshes the catalogue outside any Turn, over a short-lived session closed once the list is stored. */
   async refresh(
     scope: ScopeId,
     server: McpServerSnapshot,
@@ -235,8 +254,8 @@ function grantState(view: McpGrantView | undefined): Pick<McpOAuthState, "token"
 }
 
 /**
- * The transport inputs for one server: the plain headers, the resolved static ones over them, and the
- * bearer read from the snapshot on every request, so a refreshed token reaches an open session.
+ * The connection inputs for one server. The resolved static headers override the plain ones. The bearer
+ * is read from the snapshot on every request, so a refreshed token reaches an open session.
  */
 export function connection(server: McpServerSnapshot, egress: typeof fetch): Omit<McpConnection, "signal"> {
   const headers = { ...server.config.headers };

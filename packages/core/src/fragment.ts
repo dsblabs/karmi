@@ -2,8 +2,9 @@ import type { ScopeId, ThreadRef, UserId } from "./context";
 import { assertName } from "./names";
 import type { Output, Schema } from "./schema";
 
-/** What a Fragment sees: the turn's context, never a template variable bag. */
+/** The Turn context a Fragment renders from. It is not a bag of template variables. */
 export interface FragmentContext {
+  /** The id of the model in use this Turn. */
   model: string;
   scope: ScopeId;
   user?: UserId;
@@ -13,11 +14,13 @@ export interface FragmentContext {
   now: Date;
 }
 
+/** Renders a Fragment's text. Nothing is added to the Prompt when it returns null or undefined. */
 export type FragmentRender<Args> = (
   ctx: FragmentContext,
   args: Args,
 ) => string | null | undefined | Promise<string | null | undefined>;
 
+/** The definition `defineFragment` takes. */
 export interface FragmentInput<Args extends Schema | undefined> {
   name: string;
   description?: string;
@@ -26,6 +29,7 @@ export interface FragmentInput<Args extends Schema | undefined> {
   render: FragmentRender<Output<Args>>;
 }
 
+/** A Fragment as `defineFragment` returns it. */
 export interface Fragment<Args extends Schema | undefined = Schema | undefined> {
   readonly kind: "fragment";
   readonly name: string;
@@ -34,6 +38,7 @@ export interface Fragment<Args extends Schema | undefined = Schema | undefined> 
   readonly render: FragmentRender<Output<Args>>;
 }
 
+/** Defines a Fragment for the Catalogue. Throws a `KarmiError` when the name is invalid. */
 export function defineFragment<Args extends Schema | undefined = undefined>(
   input: FragmentInput<Args>,
 ): Fragment<Args> {

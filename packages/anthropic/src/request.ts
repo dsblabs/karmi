@@ -28,8 +28,9 @@ import type {
 import { DEFAULT_MAX_TOKENS } from "./models";
 import { anthropicOptions, type AnthropicOptions } from "./options";
 
-// karmi's plain-JSON request → the Messages API body. Reserved block families (`compaction`, server-tool
-// results, `provider`) go back on the wire byte-exact; the replay rules already decided they belong here.
+// Builds the Messages API body from karmi's plain-JSON request. Reserved block families (`compaction`,
+// server-tool results, `provider`) go back on the wire byte-exact. The replay rules in core already decided
+// they belong in this request.
 
 const BETAS = {
   fallbacks: "server-side-fallback-2026-07-01",
@@ -37,7 +38,10 @@ const BETAS = {
   mcp: "mcp-client-2025-11-20",
   taskBudget: "task-budgets-2026-03-13",
 } as const;
-/** The lowest `input_tokens` trigger the API accepts; a `compact` request asks for the earliest possible one. */
+/**
+ * The lowest `input_tokens` trigger the API accepts. A `compact` request uses it to compact as early as
+ * possible.
+ */
 const COMPACT_TRIGGER_MIN = 50_000;
 
 /** Block param types that accept `cache_control`. */
@@ -52,6 +56,7 @@ const CACHEABLE = new Set([
   "tool_reference",
 ]);
 
+/** Builds the Messages API params for `request`, with `media` already prepared for the wire. */
 export function buildParams(request: ProviderRequest, media: RequestMedia = new Map()): MessageCreateParamsBase {
   const options = anthropicOptions(request);
   const cache = options.cache === false ? undefined : cacheControl(options.cache?.ttl);
@@ -85,7 +90,8 @@ export function buildParams(request: ProviderRequest, media: RequestMedia = new 
     };
   if (options.fallbacks) params.fallbacks = options.fallbacks;
   if (options.contextManagement) params.context_management = options.contextManagement;
-  // A Harness `compact` wins over any configured edits: it wants the block back now, and nothing else.
+  // A Harness `compact` request replaces any configured edits. It needs the compaction block back now and
+  // nothing else.
   if (request.compact)
     params.context_management = {
       edits: [
@@ -136,7 +142,8 @@ export function countTokensParams(request: ProviderRequest, media: RequestMedia 
 
 function collectBetas(request: ProviderRequest, options: AnthropicOptions, messages: BetaMessageParam[]): string[] {
   const betas = new Set<string>(options.betas);
-  // A profile header lists betas too; folded in here because a request-level list would replace it.
+  // A profile header may list betas too. They are folded in here because a request-level list would replace
+  // the header.
   for (const beta of request.config.headers?.["anthropic-beta"]?.split(",") ?? [])
     if (beta.trim()) betas.add(beta.trim());
   if (options.fallbacks) betas.add(BETAS.fallbacks);
@@ -157,8 +164,9 @@ function cacheControl(ttl?: "5m" | "1h"): BetaCacheControlEphemeral {
 }
 
 /**
- * karmi's `execution: "provider"` servers on Anthropic's MCP connector: one `mcp_servers` entry with the
- * registry's token, and one `mcp_toolset` carrying the allow/deny lists as per-tool enablement.
+ * Maps the request's `execution: "provider"` MCP servers onto Anthropic's MCP connector. Each server becomes
+ * one `mcp_servers` entry carrying its token and one `mcp_toolset` that turns the allow and deny lists into
+ * per-tool enablement.
  */
 function mcpConnector(
   request: ProviderRequest,
@@ -184,7 +192,7 @@ function toTools(
   options: AnthropicOptions,
   cache: BetaCacheControlEphemeral | undefined,
 ): BetaToolUnion[] {
-  // Deferred definitions go last: the API strips them from the cached prefix, and they take no cache_control.
+  // Deferred definitions go last. The API strips them from the cached prefix, and they take no cache_control.
   const ordered = (request.tools ?? []).toSorted((a, b) => Number(a.deferred === true) - Number(b.deferred === true));
   const out: BetaToolUnion[] = ordered.map((tool) => ({
     name: tool.name,
@@ -240,7 +248,8 @@ function toMessages(
         );
         break;
       case "toolResult": {
-        // A load point carries only its references; the API rejects them mixed with text, so any text follows as siblings.
+        // A Load point carries only its tool references. The API rejects references mixed with text, so any
+        // text follows as sibling blocks.
         const references: BetaToolReferenceBlockParam[] = message.content.flatMap((block) =>
           block.type === "tool_reference" ? [{ type: "tool_reference", tool_name: block.name }] : [],
         );
@@ -279,8 +288,8 @@ function userBlock(block: ContentBlock, media: RequestMedia): UserBlock[] {
     return [{ type: "document", source: { type: "base64", media_type: mimeType, data: encoded.data } }];
   if (mimeType === "image/png" || mimeType === "image/jpeg" || mimeType === "image/gif" || mimeType === "image/webp")
     return [{ type: "image", source: { type: "base64", media_type: mimeType, data: encoded.data } }];
-  // The SDK types only list known modalities/MIMEs. Unknown models get the base64 source
-  // envelope optimistically; a definite capability denial was already replaced by text.
+  // The SDK types only list known modalities and MIME types. An unknown model gets the base64 source
+  // envelope optimistically. A definite capability denial was already replaced by text upstream.
   return [
     { type: mediaKind(mimeType), source: { type: "base64", media_type: mimeType, data: encoded.data } } as UserBlock,
   ];
@@ -294,13 +303,13 @@ function assistantBlock(block: ContentBlock, media: RequestMedia): BetaContentBl
       return block.text.trim() ? [{ type: "text", text: block.text }] : [];
     case "thinking":
       if (block.redacted) return block.signature ? [{ type: "redacted_thinking", data: block.signature }] : [];
-      // An unsigned thinking block cannot be replayed; the replay rules already kept only same-model ones.
+      // An unsigned thinking block cannot be replayed. The replay rules already kept only same-model ones.
       return block.signature ? [{ type: "thinking", thinking: block.text, signature: block.signature }] : [];
     case "tool_call":
       return [{ type: "tool_use", id: block.id, name: block.name, input: block.input }];
     case "server_tool":
       return [
-        // Replayed only to the provider that produced it, so the name is one Anthropic itself emitted.
+        // The block is replayed only to the provider that produced it, so the name is one Anthropic emitted.
         {
           type: "server_tool_use",
           id: block.id,

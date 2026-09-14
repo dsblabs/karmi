@@ -6,12 +6,17 @@ import type {
   BetaUsage,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 
-// Anthropic's SSE events → karmi's ProviderEvents. Text, thinking and tool input stream as deltas and
-// land as completed `part`s; a server tool waits for its result block so one `part` carries both, byte-exact.
+// Maps Anthropic's SSE events to karmi's ProviderEvents. Text, thinking and tool input stream as deltas and
+// then complete as `part` events. A server tool waits for its result block so one `part` carries both,
+// byte-exact.
 
+/** What `mapStream` needs beyond the events. */
 export interface StreamContext {
+  /** Receives the log line for a server-side fallback hop. */
   logger?: Logger | undefined;
+  /** Whether every SSE event is also emitted as a `raw` event. */
   raw?: boolean | undefined;
+  /** The gateway log reference stamped on the final usage. */
   gateway?: Usage["gateway"] | undefined;
 }
 
@@ -23,7 +28,10 @@ type Open =
   | { kind: "tool"; id: string; name: string; json: string; input: unknown }
   | { kind: "server"; id: string; name: string; json: string; input: unknown }
   | { kind: "compaction"; block: Record<string, unknown>; content: string }
-  /** Anything else: replayed as `provider`, or attached to a server tool when it is that tool's result. */
+  /**
+   * Any other block. It is emitted as a `provider` block, or attached to a server tool when it is that tool's
+   * result.
+   */
   | { kind: "other"; block: Record<string, unknown>; json: string };
 
 const STOP: Record<BetaStopReason, StopReason> = {
@@ -37,6 +45,7 @@ const STOP: Record<BetaStopReason, StopReason> = {
   model_context_window_exceeded: "context_window_exceeded",
 };
 
+/** Maps the SDK's stream events to ProviderEvents, ending with `message.end` or an `error`. */
 export async function* mapStream(
   events: AsyncIterable<BetaRawMessageStreamEvent>,
   context: StreamContext,
@@ -102,7 +111,9 @@ type BlockEvent = Extract<
   { type: "content_block_start" | "content_block_delta" | "content_block_stop" }
 >;
 
-/** One content-block event against the blocks still open, yielding whatever it completes or streams. */
+/**
+ * Applies one content-block event to the blocks still open and yields the delta or completed part it produces.
+ */
 function* blockEvent(
   event: BlockEvent,
   open: Map<number, Open>,
@@ -184,14 +195,17 @@ function openBlock(block: StartedBlock, logger: Logger | undefined): Open {
     case "compaction":
       return { kind: "compaction", block: { ...block }, content: block.content ?? "" };
     default:
-      // The served model is on `message_start`; the hop itself is this block, logged once.
+      // The served model is on `message_start`. The hop itself is this block, so it is logged once here.
       if (block.type === "fallback")
         logger?.info("provider fallback", { from: block.from.model, to: block.to.model, trigger: block.trigger });
       return { kind: "other", block: { ...block }, json: "" };
   }
 }
 
-/** Grows the open block by one delta; returns the delta to stream, if it is one karmi streams. */
+/**
+ * Grows the open block by one delta. Returns the delta event to stream, or undefined for kinds karmi does not
+ * stream.
+ */
 function applyDelta(current: Open, delta: BlockDelta, index: number): ProviderEvent | undefined {
   switch (delta.type) {
     case "text_delta":
@@ -216,7 +230,10 @@ function applyDelta(current: Open, delta: BlockDelta, index: number): ProviderEv
   }
 }
 
-/** A block karmi has no family for: redacted thinking, a server tool's result, or anything replayed verbatim. */
+/**
+ * Completes a block karmi has no family for: redacted thinking, a server tool's result, or a block replayed
+ * verbatim.
+ */
 function closeOther(current: Extract<Open, { kind: "other" }>, index: number, pending: Pending): ProviderEvent {
   const block = current.json
     ? { ...current.block, input: parseInput(current.json, current.block.input) }

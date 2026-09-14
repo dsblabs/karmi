@@ -7,17 +7,27 @@ import { remote } from "./outcome";
 import type { ScopeConfigDurableObject } from "./scope-config-do";
 import type { ThreadDurableObject } from "./thread-do";
 
-// The two fixed OAuth routes a Deployment mounts: the Client ID Metadata Document every authorization
-// server may fetch, and the one exact callback every consent flow returns to. The callback hands the
-// code to the Scope's ScopeConfig, which stores the tokens, then wakes the parked Thread by name.
+// This module serves the two fixed OAuth routes a Deployment mounts: the Client ID Metadata Document
+// that authorization servers fetch, and the single callback every consent flow returns to. The callback
+// hands the code to the Scope's ScopeConfig, which stores the tokens, then wakes the parked Thread by name.
 
+/** The handler for the Deployment's two OAuth routes, exposed as `karmi.oauth`. */
 export interface OAuthRoutes {
-  /** Answers the client document and the callback; `undefined` for any other request, so a Worker can fall through. */
+  /**
+   * Answers the client document and the callback routes. Returns undefined for any other request so a
+   * Worker can fall through to its own handler.
+   */
   handle(request: Request): Promise<Response | undefined>;
-  /** What `/.well-known/karmi-mcp-client.json` serves; absent without `createKarmi({ oauth })`. */
+  /**
+   * The document served at `/.well-known/karmi-mcp-client.json`. Absent when `createKarmi` was given no
+   * `oauth`.
+   */
   readonly clientDocument: ReturnType<typeof clientDocument> | undefined;
 }
 
+/**
+ * Builds the OAuth routes for `deployment`. The callback reaches ScopeConfig and Threads through `bindings`.
+ */
 export function oauthRoutes(deployment: Deployment, bindings: KarmiBindings): OAuthRoutes {
   const identity = deployment.oauth;
   const document = identity && clientDocument(identity);

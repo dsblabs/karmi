@@ -5,7 +5,10 @@ import type { Sandbox, SandboxRequest, SandboxResult, ScriptToolCall } from "./s
 import { parseForCodemode, stringifyForCodemode, SANDBOX_CODEC } from "./vendor/codemode/codec";
 import { disposeQuietly } from "./vendor/codemode/runtime";
 
-// The one-shot load, RPC envelopes, console capture and disposal are adapted from Codemode (MIT; vendor/codemode/NOTICE).
+// The one-shot load, RPC envelopes, console capture and disposal are adapted from Codemode
+// (MIT, see vendor/codemode/NOTICE).
+
+/** The RPC target a Script's `tools` and `__result` globals call into from the isolate. */
 class ToolBridge extends RpcTarget {
   #request: SandboxRequest;
   #count = 0;
@@ -32,7 +35,7 @@ class ToolBridge extends RpcTarget {
         this.breach = "limit_exceeded: maxToolCalls";
         return stringifyForCodemode({ error: this.breach });
       }
-      // Serialize bridge calls so mutations cannot race each other or read-only calls.
+      // Calls run one at a time so a mutating Tool cannot race another call.
       const work = this.#queue.then(async () => {
         this.#request.signal.throwIfAborted();
         const result = await this.#request.call(name, parseForCodemode(json), this.#request.signal);
@@ -60,6 +63,10 @@ const ResponseSchema = z.union([
   z.object({ error: z.object({ message: z.string(), stack: z.optional(z.string()) }), logs: z.array(z.string()) }),
 ]);
 
+/**
+ * The `isolate` Sandbox tier: runs a Script in a Dynamic Worker with no filesystem, network, secrets
+ * or storage. A breached CPU, wall-clock or Tool-call limit ends the run with a `limit_exceeded` error.
+ */
 export class CloudflareIsolateSandbox implements Sandbox {
   constructor(private readonly loader: WorkerLoader) {}
   async run(request: SandboxRequest): Promise<SandboxResult> {

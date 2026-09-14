@@ -1,22 +1,28 @@
 import type { Logger } from "./context";
 import type { ProviderConfig } from "./scope-config";
 
-// The one egress seam: every outbound request karmi makes — provider calls, MCP, OAuth discovery — goes
-// through a `scopedFetch` built per Turn from the resolved Scope config (docs/research/outbound-routing.md §5).
-// It rejects private addresses and hosts outside its allow-list with a synthetic 403, forces manual
-// redirects so a 3xx can never re-route around the check, and stamps nothing outbound.
+// Every outbound request karmi makes (provider calls, MCP, OAuth discovery) goes through a `scopedFetch`
+// built per Turn from the resolved Scope config (docs/research/outbound-routing.md §5). It answers a private
+// address or a host outside its allow-list with a synthetic 403 and forces manual redirects so a 3xx cannot
+// re-route around the check. It adds nothing to the outbound request.
 
-/** Where every Cloudflare AI Gateway lives; the adapter builds its base URL on it. */
+/** The host every Cloudflare AI Gateway is served from. The adapter builds its base URL on it. */
 export const GATEWAY_HOST = "gateway.ai.cloudflare.com";
 
+/** The rules a `scopedFetch` enforces on every outbound request. */
 export interface EgressPolicy {
-  /** Hostnames or `*.` globs; absent means any public host. */
+  /** The hostnames or `*.domain` globs a request may reach. Absent means any public host. */
   hosts?: string[];
+  /** Receives a warning for every denied request. */
   logger?: Logger;
-  /** The transport underneath; the global `fetch` unless a test supplies one. */
+  /** The transport that carries allowed requests. Defaults to the global `fetch`. */
   fetch?: typeof fetch;
 }
 
+/**
+ * A `fetch` that enforces `policy`. It answers a blocked or disallowed URL with a 403 and never follows
+ * redirects.
+ */
 export function scopedFetch(policy: EgressPolicy = {}): typeof fetch {
   const transport = policy.fetch ?? fetch;
   const hosts = policy.hosts?.map((host) => host.toLowerCase());
@@ -30,14 +36,17 @@ export function scopedFetch(policy: EgressPolicy = {}): typeof fetch {
   }) as typeof fetch;
 }
 
-/** Which hosts a Provider profile may reach: its gateway, its `baseUrl`, or (absent both) any public host. */
+/**
+ * The hosts a Provider profile may reach. A gateway profile reaches only the gateway host and a `baseUrl`
+ * profile only that host. A profile with neither may reach any public host, returned as undefined.
+ */
 export function providerHosts(profile: ProviderConfig): string[] | undefined {
   if (profile.gateway) return [GATEWAY_HOST];
   if (profile.baseUrl) return [new URL(profile.baseUrl).hostname];
   return undefined;
 }
 
-/** `host` equals `pattern`, or `pattern` is a `*.domain` glob covering it. */
+/** Whether `host` equals `pattern` or falls under a `*.domain` glob `pattern`. */
 export function matchesHost(host: string, pattern: string): boolean {
   if (pattern.startsWith("*.")) return host.endsWith(pattern.slice(1)) && host.length > pattern.length - 1;
   return host === pattern;
@@ -54,7 +63,7 @@ function denied(logger: Logger | undefined, code: DenialCode, target: string): R
   return Response.json({ error: { code, message } }, { status: 403 });
 }
 
-/** The one reader of the synthetic 403 body above: its message when `text` is one, else nothing. */
+/** The message from a synthetic egress-denial 403 body, or undefined when `text` is not one. */
 export function decodeEgressDenial(text: string): string | undefined {
   if (!text.includes('"egress.')) return undefined;
   let parsed: unknown;
@@ -70,8 +79,9 @@ export function decodeEgressDenial(text: string): string | undefined {
   return error.message;
 }
 
-// SSRF guard vendored from cloudflare/agents (packages/agents/src/mcp/client/index.ts, MIT, © Cloudflare, Inc.).
-// Loopback stays allowed on purpose: local development servers live there.
+// The SSRF guard is vendored from cloudflare/agents
+// (packages/agents/src/mcp/client/index.ts, MIT, © Cloudflare, Inc.).
+// Loopback is allowed so local development servers stay reachable.
 const BLOCKED_HOSTNAMES = new Set(["0.0.0.0", "[::]", "metadata.google.internal"]);
 const IPV6_LINK_LOCAL = /^fe[89ab][0-9a-f]/;
 
@@ -101,7 +111,7 @@ function isPrivateIPv4([a, b = -1]: number[]): boolean {
   return a === 0;
 }
 
-// Unique-local (fc00::/7), link-local (fe80::/10) and IPv4-mapped forms in both dotted and hex spellings.
+// Matches unique-local (fc00::/7), link-local (fe80::/10) and IPv4-mapped addresses in dotted or hex form.
 function isPrivateIPv6(address: string): boolean {
   if (address.startsWith("fc") || address.startsWith("fd")) return true;
   if (IPV6_LINK_LOCAL.test(address)) return true;

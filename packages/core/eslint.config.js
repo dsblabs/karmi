@@ -4,6 +4,8 @@ import {
   extensionlessImportRules,
   restrictedSyntax,
   rules,
+  jsdocPlugin,
+  jsdocRules,
 } from "../../eslint.guardrails.js";
 
 // The compatibility baseline (ADR-0002): no `node:*` in core, no decorators anywhere.
@@ -19,7 +21,10 @@ export default tseslint.config(
   },
   {
     files: ["src/**/*.ts"],
+    ignores: ["src/vendor/**"],
+    plugins: jsdocPlugin,
     rules: {
+      ...jsdocRules,
       ...rules,
       "no-restricted-imports": [
         "error",

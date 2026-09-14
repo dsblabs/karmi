@@ -15,35 +15,61 @@ import type { McpClientIdentity } from "./mcp-auth";
 import { oauthRoutes, type OAuthRoutes } from "./mcp-oauth-routes";
 import { layerDeploymentCredentials, type SecretsProvider } from "./secrets";
 
+/** The options `createKarmi` takes to assemble a Deployment. */
 export interface KarmiOptions<Env = unknown> {
+  /** Everything the Deployment defines in code, for Agent Specs to reference by name. */
   catalogue: CatalogueInput;
+  /** How presigned media URLs are minted. */
   media?: MediaUrlOptions;
+  /** The time source. Defaults to wall time. */
   clock?: Clock;
-  /** Deployment-wide layer every Scope inherits and may only tighten: the same shape as a Scope config. */
+  /**
+   * The Deployment-wide config layer every Scope inherits and may only tighten. It has the same shape as a
+   * Scope config.
+   */
   defaults?: ScopeConfigDocument;
+  /** The Providers by name. */
   providers?: Record<string, Provider>;
-  /** Deployment credentials by name, referenced as `deployment:<name>`; pass Worker secrets, never literals. */
+  /** Deployment credentials by name, referenced as `deployment:<name>`. Pass Worker secrets, never literals. */
   credentials?: Record<string, string>;
-  /** Where `scope:<name>` credentials live; the envelope store over `KARMI_KEYRING` unless a Platform brings its own. */
+  /**
+   * The Secrets provider that `scope:<name>` credentials live in. Defaults to the envelope store over
+   * `KARMI_KEYRING`.
+   */
   secrets?: SecretsProvider;
-  /** The transport under every outbound `scopedFetch`; the test kit routes it to in-process fakes. */
+  /** The transport under every outbound Scoped fetch. The Test kit routes it to in-process fakes. */
   fetch?: typeof fetch;
-  /** The OAuth client this Deployment presents to MCP servers; required before any `auth: { type: "oauth" }` server works. */
+  /**
+   * The OAuth client this Deployment presents to MCP servers. Required before any `auth: { type: "oauth" }`
+   * server works.
+   */
   oauth?: McpClientIdentity;
+  /** Maps the Worker's `env` onto karmi's binding names when the Worker cannot use the fixed names. */
   bindings?: BindingsResolver<Env>;
 }
 
+/** A running Deployment. The Worker re-exports its Durable Objects and mounts its handlers. */
 export interface Karmi {
+  /** Mints and verifies presigned media URLs. */
   readonly media: ReturnType<typeof mediaUrls>;
+  /** The two Durable Object classes the Worker re-exports by name. */
   readonly durableObjects: DurableObjects;
   readonly catalogue: Catalogue;
+  /** The queue consumer that runs Deliverers. Export it as the Worker's `queue` handler. */
   readonly queueHandler: ExportedHandlerQueueHandler;
-  /** The two fixed OAuth routes: the client document and the callback. Mount with `karmi.oauth.handle(request)`. */
+  /**
+   * The two fixed OAuth routes, the client document and the callback. Mount with
+   * `karmi.oauth.handle(request)`.
+   */
   readonly oauth: OAuthRoutes;
+  /** Opens the Scope with `id`. */
   scope(id: string): Scope;
 }
 
-/** Assembles a Deployment: runs at module evaluation, so every boot error is a startup error. */
+/**
+ * Assembles a Deployment from `options`. Call it at module evaluation so every boot error is a
+ * startup error.
+ */
 export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
   assertCompatibilityBaseline();
   const providers = options.providers ?? {};

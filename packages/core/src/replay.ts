@@ -1,20 +1,26 @@
 import type { ContentBlock, Message } from "./provider";
 
-// Cross-provider replay rules, ported from pi-ai's transformMessages and run by the Harness before any
-// adapter sees the transcript. Every rule is keyed on the provider/model each assistant message records.
+// The cross-provider replay rules, ported from pi-ai's transformMessages. The Harness runs them before
+// any adapter sees the transcript. Every rule is keyed on the provider and model each assistant message
+// records.
 
+/** The provider and model the transcript is being prepared for. */
 export interface ReplayTarget {
+  /** The Provider profile name. */
   provider: string;
+  /** The provider-native model id. */
   model: string;
 }
 
+/** A transcript prepared for one model call. */
 export interface ReplayResult {
-  /** Leading system messages, joined; the caller appends them to the Prompt. */
+  /** The leading system messages joined together. The caller appends them to the Prompt. */
   system?: string;
+  /** The messages to send, in order. */
   messages: Message[];
 }
 
-// What Anthropic accepts as a tool-call id; the strictest of the providers, so it is the common form.
+// Anthropic's tool-call id format is the strictest of the providers, so it is the common form.
 const TOOL_CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const ORPHAN_RESULT: ContentBlock[] = [{ type: "text", text: "No result provided" }];
 
@@ -29,7 +35,7 @@ export function prepareMessages(messages: Message[], target: ReplayTarget): Repl
   const out: Message[] = [];
   const leadingSystem: string[] = [];
 
-  // Tool calls awaiting a result, in order, and the system text that must wait until the batch is answered.
+  // System text seen inside a tool batch is held back until every call of the batch has a result.
   let pending: { id: string; name: string }[] = [];
   let answered = new Set<string>();
   let deferredSystem: string[] = [];
@@ -84,7 +90,9 @@ export function prepareMessages(messages: Message[], target: ReplayTarget): Repl
   return result;
 }
 
-/** A result for every call of the batch that never got one, so no provider sees a dangling call. */
+/**
+ * An error result for every call of the batch that never got one. No provider accepts a call without a result.
+ */
 function orphanResults(pending: { id: string; name: string }[], answered: ReadonlySet<string>): Message[] {
   return pending
     .filter((call) => !answered.has(call.id))
@@ -97,7 +105,10 @@ function orphanResults(pending: { id: string; name: string }[], answered: Readon
     }));
 }
 
-/** Merges into a directly preceding system message, since some providers reject two in a row. */
+/**
+ * Appends a system message, merging it into a directly preceding one because some providers reject two in a
+ * row.
+ */
 function pushSystem(out: Message[], content: string): void {
   const last = out[out.length - 1];
   if (last?.role === "system") out[out.length - 1] = { role: "system", content: `${last.content}\n\n${content}` };
@@ -138,7 +149,10 @@ function replayBlock(
   }
 }
 
-/** Ids from other providers can be hundreds of characters with `|` and the like; keep them unique and portable. */
+/**
+ * A tool-call id every provider accepts. Ids from other providers can be hundreds of characters and
+ * contain `|` and the like. Long ids are truncated with a hash suffix so they stay unique.
+ */
 export function normalizeToolCallId(id: string): string {
   if (TOOL_CALL_ID.test(id)) return id;
   const safe = id.replace(/[^A-Za-z0-9_-]/g, "_") || "call";

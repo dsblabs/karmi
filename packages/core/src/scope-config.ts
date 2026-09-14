@@ -16,26 +16,32 @@ import { isBlockedUrl, matchesHost } from "./scoped-fetch";
 import { CREDENTIAL_REF, FALLBACK_REASONS, type FallbackReason } from "./secrets";
 import { firstIssue, pointer } from "./validate";
 
-// The secret-free Scope document: what `scope.config.set` stores as one immutable revision, and what
-// `createKarmi({ defaults })` supplies as the Deployment layer every Scope inherits and may only tighten.
+// This module defines the secret-free Scope config document. `scope.config.set` stores it as one immutable
+// revision, and `createKarmi({ defaults })` supplies the same shape as the Deployment layer every Scope
+// inherits and may only tighten.
 
-// A credential is always a reference into a secret store; a value here is the one thing this schema exists to refuse.
+// A credential is always a reference into a secret store. Refusing a pasted value is the reason this
+// pattern exists.
 const SECRET_LOOKING_KEY = /key|secret|token|password|authorization/i;
 
 const credentialRef = z
   .string()
   .check(z.regex(CREDENTIAL_REF, "must be scope:<name> or deployment:<name>, never a value"));
 
-// Cloudflare AI Gateway is configuration under any adapter: a URL plus `cf-aig-*` headers. Bounds are the gateway's own.
+// Cloudflare AI Gateway is configuration under any adapter: a URL plus `cf-aig-*` headers. The numeric
+// bounds are the gateway's own.
 const GatewaySchema = z.strictObject({
   kind: z.literal("cloudflare"),
   accountId: name,
   gatewayId: name,
-  /** The `cf-aig-authorization` token; absent for an unauthenticated gateway. */
+  /** The credential reference of the `cf-aig-authorization` token. Absent for an unauthenticated gateway. */
   credential: z.optional(credentialRef),
-  /** The provider key is stored in the gateway, so the profile carries none. */
+  /** Whether the provider key is stored in the gateway, in which case the profile carries none. */
   byok: z.optional(z.boolean()),
-  /** `cf-aig-metadata` entries beside karmi's own four (scope, agent, thread, turn); an adapter sends the first one. */
+  /**
+   * Extra `cf-aig-metadata` entries beside karmi's own four (scope, agent, thread, turn). At most five are
+   * sent.
+   */
   metadata: z.optional(
     z
       .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
@@ -55,22 +61,25 @@ const GatewaySchema = z.strictObject({
 });
 
 const ProviderConfigSchema = z.strictObject({
-  /** Name of a Provider registered in `createKarmi({ providers })`. */
+  /** The name of a Provider registered in `createKarmi({ providers })`. */
   adapter: name,
-  /** Model-id globs this profile can serve; defaults to `<adapter>/*`. */
+  /** The model-id globs this profile can serve. Defaults to `<adapter>/*`. */
   models: z.optional(z.array(z.string().check(z.minLength(1)))),
   credential: z.optional(credentialRef),
-  /** Self-hosted or OpenAI-compatible endpoints; ignored when a gateway is set. */
+  /** The endpoint of a self-hosted or OpenAI-compatible provider. Ignored when a gateway is set. */
   baseUrl: z.optional(z.url()),
   gateway: z.optional(GatewaySchema),
-  /** Who summarises at Compaction: the Harness (default) or the provider's own mechanism. */
+  /** Who summarises at Compaction: the Harness (the default) or the provider's own mechanism. */
   compaction: z.optional(z.enum(["harness", "provider"])),
-  /** Only `inline` (base64 at request-build) exists in v0; the key is reserved for URL/file strategies. */
+  /** How media reaches the provider. `inline` sends base64 at request build. */
   media: z.optional(z.strictObject({ strategy: z.literal("inline") })),
-  /** Adapter-namespaced options forwarded verbatim, e.g. `{ anthropic: { effort: "high" } }`. */
+  /** Adapter-namespaced options forwarded verbatim, such as `{ anthropic: { effort: "high" } }`. */
   providerOptions: z.optional(z.record(z.string(), z.unknown())),
   headers: z.optional(z.record(z.string(), z.string())),
-  /** Opt-in: run under the named Deployment profile when this one's credential is missing or fails as listed. */
+  /**
+   * The Credential fallback: the Deployment profile to run under when this profile's credential is
+   * missing or fails as listed.
+   */
   fallback: z.optional(
     z.strictObject({
       profile: name,
@@ -80,7 +89,7 @@ const ProviderConfigSchema = z.strictObject({
   ),
 });
 
-// `false` switches a Capability off for the Scope; an absent block leaves it unbounded.
+// `false` switches a Capability off for the Scope. An absent block leaves it unbounded.
 const ceiling = <T extends z.core.$ZodType>(schema: T) => z.optional(z.union([z.literal(false), schema]));
 const CeilingsSchema = z.strictObject({
   scripts: ceiling(
@@ -96,7 +105,7 @@ const CeilingsSchema = z.strictObject({
     }),
   ),
   approvals: z.optional(z.strictObject({ timeout: z.optional(positiveInt) })),
-  /** The largest context window an Agent here may assume; a Spec's `context.window` is capped to it. */
+  /** The largest context window an Agent here may assume. A Spec's `context.window` is capped to it. */
   context: z.optional(z.strictObject({ window: z.optional(positiveInt) })),
 });
 
@@ -115,29 +124,30 @@ const McpServerSchema = z.strictObject({
         type: z.literal("static"),
         headers: z.record(z.string().check(z.minLength(1)), credentialRef),
       }),
-      // An OAuth grant is the Connection `mcp:<id>`, held per Agent or per User; tokens live in ScopeConfig.
+      // An OAuth grant is the Connection `mcp:<id>`, held per Agent or per User. Tokens live in ScopeConfig.
       z.strictObject({
         type: z.literal("oauth"),
         level: z.enum(["agent", "user"]),
-        /** Scopes to request; absent lets the server's metadata decide. */
+        /** The OAuth scopes to request. Absent lets the server's metadata decide. */
         scope: z.optional(z.string().check(z.minLength(1))),
-        /** A pre-registered client for this server's issuer; the secret, if any, is a credential reference. */
+        /** A pre-registered client for this server's issuer. The secret, if any, is a credential reference. */
         client: z.optional(z.strictObject({ id: z.string().check(z.minLength(1)), secret: z.optional(credentialRef) })),
       }),
     ]),
   ),
-  /** Who calls the server's tools: the Harness (default), or the model provider's own MCP connector. */
+  /** Who calls the server's tools: the Harness (the default) or the model provider's own MCP connector. */
   execution: z.optional(z.enum(["harness", "provider"])),
-  /** Non-secret headers sent on every request; a header that authenticates belongs under `auth`. */
+  /** Non-secret headers sent on every request. A header that authenticates belongs under `auth`. */
   headers: z.optional(z.record(z.string(), z.string())),
-  /** Tool names (the server's own) an Agent may see; absent means every tool. */
+  /** The server's own tool names an Agent may see. Absent means every tool. */
   allow: z.optional(z.array(toolName)),
   deny: z.optional(z.array(toolName)),
-  /** Let the server's annotations drive gating; otherwise its tools count as destructive. */
+  /** Whether the server's annotations drive Approval gating. Otherwise its tools count as destructive. */
   trustAnnotations: z.optional(z.boolean()),
   catalog: z.optional(z.strictObject({ ttlMs: z.optional(positiveInt) })),
 });
 
+/** The schema of a Scope config document. */
 export const ScopeConfigSchema = z.strictObject({
   mcp: z.optional(
     z.strictObject({
@@ -158,38 +168,59 @@ export const ScopeConfigSchema = z.strictObject({
   policy: z.optional(z.array(PolicyRuleSchema)),
 });
 
+/** A Cloudflare AI Gateway in front of a Provider profile. */
 export interface GatewayConfig {
   kind: "cloudflare";
   accountId: string;
   gatewayId: string;
+  /** The credential reference of the `cf-aig-authorization` token. Absent for an unauthenticated gateway. */
   credential?: string;
+  /** Whether the provider key is stored in the gateway, in which case the profile carries none. */
   byok?: boolean;
+  /** Extra `cf-aig-metadata` entries beside karmi's own four (scope, agent, thread, turn). */
   metadata?: Record<string, string | number | boolean>;
+  /** The gateway's response cache settings. */
   cache?: { ttl?: number; skip?: boolean; key?: string };
+  /** The gateway's own retry settings. */
   retry?: { maxAttempts?: number; delayMs?: number; backoff?: "constant" | "linear" | "exponential" };
   timeoutMs?: number;
 }
 
-/** One Provider profile: an adapter, what it may serve, and how the adapter reaches the provider. Secret-free. */
+/**
+ * One Provider profile: an adapter, what it may serve, and how the adapter reaches the provider. It holds
+ * no secrets.
+ */
 export interface ProviderConfig {
+  /** The name of a Provider registered in `createKarmi({ providers })`. */
   adapter: string;
+  /** The model-id globs this profile can serve. Defaults to `<adapter>/*`. */
   models?: string[];
+  /** The credential reference, `scope:<name>` or `deployment:<name>`. */
   credential?: string;
+  /** The endpoint of a self-hosted or OpenAI-compatible provider. Ignored when a gateway is set. */
   baseUrl?: string;
   gateway?: GatewayConfig;
+  /** Who summarises at Compaction: the Harness (the default) or the provider's own mechanism. */
   compaction?: "harness" | "provider";
+  /** How media reaches the provider. `inline` sends base64 at request build. */
   media?: { strategy: "inline" };
+  /** Adapter-namespaced options forwarded verbatim. */
   providerOptions?: Record<string, unknown>;
+  /** Non-secret headers sent on every request. */
   headers?: Record<string, string>;
+  /** The Credential fallback to a Deployment profile. */
   fallback?: ProfileFallback;
 }
 
+/** A Provider profile's Credential fallback: which Deployment profile to run under, and when. */
 export interface ProfileFallback {
+  /** The Deployment profile to fall back to. */
   profile: string;
+  /** The reasons that engage the fallback. Defaults to `["missing"]`. */
   on?: FallbackReason[];
 }
 
-/** Upper bounds on what an Agent Spec in this Scope may ask for; `false` makes the Capability unavailable. */
+/** Upper bounds on what an Agent Spec in this Scope may ask for. `false` makes the Capability unavailable. */
 export interface Ceilings {
   scripts?:
     | false
@@ -209,37 +240,54 @@ export interface Ceilings {
   scheduling?: false | { maxPending?: number; maxHorizonMs?: number; cron?: boolean };
   providerTools?:
     false | { tools?: ProviderToolName[]; limits?: { maxCallsPerTurn?: number; maxCallsPerThread?: number } };
+  /** How long an Approval may wait, in milliseconds. */
   approvals?: { timeout?: number };
+  /** The largest context window an Agent here may assume. */
   context?: { window?: number };
 }
 
+/**
+ * How the Harness authenticates to an MCP server: not at all, with static headers, or through an OAuth grant.
+ */
 export type McpAuthConfig =
   | { type: "none" }
   | { type: "static"; headers: Record<string, string> }
   | { type: "oauth"; level: "agent" | "user"; scope?: string; client?: { id: string; secret?: string } };
 
-/** One registered remote MCP server; `auth.headers` values are credential references, never values. */
+/**
+ * One registered remote MCP server. The values under `auth.headers` are credential references, never values.
+ */
 export interface McpServerConfig {
   url: string;
   auth?: McpAuthConfig;
+  /** Who calls the server's tools: the Harness (the default) or the model provider's own MCP connector. */
   execution?: "harness" | "provider";
+  /** Non-secret headers sent on every request. */
   headers?: Record<string, string>;
+  /** The server's own tool names an Agent may see. Absent means every tool. */
   allow?: string[];
+  /** The server's own tool names an Agent may never see. */
   deny?: string[];
+  /** Whether the server's annotations drive Approval gating. Otherwise its tools count as destructive. */
   trustAnnotations?: boolean;
+  /** How long the cached Catalogue of the server stays fresh. */
   catalog?: { ttlMs?: number };
 }
 
+/** The outbound network limits of a Scope. */
 export interface EgressConfig {
-  /** Hostnames or `*.` globs MCP traffic may reach; absent means any registered server. */
+  /** The hostnames or `*.` globs MCP traffic may reach. Absent means any registered server. */
   mcpHosts?: string[];
 }
 
-/** One Scope's configuration, or the Deployment defaults: the same shape at both layers. */
+/** One Scope's configuration, or the Deployment defaults. Both layers have the same shape. */
 export interface ScopeConfigDocument {
+  /** The remote MCP servers by id. */
   mcp?: { servers?: Record<string, McpServerConfig> };
   egress?: EgressConfig;
+  /** The size and MIME-type limits on media entering the Scope. */
   media?: { maxBytes?: number; allowedTypes?: string[] };
+  /** The Provider profiles by name. */
   providers?: Record<string, ProviderConfig>;
   ceilings?: Ceilings;
   /** Scope-wide Permission Policy rules, consulted before an Agent Spec's own. */
@@ -250,9 +298,10 @@ export interface ScopeConfigDocument {
 export const scopeConfigJsonSchema: JsonSchema = toJsonSchema(ScopeConfigSchema);
 
 /**
- * Checks the document's shape and, when the registered Providers are given, that every profile names one of
- * them. Fallback targets must be Deployment profiles: `deploymentProfiles` for a Scope document, the
- * document's own for the Deployment defaults.
+ * Parses `document` as a Scope config. It checks the shape, refuses anything that looks like a secret
+ * value, and, when `providers` is given, checks that every profile names a registered Provider. Fallback
+ * targets must be Deployment profiles, which are `deploymentProfiles` for a Scope document and the
+ * document's own profiles for the Deployment defaults. Throws `config.invalid` or `config.secret-value`.
  */
 export function parseScopeConfig(
   document: unknown,
@@ -265,7 +314,7 @@ export function parseScopeConfig(
     const path = pointer(issue.path);
     if (issue.code === "unrecognized_keys" && issue.keys.some((key) => SECRET_LOOKING_KEY.test(key)))
       throw secretValue(path);
-    // A `credential` that is not a reference is a value someone pasted in.
+    // A `credential` that is not a reference is treated as a pasted value, so the error names the rule.
     if (
       issue.code === "invalid_format" &&
       (path.endsWith("/credential") || path.includes("/auth/headers/") || path.endsWith("/auth/client/secret"))
@@ -300,7 +349,7 @@ export function parseScopeConfig(
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-// The SSRF guard runs at registration, before a URL can ever reach a transport.
+// The SSRF guard runs at registration so a blocked URL never reaches a transport.
 function checkServer(id: string, server: { url: string; headers?: Record<string, string> | undefined }): void {
   const path = `/mcp/servers/${id}`;
   const secret = Object.keys(server.headers ?? {}).find((key) => SECRET_LOOKING_KEY.test(key));
@@ -323,8 +372,9 @@ function invalid(path: string, message: string): KarmiError {
 }
 
 /**
- * The profile an Agent Spec runs under: the one it names, else `default` when the Scope has one, else the
- * Scope's only profile. Anything else is a validation error, never a guess.
+ * The Provider profile an Agent Spec runs under: the one it names, else `default` when the Scope has one,
+ * else the Scope's only profile. Returns undefined in every other case, which validation reports as an
+ * error.
  */
 export function chooseProfile(
   providerProfile: string | undefined,
@@ -340,8 +390,9 @@ const TIER_ORDER = ["isolate", "container"] as const;
 const tierRank = (tier: unknown) => TIER_ORDER.findIndex((known) => known === tier);
 
 /**
- * Deployment defaults under the Scope document: Provider profiles override by name, numeric ceilings
- * merge as the minimum, `false` wins, Scope policy rules come first.
+ * The effective config of a Scope, with the Scope document layered over the Deployment defaults. Provider
+ * profiles and MCP servers override by name. Numeric ceilings merge as the minimum and `false` wins.
+ * Scope policy rules come before Deployment rules. MCP hosts intersect.
  */
 export function resolveScopeConfig(deployment: ScopeConfigDocument, scope: ScopeConfigDocument): ScopeConfigDocument {
   const resolved: ScopeConfigDocument = {};
@@ -357,7 +408,8 @@ export function resolveScopeConfig(deployment: ScopeConfigDocument, scope: Scope
   return resolved;
 }
 
-// Deployment ∩ Scope: a pattern survives only when the other side covers it, so a Scope can only narrow.
+// A host pattern survives only when the other side covers it, so a Scope can only narrow the Deployment
+// list.
 function intersectHosts(a: string[] | undefined, b: string[] | undefined): string[] | undefined {
   if (!a || !b) return a ?? b;
   const covers = (pattern: string, other: string) => matchesHost(other.replace(/^\*\./, "x."), pattern);
@@ -375,7 +427,8 @@ function mergeCeilings(a: Ceilings, b: Ceilings): Ceilings {
   return out as Ceilings;
 }
 
-// Field-wise "only tighter": numbers take the minimum, booleans and tiers the more restrictive, lists the intersection.
+// Every field can only get tighter. Numbers take the minimum, booleans and tiers the more restrictive
+// value, and lists the intersection.
 function tighten(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {

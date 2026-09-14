@@ -3,8 +3,9 @@ import { KarmiError } from "./errors";
 import { assertIdentifier } from "./names";
 
 /**
- * The one place a storage name is minted (ADR-0001): every Durable Object name is `{scope}/{kind}/{id}`
- * and every R2 key starts with `{scope}/`. Child paths encode the stable Tool callId into one segment.
+ * The functions that mint every storage name (ADR-0001). Every Durable Object name is
+ * `{scope}/{kind}/{id}` and every R2 key starts with `{scope}/`. A child Thread id encodes the stable
+ * Tool callId of its parent call into one path segment.
  */
 export const keys = {
   toolCall(threadId: string, seq: number): string {
@@ -60,7 +61,7 @@ function assertScope(scope: ScopeId): ScopeId {
   return scope;
 }
 
-/** Accepts only Framework media/spill keys, including refs serialized before a restart. */
+/** The Scope of an R2 `key`, or undefined unless the key is a Framework media or spilled-output key. */
 export function mediaKeyScope(key: string): string | undefined {
   return /^([A-Za-z0-9_-]{1,64})\/(?:media\/[A-Za-z0-9_-]{1,64}(?:\/[A-Za-z0-9_%-]+)*\/[A-Za-z0-9_-]{1,64}|threads\/[A-Za-z0-9_-]{1,64}(?:\/[A-Za-z0-9_%-]+)*\/tool-output\/\d+)$/.exec(
     key,

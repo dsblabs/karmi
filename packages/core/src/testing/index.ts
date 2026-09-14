@@ -1,7 +1,10 @@
 import { fakeProvider as scripted } from "./fake-provider";
 import { fromRecording } from "./recording";
 
-/** A scripted Provider; `fakeProvider.fromRecording(jsonl)` replays a `recordingProvider` capture. */
+/**
+ * Creates a scripted Provider. `fakeProvider.fromRecording(jsonl)` replays a capture made by
+ * `recordingProvider`.
+ */
 export const fakeProvider: typeof scripted & { fromRecording: typeof fromRecording } = Object.assign(scripted, {
   fromRecording,
 });

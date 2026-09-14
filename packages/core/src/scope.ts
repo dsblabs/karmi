@@ -39,101 +39,133 @@ export type {
   ScopeStatus,
 } from "./scope-config-do";
 
-/** The explicit handle every entry point takes; there is no ambient Scope (ADR-0001). */
+/**
+ * The handle to one Scope. Every API takes a Scope handle as an argument and nothing reads one from global
+ * state (ADR-0001).
+ */
 export interface Scope {
   readonly id: ScopeId;
+  /** The Scope's own config document, layered over the Deployment defaults. */
   readonly config: {
+    /** The current document and its revision. */
     get(): Promise<ConfigRecord>;
-    /** Replaces the whole document as a new revision; `ifRevision` makes it a compare-and-set. */
+    /** Replaces the whole document as a new revision. `ifRevision` makes it a compare-and-set. */
     set(document: ScopeConfigDocument, options?: { ifRevision?: number }): Promise<{ revision: number }>;
   };
+  /** The Agents stored in this Scope. */
   readonly agents: {
-    /** Validates against the Catalogue and this Scope, then stores the next version; `ifVersion: 0` means create-only. */
+    /**
+     * Validates `spec` against the Catalogue and this Scope, then stores it as the next version.
+     * `ifVersion` makes it a compare-and-set, and `ifVersion: 0` means create-only.
+     */
     put(spec: AgentSpec, options?: { ifVersion?: number }): Promise<{ agentId: string; version: number }>;
+    /** The current version of the Agent, or the version `options.version` names. */
     get(agentId: string, options?: { version?: number }): Promise<AgentRecord>;
     list(): Promise<AgentSummary[]>;
+    /** Every stored version of the Agent. */
     history(agentId: string): Promise<AgentVersion[]>;
-    /** Tombstones the Agent; its versions stay readable by number and a later put continues them. */
+    /** Tombstones the Agent. Its versions stay readable by number and a later `put` continues them. */
     delete(agentId: string): Promise<void>;
-    /** The same validation `put` runs, without storing anything. */
+    /** Runs the same validation as `put` without storing anything. */
     validate(spec: AgentSpec): Promise<ValidationResult>;
-    /** Agent-level Connection values, write-only: a Spec declares them, this sets them, only a Turn reads them. */
+    /** Agent-level Connection values. A Spec declares them, this sets them and only a Turn reads them. */
     readonly connections: {
       set(agentId: string, name: string, value: unknown): Promise<void>;
       delete(agentId: string, name: string): Promise<void>;
-      /** Set values, then the OAuth grants the Agent holds as `mcp:<serverId>`. */
+      /** The set values, followed by the OAuth grants the Agent holds as `mcp:<serverId>`. */
       list(agentId: string): Promise<{ name: string; updatedAt: number }[]>;
     };
   };
+  /** Per-User state in this Scope. */
   readonly users: {
-    /** User-level Connection values keyed (User, name): the User's own grants, resolved before the Agent's. */
+    /**
+     * User-level Connection values keyed by (User, name). A Turn resolves the User's own values before the
+     * Agent's.
+     */
     readonly connections: {
       set(user: string, name: string, value: unknown): Promise<void>;
       delete(user: string, name: string): Promise<void>;
-      /** Set values, then the OAuth grants the User holds as `mcp:<serverId>`. */
+      /** The set values, followed by the OAuth grants the User holds as `mcp:<serverId>`. */
       list(user: string): Promise<{ name: string; updatedAt: number }[]>;
     };
   };
   /**
-   * Provider credentials of this Scope, referenced from profiles as `scope:<name>`. Write-only: `put`
-   * stores a new version and nothing here reads a value back.
+   * The Provider credentials of this Scope, referenced from profiles as `scope:<name>`. They are
+   * write-only: `put` stores a new version and nothing here reads a value back.
    */
   readonly credentials: {
+    /** Stores `value` as the next version of the credential. */
     put(name: string, value: string): Promise<CredentialInfo>;
+    /** The credential's metadata, or undefined when there is none. */
     describe(name: string): Promise<CredentialInfo | undefined>;
     list(): Promise<(CredentialInfo & { name: string })[]>;
-    /** Makes the credential missing at the next model Step; the version keeps counting. */
+    /** Makes the credential missing from the next model Step on. The version keeps counting. */
     revoke(name: string): Promise<void>;
-    /** Moves every credential under the active key of the ring; idempotent, run it after a rotation. */
+    /**
+     * Moves every credential under the active key of the ring. It is idempotent, so run it after every
+     * rotation.
+     */
     rewrap(): Promise<{ rewrapped: number }>;
   };
+  /** The Provider profiles of this Scope. */
   readonly providers: {
-    /** The explicit network check: resolves the profile's credentials and makes one small call. */
+    /** Resolves the profile's credentials and makes one small call to the Provider over the network. */
     test(profile: string, options?: { model?: string }): Promise<ProviderTest>;
   };
-  /** The MCP registry: what a Turn takes for its servers, and the catalogue cache behind it. */
+  /** The MCP servers of this Scope, as a Turn takes them, and the Catalogue cache behind them. */
   readonly mcp: {
     /**
-     * Transport config, resolved static headers (as Sensitive values) and the cached catalogue of each
-     * server, for one Turn in memory; nothing here is persisted or logged.
+     * The transport config, resolved static headers (as Sensitive values) and cached catalogue of each
+     * server, for one Turn in memory. Nothing in it is persisted or logged.
      */
     snapshot(input: McpSnapshotInput): Promise<McpSnapshot>;
-    /** Fetches `tools/list` again for one server (or every registered one); returns each new `catalogVersion`. */
+    /**
+     * Fetches `tools/list` again for one server, or every registered one, and returns each new
+     * `catalogVersion`.
+     */
     refreshCatalog(serverId?: string, holder?: { agent?: string; user?: string }): Promise<Record<string, string>>;
     /**
-     * Starts the consent flow for an OAuth server, for the Agent (agent-level) or the User (user-level)
-     * it names, and answers with the URL the human must visit; the fixed callback route completes it.
+     * Starts the consent flow for an OAuth server on behalf of the Agent or User it names, and returns
+     * the URL the human must visit. The fixed callback route completes the flow.
      */
     authorize(input: McpAuthorizeRequest): Promise<{ authUrl: string }>;
-    /** Drops the holder's grant and the private catalogue cached under it. */
+    /** Drops the Holder's grant and the private catalogue cached under it. */
     disconnect(input: McpHolderRef): Promise<void>;
   };
-  /** An identity creates the Thread on first use; a key from `thread.key` reopens one and never creates. */
+  /**
+   * Opens a Thread. An identity creates the Thread on first use. A key from `thread.key` reopens an
+   * existing one and never creates.
+   */
   thread(target: ThreadIdentity | string): Thread;
+  /** The Threads of this Scope. */
   readonly threads: {
-    /** An Agent's Threads, most recently active first; `user: null` narrows to user-less Threads. */
+    /** An Agent's Threads, most recently active first. `user: null` narrows to Threads without a User. */
     list(filter: { agent: string; user?: string | null; parent?: string | null }): Promise<ThreadSummary[]>;
   };
   status(): Promise<ScopeStatus>;
+  /** Suspends the Scope, which rejects every new Turn until `resume`. */
   suspend(): Promise<void>;
   resume(): Promise<void>;
-  /** Tombstones the Scope at once; the walk that empties it reports through `destroyStatus`. */
+  /** Tombstones the Scope at once. The walk that empties its storage reports through `destroyStatus`. */
   destroy(): Promise<{ operationId: string }>;
+  /** The progress of the destroy operation `operationId`. */
   destroyStatus(operationId: string): Promise<DestroyStatus>;
 }
 
+/** The input to `scope.mcp.authorize`: the Holder and server, plus where to send the browser afterwards. */
 export interface McpAuthorizeRequest extends McpHolderRef {
-  /** Where the callback sends the browser once consent is complete. */
+  /** The URL the callback sends the browser to once consent is complete. */
   returnTo?: string;
 }
 
-/** What `scope.providers.test` found: the call went through, or the Provider's own error. */
+/** The result of `scope.providers.test`: the call went through, or the Provider's own error. */
 export type ProviderTest =
   | { ok: true; profile: string; model: string; credential?: CredentialUse }
   | { ok: false; profile: string; model?: string; error: ProviderError };
 
+/** The Scope handle for `id` in `deployment`. Throws `scope.id.invalid` when `id` is not a valid ScopeId. */
 export function openScope(deployment: Deployment, bindings: KarmiBindings, id: ScopeId): Scope {
-  // keys.config validates the id; an invalid ScopeId never reaches a Durable Object name.
+  // keys.config validates the id, so an invalid ScopeId never reaches a Durable Object name.
   const stub = remote<ScopeConfigDurableObject>(bindings.KARMI_SCOPES, keys.config(id));
   const { secrets } = deployment;
   const ref = (name: string) => ({ scope: id, ref: credentialRef("scope", name) });
@@ -213,7 +245,10 @@ function mcpHandle(registry: McpRegistry, id: ScopeId, resolved: () => Promise<S
   };
 }
 
-/** One `countTokens` (or a one-token `stream`) under the profile's credentials; the smallest real call the adapter offers. */
+/**
+ * Makes one `countTokens` call, or a one-token `stream` when the adapter has none, under the profile's
+ * credentials.
+ */
 async function testProfile(
   deployment: Deployment,
   scope: ScopeId,

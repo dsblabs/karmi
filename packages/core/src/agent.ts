@@ -12,24 +12,40 @@ export type PromptEntry =
   | { text: string; models?: string | string[] }
   | { fragment: string; args?: Record<string, unknown>; models?: string | string[] };
 
+/** A Tool reference in a Spec: a name alone, or a name with per-reference settings and an `alwaysLoad` pin. */
 export type ToolReference = string | { name: string; settings?: Record<string, unknown>; alwaysLoad?: boolean };
+/** A Skill reference in a Spec: a name alone, or a name with settings and an `invokableBy` override. */
 export type SkillReference = string | { name: string; settings?: Record<string, unknown>; invokableBy?: SkillInvoker };
+/** A Knowledge reference in a Spec: a name alone, or a name with a Retriever and a `tool` or `inline` mode. */
 export type KnowledgeReference = string | { name: string; retriever?: string; mode?: "tool" | "inline" };
 
-/** Ordered; the first matching rule decides, and no match means `ask`. */
+/**
+ * One rule of a Permission Policy. Rules are evaluated in order, the first matching rule decides, and no
+ * match means `ask`.
+ */
 export interface PolicyRule {
+  /** The Tool names (globs allowed) and annotation values a Tool must match. */
   match: { tool?: string | string[]; annotations?: Partial<ToolAnnotations> };
   effect: "allow" | "ask" | "deny";
 }
 
-/** A named credential grant this Agent's Tools act through; the value is set separately, never here. */
+/**
+ * A Connection this Agent's Tools act through, declared by name. The credential value is set separately
+ * and never appears here.
+ */
 export interface ConnectionDeclaration {
+  /** The kind of credential the value is, as the Platform names it. */
   type: string;
+  /** Whether the grant is held once for the Agent or by each User. */
   level: "agent" | "user";
+  /** Defaults to true. When false, a Tool runs without the Connection when none resolves. */
   required?: boolean;
 }
 
-/** Each Capability block is owned by that Capability; `egress` is reserved for the container tier. */
+/**
+ * The Capability grants of an Agent Spec. Each block belongs to one Capability, and nothing not granted is
+ * reachable.
+ */
 export interface Capabilities {
   scripts?: {
     tier: "isolate" | "container";
@@ -50,14 +66,19 @@ export interface Capabilities {
   providerTools?: { tools: ProviderToolName[]; limits?: { maxCallsPerTurn?: number; maxCallsPerThread?: number } };
 }
 
+/** The abstract name of a Provider Tool a Spec may grant. */
 export type ProviderToolName = (typeof PROVIDER_TOOL_NAMES)[number];
 
-/** JSON Schema a form can be rendered from: named properties only, no composition or `$ref`. */
+/**
+ * The schema of a Memory profile. It is JSON Schema a form can be rendered from: named properties only, no
+ * composition or `$ref`.
+ */
 export interface MemoryProfileSchema {
   type?: "object";
   properties: Record<string, MemoryProfileProperty>;
   required?: string[];
 }
+/** One property of a Memory profile, in the JSON Schema subset a profile allows. */
 export interface MemoryProfileProperty {
   type?: JsonType | JsonType[];
   description?: string;
@@ -74,14 +95,23 @@ export interface MemoryProfileProperty {
   properties?: Record<string, MemoryProfileProperty>;
   required?: string[];
 }
+/** A JSON Schema primitive type name. */
 export type JsonType = "string" | "number" | "integer" | "boolean" | "array" | "object" | "null";
 
-/** Context-window management; absent fields inherit the Scope, Deployment or Framework default. */
+/**
+ * The context-window settings of an Agent Spec. An absent field inherits the Scope, Deployment or Framework
+ * default.
+ */
 export interface ContextConfig {
+  /** The model's context window, in tokens. */
   window?: number;
+  /** The tokens kept free below the window. Compaction runs when the context would use them. */
   reserveTokens?: number;
+  /** The most recent tokens a Compaction keeps verbatim. */
   keepRecentTokens?: number;
+  /** The Spill limit for Tool results. */
   toolOutput?: { maxChars?: number; maxLines?: number };
+  /** Which Tools defer, and for `auto` the share of the window their definitions may take before they do. */
   tools?: { defer?: "auto" | "always" | "never"; threshold?: number };
 }
 
@@ -97,7 +127,9 @@ export interface AgentSpec {
   instructions: PromptEntry[];
   model: {
     id: string;
+    /** The Provider profile to run under. Defaults to `default`, or the Scope's only profile. */
     providerProfile?: string;
+    /** Models tried in order when `id` cannot be served. */
     fallbacks?: string[];
     params?: {
       temperature?: number;
@@ -105,22 +137,26 @@ export interface AgentSpec {
       maxOutputTokens?: number;
       reasoning?: "off" | "low" | "medium" | "high";
     };
+    /** Options passed through to the provider adapter unchanged. */
     providerOptions?: Record<string, unknown>;
   };
   tools?: ToolReference[];
   skills?: SkillReference[];
   knowledge?: KnowledgeReference[];
+  /** The ids of the Agents this Agent may delegate to. */
   delegates?: string[];
   connections?: Record<string, ConnectionDeclaration>;
   capabilities?: Capabilities;
   memory?: { profile?: MemoryProfileSchema; notes?: boolean };
   policy?: PolicyRule[];
+  /** Hook names by lifecycle point, run in this order. */
   hooks?: Partial<Record<HookPoint, string[]>>;
   context?: ContextConfig;
-  /** `timeout` in milliseconds; an expired Approval is a deny. */
+  /** `timeout` is in milliseconds. An Approval that expires is a deny. */
   approvals?: { timeout?: number };
 }
 
+/** A code-defined Agent as `defineAgent` returns it: a frozen Spec under its id. */
 export interface Agent {
   readonly kind: "agent";
   readonly agentId: string;
@@ -128,8 +164,9 @@ export interface Agent {
 }
 
 /**
- * A code-defined Agent: the same Spec a Platform would `put`, seeded into a Scope lazily.
- * Checks the shape here; references are checked against the Catalogue when it is assembled.
+ * Defines a code-defined Agent for the Catalogue from the same Spec a Platform would `put`. It checks the
+ * Spec's shape and throws a `KarmiError` when it is invalid. References are checked against the Catalogue
+ * when it is assembled.
  */
 export function defineAgent(spec: AgentSpec): Agent {
   const result = z.safeParse(AgentSpecSchema, spec);

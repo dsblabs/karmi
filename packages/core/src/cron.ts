@@ -1,22 +1,25 @@
-// Five-field cron (minute hour day-of-month month day-of-week) evaluated in an IANA zone. Pure: the
-// caller supplies the instant to search from. Day-of-month and day-of-week combine as Vixie cron does:
-// when both are restricted, either matching is a match.
+// Five-field cron (minute, hour, day-of-month, month, day-of-week) evaluated in an IANA zone. The
+// functions are pure, and the caller supplies the instant to search from. Day-of-month and day-of-week
+// combine as Vixie cron does: when both are restricted, a match on either is a match.
 
+/** A parsed cron expression, with each field expanded to the set of values it matches. */
 export interface CronExpression {
   minute: Set<number>;
   hour: Set<number>;
   dayOfMonth: Set<number>;
   month: Set<number>;
+  /** Days of the week with Sunday as 0. */
   dayOfWeek: Set<number>;
-  /** Whether each day field was `*`, which decides how the two combine. */
+  /** Whether the day-of-month field was `*`. The two day fields combine differently when one is unrestricted. */
   anyDayOfMonth: boolean;
+  /** Whether the day-of-week field was `*`. */
   anyDayOfWeek: boolean;
 }
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const MINUTE = 60_000;
-/** Nothing legitimate is further away than this many minute-steps; the search stops rather than spin. */
+/** The most search steps `nextCronTime` takes before giving up. No valid firing lies further away. */
 const SEARCH_LIMIT = 200_000;
 
 /** The parsed expression, or undefined when the text is not valid cron. */
@@ -80,7 +83,7 @@ function parseValue(text: string, names?: string[]): number | undefined {
   return names === MONTHS ? index + 1 : index;
 }
 
-/** Whether `tz` is a zone this runtime knows. */
+/** Whether `tz` is an IANA time zone this runtime knows. */
 export function isTimeZone(tz: string): boolean {
   try {
     formatter(tz);

@@ -12,13 +12,19 @@ import { buildRequest } from "./request";
 import { mapStream } from "./stream";
 import { toProviderError } from "./errors";
 
+/** What a `ModelFactory` receives per call: the call options plus the model id and Provider profile. */
 export interface ModelFactoryContext extends ProviderCallOptions {
   modelId: string;
+  /** The Provider profile the call runs under. */
   config: ProviderConfig;
 }
+/** Builds the AI SDK language model for one call. */
 export type ModelFactory = (context: ModelFactoryContext) => LanguageModelV4 | PromiseLike<LanguageModelV4>;
 
-/** Construct provider clients inside the factory so each call uses its Scope's fetch and credentials. */
+/**
+ * A Provider backed by an AI SDK language model. Construct the SDK client inside `model` so each call uses
+ * its Scope's fetch and credentials.
+ */
 export function aiSdk(model: ModelFactory): Provider {
   const known = new Map<string, ModelCapabilities>();
   return {

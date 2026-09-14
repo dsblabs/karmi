@@ -2,15 +2,19 @@ import { KarmiError, SpecInvalidError, type KarmiErrorCode } from "./errors";
 import type { ValidationFailure } from "./validate";
 
 /**
- * Workers RPC keeps only an Error's message, so every Durable Object method reports failure as data and
- * the handle rethrows it as a `KarmiError` (or `SpecInvalidError` when `result` is present).
+ * The result a Durable Object method returns: the value, or a failure as data. Workers RPC keeps only an
+ * Error's message, so failures travel as data and `unwrap` rethrows them on the caller's side as a
+ * `KarmiError`, or a `SpecInvalidError` when `result` is present.
  */
 export type Outcome<T> =
   { ok: true; value: T } | { ok: false; code: KarmiErrorCode; message: string; result?: ValidationFailure };
 
+/** Wraps `value` as a successful Outcome. */
 export const ok = <T>(value: T): Outcome<T> => ({ ok: true, value });
+/** Wraps `error` as a failed Outcome, keeping its code and message. */
 export const fail = (error: KarmiError): Outcome<never> => ({ ok: false, code: error.code, message: error.message });
 
+/** Awaits `outcome` and returns its value, or throws the error it carries. */
 export async function unwrap<T>(outcome: Promise<Outcome<T>>): Promise<T> {
   const result = await outcome;
   if (result.ok) return result.value;
@@ -27,7 +31,9 @@ export type Remote<T> = {
   [K in keyof T]: T[K] extends (...args: infer A) => infer R ? (...args: A) => Promise<Awaited<R>> : never;
 };
 
+/** The stub for the Durable Object called `name` in `namespace`, typed by the methods of `T`. */
 export function remote<T>(namespace: DurableObjectNamespace, name: string): Remote<T> {
-  // eslint-disable-next-line no-restricted-syntax -- the one boundary cast to the stub type the comment above explains.
+  // The stub type is the only boundary cast in the module. See the `Remote` doc for why it is safe.
+  // eslint-disable-next-line no-restricted-syntax
   return namespace.get(namespace.idFromName(name)) as unknown as Remote<T>;
 }

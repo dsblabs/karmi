@@ -1,6 +1,8 @@
 import type { ValidationFailure } from "./validate";
 
-/** Every code karmi throws; a new failure adds its code here first, as `area.camelCase`. */
+/**
+ * The stable code of every error karmi throws, named `area.camelCase`. A new failure adds its code here first.
+ */
 export type KarmiErrorCode =
   | "agent.conflict"
   | "agent.deleted"
@@ -67,7 +69,7 @@ export type KarmiErrorCode =
   | "thread.seq.invalid"
   | "user.id.invalid";
 
-/** Every error karmi throws carries a stable, dotted code a caller can switch on. */
+/** The error every karmi failure is thrown as. It carries a stable, dotted code a caller can switch on. */
 export class KarmiError extends Error {
   override readonly name: string = "KarmiError";
 
@@ -92,8 +94,8 @@ export class SpecInvalidError extends KarmiError {
   }
 }
 
-/** The one way to turn a caught value into a message. */
+/** The message of a caught value: the `Error` message, or the value as a string. */
 export function errorMessage(caught: unknown): string {
-  // eslint-disable-next-line no-restricted-syntax -- the one place this idiom lives.
+  // eslint-disable-next-line no-restricted-syntax -- every other caller uses this function instead of the idiom.
   return caught instanceof Error ? caught.message : String(caught);
 }

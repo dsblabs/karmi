@@ -2,18 +2,20 @@ import type { ContentBlock, StopReason } from "./provider";
 import type { Budget, CompactionTrigger, PauseReason, ThreadEventData } from "./thread-events";
 import type { CallApproval, JobOutcome, PriorCalls, ToolCall } from "./tool-step";
 
-// The Turn as its event log tells it, folded without any I/O so the Thread DO only reads rows and a test
-// only needs events. Results, started calls, asks and Jobs are kept across re-runs of the same tool Step
-// and dropped only when a new model Step starts a new batch; the budget window reopens at an allowed
-// `continue`.
+// This module folds a Turn's event log into the state the Thread Durable Object runs from. It does no I/O,
+// so the Durable Object only reads rows and a test only needs events. Results, started calls, Approvals and
+// Jobs are kept across re-runs of the same tool Step and dropped when a new model Step starts a new batch.
+// The budget window reopens at an allowed `continue`.
 
 /**
  * What the log says the Turn should do next: re-run or start a model Step, run the tool batch of the
- * last model Step (re-runs carry what already happened), finish an interrupted compact Step, or end
- * with the last model Step's message. A fresh compact Step is the Thread DO's decision, never the log's.
+ * last model Step, finish an interrupted compact Step, or end with the last model Step's message. A fresh
+ * compact Step is decided by the Thread Durable Object, never by the log.
  */
 export type Plan =
+  /** `fresh` is false when the Step was started and not completed, so this is a recovery re-run. */
   | { kind: "model"; n: number; fresh: boolean }
+  /** `prior` carries what already happened in earlier runs of this batch. */
   | { kind: "tool"; n: number; fresh: boolean; batch: ToolCall[]; prior: PriorCalls }
   | { kind: "compact"; n: number; trigger: CompactionTrigger }
   | { kind: "finish"; stopReason: StopReason; message: ContentBlock[] };
@@ -31,6 +33,10 @@ type LocalRequest =
     }
   | { kind: "continue"; timeoutAt: number; answered: boolean };
 
+/**
+ * One `approval.requested` of the current Step and whether it has been answered. `child` is set when a
+ * Delegation child raised it.
+ */
 export type Request = LocalRequest & { child?: { threadId: string; seq: number } };
 
 type Job = { jobId: string; outcome?: JobOutcome };
@@ -38,12 +44,13 @@ type Job = { jobId: string; outcome?: JobOutcome };
 /** The Turn as the log tells it: the next Step, what it waits on, and what it has spent. */
 export interface TurnState {
   plan: Plan;
+  /** What the Turn has spent since its budget window opened. */
   budget: Budget;
   /** Set while the Turn is parked. */
   paused?: PauseReason;
   /** Every `approval.requested` of the current Step, by its seq. */
   requests: Map<number, Request>;
-  /** The current tool Step's asks by tool-call id. */
+  /** The current tool Step's Approvals by tool-call id. */
   approvals: Map<string, CallApproval>;
   /** The current tool Step's Jobs by tool-call id. */
   jobs: Map<string, Job>;
@@ -55,13 +62,17 @@ export interface TurnState {
   compaction?: "done" | "skipped";
 }
 
+/** One persisted event with its log position and time. */
 export interface LoggedEvent {
   seq: number;
   at: number;
   event: ThreadEventData;
 }
 
-/** Folds one Turn's events, `message.delta` excluded, in seq order; `now` closes an open stretch of wall time. */
+/**
+ * Folds one Turn's events, given in `seq` order without `message.delta`, into its state. `now` closes an open
+ * stretch of active wall time.
+ */
 export function foldTurn(events: Iterable<LoggedEvent>, now: number): TurnState {
   const fold = new TurnFold();
   for (const { seq, at, event } of events) fold.apply(seq, at, event);
@@ -87,9 +98,9 @@ class TurnFold {
   private countedStep = 0;
   private compacted = false;
   private compaction: "done" | "skipped" | undefined;
-  /** The Step an overflow compact Step interrupted; a skipped Compaction hands the Turn back to it. */
+  /** The Step an overflow compact Step interrupted. A skipped Compaction hands the Turn back to it. */
   private previous: { started: TurnFold["started"]; completed: boolean } | undefined;
-  /** When the current stretch of active wall time began; unset while parked. */
+  /** When the current stretch of active wall time began. Unset while parked. */
   private activeSince: number | undefined;
   private paused: PauseReason | undefined;
 

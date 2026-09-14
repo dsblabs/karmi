@@ -1,9 +1,10 @@
 import { APIConnectionError, APIError, APIUserAbortError } from "@anthropic-ai/sdk";
 import type { ProviderError, ProviderErrorCode } from "@karmi/core";
 
-// Every failure crosses the seam as a tagged ProviderError; `retryable` drives both karmi's retry and the
-// Harness's fallback rotation, so it says what the status means, not how it was transported.
+// Every failure crosses the Provider seam as a tagged ProviderError. `retryable` drives both karmi's retry
+// and the Harness's fallback rotation, so it reflects what the status means rather than how it was transported.
 
+/** Maps an SDK or fetch error to a ProviderError with a code, message and retryable flag. */
 export function toProviderError(error: unknown): ProviderError {
   if (error instanceof APIUserAbortError || (error instanceof Error && error.name === "AbortError"))
     return { code: "aborted", message: "The call was aborted.", retryable: false };
@@ -30,7 +31,7 @@ export function toProviderError(error: unknown): ProviderError {
 
 const RETRYABLE: ReadonlySet<ProviderErrorCode> = new Set(["rate_limit", "unavailable", "network"]);
 
-// Anthropic's own error types; a mid-stream `error` event carries one of these and no HTTP status.
+// Anthropic's own error types. A mid-stream `error` event carries one of these and no HTTP status.
 const BY_TYPE: Record<string, ProviderErrorCode> = {
   authentication_error: "auth",
   permission_error: "auth",

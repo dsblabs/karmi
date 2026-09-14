@@ -27,6 +27,7 @@ class Blocks {
   }
 }
 
+/** Maps an AI SDK stream to ProviderEvents, ending with `message.end` or an `error`. */
 export async function* mapStream(
   stream: ReadableStream<LanguageModelV4StreamPart>,
   model: string,
@@ -116,7 +117,7 @@ function* mapPart(part: LanguageModelV4StreamPart, blocks: Blocks): Iterable<Pro
     mergeMetadata(blocks.entry(part.id), part.providerMetadata);
     return;
   }
-  // Unknown families remain observable without pretending they are text or executable Harness tools.
+  // An unknown part family is emitted as `raw` so it stays observable.
   yield { type: "raw", raw: part };
 }
 

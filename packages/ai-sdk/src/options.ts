@@ -2,15 +2,22 @@ import type { SharedV4ProviderOptions } from "@ai-sdk/provider";
 import { z } from "zod";
 import type { ProviderRequest } from "@karmi/core";
 
+/** The schema of AI SDK provider metadata: a JSON record per provider namespace. */
 export const metadataSchema = z.record(z.string(), z.record(z.string(), z.json()));
 const optionsSchema = z.strictObject({ aiSdk: metadataSchema.optional() });
 
-/** The escape hatch is namespaced JSON, as required by the AI SDK provider contract. */
+/**
+ * The `aiSdk` namespace of the request's provider options, validated as the namespaced JSON the AI SDK
+ * expects.
+ */
 export function providerOptions(request: ProviderRequest) {
   return optionsSchema.parse(request.providerOptions ?? request.config.providerOptions ?? {}).aiSdk ?? {};
 }
 
-/** OpenRouter v3 still reads reasoning from its native options, unlike the other V4 providers. */
+/**
+ * Adds the native options a provider needs for reasoning and parallel tool calls under its namespace.
+ * Options already present under that namespace win over the derived ones.
+ */
 export function mapProviderOptions(
   options: SharedV4ProviderOptions,
   request: ProviderRequest,

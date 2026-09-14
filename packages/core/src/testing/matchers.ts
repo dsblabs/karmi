@@ -7,14 +7,18 @@ type DeepPartial<T> = T extends readonly (infer Item)[]
   : T extends object
     ? { [K in keyof T]?: DeepPartial<T[K]> }
     : T;
-/** A `type` plus any subset of that event's fields, nested objects partially too. */
+/** A Thread event `type` plus any subset of that event's fields. Nested objects may be partial too. */
 export type EventPartial = {
   [T in ThreadEventType]: DeepPartial<Extract<ThreadEvent, { type: T }>> & { type: T };
 }[ThreadEventType];
 
-/** `expect.extend(matchers)` once per test file (or in a vitest setup file) makes these available. */
+/**
+ * The vitest matchers for Thread event logs. Register them with `expect.extend(matchers)` once per test file.
+ */
 export const matchers = {
-  /** Some event in the list matches the partial, `expect.objectContaining` style. */
+  /**
+   * Passes when some event in the list matches `partial`, compared the way `expect.objectContaining` compares.
+   */
   toContainEvent(received: ThreadEvent[], partial: EventPartial): MatcherResult {
     const pass = received.some((event) => matches(event, partial));
     return {
@@ -23,7 +27,7 @@ export const matchers = {
         `expected events ${pass ? "not " : ""}to contain ${JSON.stringify(partial)}; types seen: ${received.map((event) => event.type).join(", ")}`,
     };
   },
-  /** The listed types occur in this order, other events allowed in between. */
+  /** Passes when the listed event types occur in this order. Other events may appear between them. */
   toHaveSequence(received: ThreadEvent[], types: ThreadEventType[]): MatcherResult {
     let next = 0;
     for (const event of received) if (next < types.length && event.type === types[next]) next++;
@@ -36,7 +40,10 @@ export const matchers = {
   },
 };
 
-/** The assistant's final text of a Turn: from `turn.completed`, else the last text part seen. */
+/**
+ * The assistant's final text in `events`. It comes from `turn.completed` when present, else from the last text
+ * part.
+ */
 export function lastMessage(events: ThreadEvent[]): string | undefined {
   for (const event of events.toReversed()) {
     if (event.type === "turn.completed")

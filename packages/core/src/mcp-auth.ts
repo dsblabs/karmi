@@ -2,14 +2,17 @@ import type { ScopeId } from "./context";
 import { KarmiError } from "./errors";
 import type { McpAuthConfig } from "./scope-config";
 
-// The pure half of MCP OAuth: who holds a grant, how a catalogue partitions by holder, the shape of the
-// deployment-level client identity (CIMD document and callback), the `state` a callback carries back, and
-// the authorization servers that only take a pre-registered client. No network, no storage.
+// The pure half of MCP OAuth: who holds a grant, how a catalogue partitions by Holder, the shape of the
+// Deployment's Client identity (the CIMD document and the callback), the `state` a callback carries back,
+// and the authorization servers that only take a pre-registered client. It does no network or storage I/O.
 
-/** Who an OAuth grant belongs to: the Agent (agent-level) or the User (user-level); catalogues partition the same way. */
+/**
+ * The Holder of an OAuth grant: the Agent for an agent-level server or the User for a user-level one.
+ * Catalogues partition by the same key.
+ */
 export type McpHolder = `agent:${string}` | `user:${string}`;
 
-/** The holder a Turn resolves grants for; a user-level server on a user-less Thread has none. */
+/** The Holder a Turn resolves grants for, or undefined when a user-level server runs on a user-less Thread. */
 export function mcpHolder(
   level: "agent" | "user",
   agent: string | undefined,
@@ -19,14 +22,16 @@ export function mcpHolder(
   return agent === undefined ? undefined : `agent:${agent}`;
 }
 
-/** Who a request is about: one server, and the Agent or User whose grant it concerns. */
+/** The server and the Agent or User a grant request concerns. */
 export interface McpHolderRef {
   serverId: string;
+  /** The Agent, for an agent-level server. */
   agent?: string;
+  /** The User, for a user-level server. */
   user?: string;
 }
 
-/** The holder a request names for an OAuth server, or why it names none; the one place that rule lives. */
+/** The Holder `ref` names for an OAuth server, or the error explaining why it names none. */
 export function resolveHolder(
   auth: McpAuthConfig | undefined,
   ref: McpHolderRef,
@@ -48,57 +53,75 @@ export function resolveHolder(
   return { ok: true, level: auth.level, holder };
 }
 
-/** The credential partition a catalogue is cached under: the grant holder for OAuth, one per Scope otherwise. */
+/**
+ * The Partition a catalogue is cached under. It is the grant Holder for an OAuth server and `scope` otherwise.
+ */
 export function mcpPartition(auth: McpAuthConfig | undefined, holder: McpHolder | undefined): string {
   return auth?.type === "oauth" && holder !== undefined ? holder : "scope";
 }
 
 /** How long a pending authorization may take between the redirect and the callback. */
 export const OAUTH_STATE_TTL_MS = 10 * 60_000;
-/** An access token this close to expiry is refreshed before use, so a slow call cannot cross the line. */
+/** An access token this close to expiry is refreshed before use, so it cannot expire during a slow call. */
 const TOKEN_SKEW_MS = 30_000;
 
+/**
+ * Whether an access token expiring at `expiresAt` is still usable at `now`, with a safety margin. A token
+ * without an expiry is always fresh.
+ */
 export function tokenFresh(expiresAt: number | undefined, now: number): boolean {
   return expiresAt === undefined || now + TOKEN_SKEW_MS < expiresAt;
 }
 
-/** When a token issued now expires, from the server's `expires_in` seconds; absent means it does not say. */
+/** When a token issued now expires, from the server's `expires_in` seconds. Undefined when the server did not say. */
 export function tokenExpiry(expiresIn: number | undefined, now: number): number | undefined {
   return expiresIn === undefined ? undefined : now + expiresIn * 1000;
 }
 
-// The `state` parameter round-trips through the authorization server; the Scope in it routes the callback
-// to the right ScopeConfig, the nonce finds the pending row there. Neither may contain a dot.
+/**
+ * The `state` parameter that round-trips through the authorization server. The Scope routes the callback
+ * to its ScopeConfig and the nonce finds the pending row there. Neither may contain a dot.
+ */
 export function encodeOAuthState(scope: ScopeId, nonce: string): string {
   return `${scope}.${nonce}`;
 }
 
+/** The Scope and nonce in a `state` parameter, or undefined when it is malformed. */
 export function decodeOAuthState(state: string): { scope: ScopeId; nonce: string } | undefined {
   const [scope, nonce, ...rest] = state.split(".");
   if (!scope || !nonce || rest.length > 0) return undefined;
   return { scope, nonce };
 }
 
+/** The path of the one OAuth callback route every consent flow returns to. */
 export const OAUTH_CALLBACK_PATH = "/mcp/oauth/callback";
+/** The path the Client ID Metadata Document is served at. */
 export const CLIENT_DOCUMENT_PATH = "/.well-known/karmi-mcp-client.json";
 
-/** The Deployment's OAuth client identity: `createKarmi({ oauth })`, without which no OAuth server can be used. */
+/**
+ * The Deployment's Client identity, given as `createKarmi({ oauth })`. No OAuth server can be used without it.
+ */
 export interface McpClientIdentity {
-  /** The public origin the Worker is reachable at, e.g. `https://agents.example.com`; no path. */
+  /** The public origin the Worker is reachable at, with no path, e.g. `https://agents.example.com`. */
   origin: string;
-  /** What consent screens show; defaults to the origin's hostname. */
+  /** The name consent screens show. Defaults to the origin's hostname. */
   clientName?: string;
 }
 
+/** The absolute URL of the OAuth callback route for `identity`. */
 export function callbackUrl({ origin }: McpClientIdentity): string {
   return `${origin}${OAUTH_CALLBACK_PATH}`;
 }
 
+/** The absolute URL of the Client ID Metadata Document for `identity`. It is also the `client_id`. */
 export function clientDocumentUrl({ origin }: McpClientIdentity): string {
   return `${origin}${CLIENT_DOCUMENT_PATH}`;
 }
 
-/** What `registerClient` sends when an authorization server offers neither CIMD nor a pre-registered client. */
+/**
+ * The client metadata sent to Dynamic Client Registration when an authorization server offers neither
+ * CIMD nor a pre-registered client.
+ */
 export interface McpClientMetadata {
   client_name: string;
   client_uri: string;
@@ -109,6 +132,7 @@ export interface McpClientMetadata {
   application_type: "web";
 }
 
+/** The client metadata for `identity`, as Dynamic Client Registration sends it. */
 export function clientMetadata(identity: McpClientIdentity): McpClientMetadata {
   return {
     client_name: identity.clientName ?? new URL(identity.origin).hostname,
@@ -121,21 +145,33 @@ export function clientMetadata(identity: McpClientIdentity): McpClientMetadata {
   };
 }
 
-/** The Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document): `client_id` is its own URL. */
+/**
+ * The Client ID Metadata Document (draft-ietf-oauth-client-id-metadata-document): `client_id` is its own URL.
+ */
 export function clientDocument(identity: McpClientIdentity): McpClientMetadata & { client_id: string } {
   return { client_id: clientDocumentUrl(identity), ...clientMetadata(identity) };
 }
 
-/** An authorization server that takes neither CIMD nor DCR, and where to register instead. */
+/**
+ * An authorization server that takes neither CIMD nor Dynamic Client Registration, with where to register
+ * instead.
+ */
 export interface PreRegistration {
   issuer: string;
+  /** The vendor's name, for the error message. */
   name: string;
+  /** The URL of the vendor's registration page. */
   registerAt: string;
+  /** Whether the vendor issues a client secret that must be configured too. */
   secretRequired: boolean;
+  /** Vendor-specific advice appended to the error message. */
   notes?: string;
 }
 
-// Secret-free data: karmi ships no OAuth apps; a Deployment registers its own and sets `auth.client`.
+/**
+ * The authorization servers known to take only a pre-registered client. karmi ships no OAuth apps of its
+ * own, so a Deployment registers one and sets `auth.client`.
+ */
 export const PRE_REGISTRATION_REQUIRED: readonly PreRegistration[] = Object.freeze([
   {
     issuer: "https://github.com/login/oauth",
@@ -176,12 +212,16 @@ export const PRE_REGISTRATION_REQUIRED: readonly PreRegistration[] = Object.free
 
 const trimSlash = (issuer: string) => issuer.replace(/\/+$/, "");
 
+/** The known pre-registration entry for `issuer`, ignoring trailing slashes, or undefined. */
 export function preRegistration(issuer: string): PreRegistration | undefined {
   const wanted = trimSlash(issuer);
   return PRE_REGISTRATION_REQUIRED.find((entry) => trimSlash(entry.issuer) === wanted);
 }
 
-/** An authorization server whose metadata advertises neither CIMD nor a registration endpoint takes only a pre-registered client. */
+/**
+ * Whether an authorization server's metadata advertises neither CIMD nor a registration endpoint, so only
+ * a pre-registered client can be used with it.
+ */
 export function needsPreRegistration(metadata: {
   client_id_metadata_document_supported?: boolean | undefined;
   registration_endpoint?: string | undefined;

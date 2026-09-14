@@ -1,28 +1,34 @@
-// An OAuth 2.1 authorization server and resource-server gate for `fakeMcpServer`: RFC 9728 protected
-// resource metadata, RFC 8414 server metadata, PKCE (S256 only), RFC 8707 `resource`, RFC 9207 `iss`,
-// dynamic registration, refresh-token rotation and `insufficient_scope` challenges. A test plays the
-// human with `approve(authUrl)` and feeds the answer to `karmi.oauth.handle`.
+// An OAuth 2.1 authorization server and resource-server gate for `fakeMcpServer`. It implements RFC 9728
+// protected resource metadata, RFC 8414 server metadata, PKCE (S256 only), RFC 8707 `resource`, RFC 9207
+// `iss`, dynamic client registration, refresh-token rotation and `insufficient_scope` challenges. A test
+// plays the human with `approve(authUrl)` and feeds the answer to `karmi.oauth.handle`.
 
+/** Options for the OAuth server a `fakeMcpServer` sits behind. */
 export interface FakeMcpOAuthOptions {
-  /** Scopes the protected resource advertises; a token is granted exactly what it asked for. */
+  /** The scopes the protected resource advertises. A token is granted exactly the scopes it asked for. */
   scopes?: string[];
-  /** Tool name → scope a call needs; a token without it is answered `403 insufficient_scope`. */
+  /** The scope each tool name needs. A call whose token lacks it is answered `403 insufficient_scope`. */
   requires?: Record<string, string>;
-  /** Advertise Client ID Metadata Document support (default `true`). */
+  /** Whether the server advertises Client ID Metadata Document support. Defaults to `true`. */
   cimd?: boolean;
-  /** Offer dynamic client registration (default `true`), issuing a client secret when `dcrSecret`. */
+  /** Whether the server offers dynamic client registration. Defaults to `true`. */
   dcr?: boolean;
+  /** Whether dynamic registration issues a client secret the client must present afterwards. */
   dcrSecret?: boolean;
   /** Pre-registered clients accepted by id, with the secret each must present. */
   clients?: Record<string, { secret?: string }>;
   /** Access tokens live this many seconds (default 3600). */
   expiresIn?: number;
-  /** Rotate the refresh token on every refresh (default `true`). */
+  /** Whether every refresh issues a new refresh token and retires the old one. Defaults to `true`. */
   rotate?: boolean;
-  /** Challenge without `resource_metadata`, as some servers do; discovery must find the metadata itself. */
+  /**
+   * Whether the 401 challenge omits `resource_metadata`, as some servers do. Discovery then finds the metadata
+   * itself.
+   */
   bareChallenge?: boolean;
 }
 
+/** The parameters of one authorization request, parsed from the URL a human was sent to. */
 export interface FakeAuthorizationRequest {
   clientId: string;
   redirectUri: string;
@@ -33,6 +39,7 @@ export interface FakeAuthorizationRequest {
   resource?: string;
 }
 
+/** The parameters of one token-endpoint request. */
 export interface FakeTokenRequest {
   grantType: string;
   clientId?: string;
@@ -41,7 +48,9 @@ export interface FakeTokenRequest {
   resource?: string;
 }
 
+/** The test's view of the fake authorization server: its records and the human's consent actions. */
 export interface FakeMcpOAuth {
+  /** The issuer origin, which is also the MCP server's origin. */
   readonly issuer: string;
   /** Every authorization request a human was sent to, in order. */
   readonly authorizations: FakeAuthorizationRequest[];
@@ -51,11 +60,17 @@ export interface FakeMcpOAuth {
   readonly registrations: Record<string, unknown>[];
   /** Every access token issued, in order. */
   readonly tokens: string[];
-  /** Consents to the authorization at `authUrl`: the URL the browser is sent back to. */
+  /** Consents to the authorization at `authUrl` and returns the callback URL the browser would be sent to. */
   approve(authUrl: string): string;
-  /** Refuses it: the callback URL carrying `error`. */
+  /**
+   * Refuses the authorization at `authUrl` and returns the callback URL carrying `error` (default
+   * `access_denied`).
+   */
   deny(authUrl: string, error?: string): string;
-  /** Invalidates every access token, and the refresh tokens too when asked; the next request is a 401. */
+  /**
+   * Invalidates every access token, and every refresh token when `refresh` is set. The next MCP request gets a
+   * 401.
+   */
   revoke(options?: { refresh?: boolean }): void;
 }
 
@@ -72,11 +87,18 @@ interface Grant {
   refresh?: string;
 }
 
-/** The server side: routes for the well-known and token endpoints, and the bearer gate for MCP requests. */
+/**
+ * The server side of the fake. It routes the well-known and token endpoints and gates MCP requests by bearer
+ * token.
+ */
 export interface FakeOAuthServer {
   readonly api: FakeMcpOAuth;
+  /** Answers an OAuth endpoint request, or returns undefined when the URL is not one of them. */
   handle(request: Request, url: URL): Promise<Response | undefined>;
-  /** Whether an MCP request may proceed: nothing wrong, or the challenge to answer with. */
+  /**
+   * Checks the bearer token of an MCP request. Returns undefined when it may proceed, else the 401 or 403 to
+   * send.
+   */
   gate(headers: Record<string, string>, tool: string | undefined): Response | undefined;
 }
 
@@ -91,6 +113,7 @@ interface OAuthState {
   n: number;
 }
 
+/** Creates the fake authorization server at `origin` that protects `resource`. */
 export function fakeOAuthServer(origin: string, resource: string, options: FakeMcpOAuthOptions): FakeOAuthServer {
   const state: OAuthState = {
     options,
@@ -172,7 +195,8 @@ async function route(state: OAuthState, api: FakeMcpOAuth, request: Request, url
     const client_id = `dcr-${++state.n}`;
     const secret = state.options.dcrSecret ? `secret-${state.n}` : undefined;
     state.registered.set(client_id, secret === undefined ? {} : { secret });
-    // A server that issues a secret expects it back; echoing the requested `none` would let the client skip it.
+    // A server that issues a secret expects it back. Echoing the requested `none` auth method would let the
+    // client skip it.
     return Response.json(
       {
         client_id,
@@ -184,7 +208,8 @@ async function route(state: OAuthState, api: FakeMcpOAuth, request: Request, url
   }
   if (pathname === "/token" && request.method === "POST") {
     const form = new URLSearchParams(await request.text());
-    // `client_secret_basic` carries the credentials in the header; fold them in so one path checks them.
+    // `client_secret_basic` carries the credentials in the Authorization header. They are folded into the form
+    // so one path checks them.
     const basic = /^Basic (.+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
     if (basic !== undefined) {
       const [id, secret] = atob(basic).split(":");
@@ -232,7 +257,10 @@ function approve(state: OAuthState, api: FakeMcpOAuth, authUrl: string): string 
   return back.href;
 }
 
-/** A CIMD client is any https URL with a path; a registered one is in the table. */
+/**
+ * Whether `clientId` is registered or, with CIMD on, is an https URL with a path (a Client ID Metadata
+ * Document).
+ */
 function knownClient(state: OAuthState, clientId: string): boolean {
   if (state.registered.has(clientId)) return true;
   if (state.options.cimd === false) return false;
@@ -311,7 +339,9 @@ function gate(state: OAuthState, headers: Record<string, string>, tool: string |
   return undefined;
 }
 
-/** A key only when there is a value, so optional fields stay absent rather than `undefined`. */
+/**
+ * An object with `key` only when `value` is defined, so optional fields stay absent rather than `undefined`.
+ */
 function opt<K extends string>(key: K, value: string | undefined): { [P in K]?: string } {
   return value === undefined ? {} : ({ [key]: value } as { [P in K]?: string });
 }
