@@ -2,8 +2,8 @@ import { RpcTarget } from "cloudflare:workers";
 import * as z from "zod/mini";
 import { errorMessage } from "./errors";
 import type { Sandbox, SandboxRequest, SandboxResult, ScriptToolCall } from "./sandbox";
-import { parseForCodemode, stringifyForCodemode } from "./vendor/codemode/codec";
-import { disposeQuietly, SANDBOX_CODEC } from "./vendor/codemode/runtime";
+import { parseForCodemode, stringifyForCodemode, SANDBOX_CODEC } from "./vendor/codemode/codec";
+import { disposeQuietly } from "./vendor/codemode/runtime";
 
 // The one-shot load, RPC envelopes, console capture and disposal are adapted from Codemode (MIT; vendor/codemode/NOTICE).
 class ToolBridge extends RpcTarget {
@@ -12,6 +12,14 @@ class ToolBridge extends RpcTarget {
   #queue: Promise<unknown> = Promise.resolve();
   readonly calls: ScriptToolCall[] = [];
   breach?: string;
+  readonly logs: string[] = [];
+  #logSize = 0;
+  log(text: string): void {
+    if (this.#request.signal.aborted || this.#logSize >= 30000 || typeof text !== "string") return;
+    const line = text.slice(0, 30000 - this.#logSize);
+    this.#logSize += line.length + 1;
+    this.logs.push(line);
+  }
   constructor(request: SandboxRequest) {
     super();
     this.#request = request;
@@ -19,10 +27,10 @@ class ToolBridge extends RpcTarget {
   async call(name: string, json: string): Promise<string> {
     try {
       this.#request.signal.throwIfAborted();
-      if (!this.#request.tools.includes(name)) throw new Error(`Tool "${name}" is unavailable.`);
+      if (!this.#request.tools.includes(name)) return stringifyForCodemode({ error: `Tool "${name}" is unavailable.` });
       if (++this.#count > this.#request.limits.maxToolCalls) {
         this.breach = "limit_exceeded: maxToolCalls";
-        throw new Error(this.breach);
+        return stringifyForCodemode({ error: this.breach });
       }
       // Serialize bridge calls so mutations cannot race each other or read-only calls.
       const work = this.#queue.then(async () => {
@@ -91,7 +99,7 @@ export class CloudflareIsolateSandbox implements Sandbox {
           message: /CPU|cpu time|exceeded resource limits/i.test(message) ? "limit_exceeded: cpuMs" : message,
           ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
         },
-        logs: [],
+        logs: [...bridge.logs],
         toolCalls: bridge.calls,
         artifacts: [],
       };
@@ -115,7 +123,9 @@ export default class extends WorkerEntrypoint {
     for (const level of ["log", "info", "debug", "warn", "error"]) console[level] = (...args) => {
       if (size >= 30000) return;
       const text = args.map(String).join(" ").slice(0, 30000 - size);
-      size += text.length + 1; logs.push(level === "log" ? text : "[" + level + "] " + text);
+      size += text.length + 1;
+      const line = level === "log" ? text : "[" + level + "] " + text;
+      logs.push(line); void bridge.log(line);
     };
     const unwrap = json => { const data = __parseForCodemode(json); if (data.error) throw new Error(data.error); return data.result; };
     globalThis.tools = Object.freeze(Object.fromEntries(${JSON.stringify(names)}.map(name => [name, async input => unwrap(await bridge.call(name, __stringifyForCodemode(input)))])));

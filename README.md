@@ -38,7 +38,8 @@ export default async () => {
 
 Each call runs in a new Dynamic Worker with outbound access disabled and no
 filesystem, secrets or storage bindings. Only allow-resolved Tools are exposed;
-`ask`, denied, provider-executed and framework built-in Tools are excluded.
+`ask`, denied and provider-executed Tools are excluded, as are recursive
+`run_script` and parking `delegate` calls. Other allow-resolved built-ins remain reachable.
 Deferral and Skill activation do not restrict script reachability. Tools requiring
 a User are omitted from user-less Threads and named in the usage Fragment.
 Bridge calls run serially, pass through input validation and before/after-tool

@@ -581,6 +581,18 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
       lookup,
       book,
       bigOutput,
+      defineTool({
+        name: "binary_result",
+        description: "A small binary result",
+        input: z.object({}),
+        execute: () => ({ content: [], structuredContent: new Uint8Array([1, 2, 255]) }),
+      }),
+      defineTool({
+        name: "large_structured",
+        description: "A large structured value",
+        input: z.object({}),
+        execute: () => ({ content: [{ type: "text", text: "Rows" }], structuredContent: { rows: "x".repeat(100000) } }),
+      }),
       whoami,
       failing,
       startJob,

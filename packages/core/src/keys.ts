@@ -7,6 +7,20 @@ import { assertIdentifier } from "./names";
  * and every R2 key starts with `{scope}/`. Child paths encode the stable Tool callId into one segment.
  */
 export const keys = {
+  toolCall(threadId: string, seq: number): string {
+    return `${threadId}:${seq}`;
+  },
+  toolCallSeq(threadId: string, callId: string): number | undefined {
+    const prefix = `${threadId}:`;
+    const seq = callId.startsWith(prefix) ? Number(callId.slice(prefix.length)) : NaN;
+    return Number.isSafeInteger(seq) && seq > 0 ? seq : undefined;
+  },
+  scriptCall(parentCallId: string, ordinal: number): string {
+    return `${parentCallId}/script/${ordinal}`;
+  },
+  structuredToolOutput(scope: ScopeId, threadId: string, seq: number): string {
+    return `${keys.toolOutput(scope, threadId, seq)}.json`;
+  },
   childThread(parent: string, callId: string): string {
     const segment = encodeURIComponent(callId).replace(
       /[.!'()*]/g,

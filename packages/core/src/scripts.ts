@@ -5,7 +5,7 @@ import type { ScriptLimits, Sandbox } from "./sandbox";
 import { toJsonSchema, type JsonSchema } from "./schema";
 import { DEFAULT_ANNOTATIONS, type Tool } from "./tool";
 import type { AvailableTool } from "./tools";
-import { BUILT_IN_TOOL_NAMES } from "./names";
+const SCRIPT_EXCLUDED_TOOLS = new Set(["run_script", "delegate"]);
 
 export const SCRIPT_DEFAULTS: ScriptLimits = Object.freeze({ cpuMs: 1000, wallMs: 60000, maxToolCalls: 100 });
 export function resolveScriptLimits(
@@ -30,7 +30,7 @@ export function scriptTools(
   return new Map(
     [...available]
       .filter(([name, entry]) => {
-        if (BUILT_IN_TOOL_NAMES.includes(name) || entry.effect !== "allow" || entry.scriptUnavailable) return false;
+        if (SCRIPT_EXCLUDED_TOOLS.has(name) || entry.effect !== "allow" || entry.scriptUnavailable) return false;
         if (selected !== "allowed" && !selected.includes(name)) return false;
         if (entry.tool.requires && spec.connections?.[entry.tool.requires]?.level === "user" && user === undefined)
           return false;

@@ -1,3 +1,4 @@
+import { readScriptResult } from "./script-results";
 import { CloudflareIsolateSandbox } from "./isolate-sandbox";
 import { scriptTool, resolveScriptLimits } from "./scripts";
 import type { ScriptLimits } from "./sandbox";
@@ -2477,14 +2478,15 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         sandbox: new CloudflareIsolateSandbox(this.env.KARMI_LOADER),
         limits: snapshot.scripts,
         result: async (callId: string) => {
-          const prefix = `${row.thread_id}:`;
-          const seq = callId.startsWith(prefix) ? Number(callId.slice(prefix.length)) : NaN;
-          if (!Number.isSafeInteger(seq) || seq < 1) throw new Error("Unknown callId on this Thread.");
+          const seq = keys.toolCallSeq(row.thread_id, callId);
+          if (seq === undefined) throw new Error("Unknown callId on this Thread.");
           const [call] = this.read(seq - 1, "part", 1, seq);
           if (!call || call.type !== "tool.call") throw new Error("Unknown callId on this Thread.");
           const result = this.sql
             .exec<EventRow>(
-              "SELECT * FROM events WHERE seq > ? AND turn = ? AND type = 'tool.result' AND json_extract(json, '$.id') = ? ORDER BY seq LIMIT 1",
+              `SELECT * FROM events
+               WHERE seq > ? AND turn = ? AND type = 'tool.result' AND json_extract(json, '$.id') = ?
+               ORDER BY seq LIMIT 1`,
               seq,
               call.turn,
               call.id,
@@ -2492,7 +2494,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
             .toArray()
             .map((row) => decodeEvent(row.json))[0];
           if (!result || result.type !== "tool.result") throw new Error("No result for this callId.");
-          return result.structuredContent ?? result.content;
+          return readScriptResult(this.env.KARMI_MEDIA, result);
         },
       },
     };

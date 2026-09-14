@@ -73,7 +73,7 @@ async function run(code: string, extra: Partial<import("../src/index").AgentSpec
   return { events, result, output: text.text.startsWith("{") ? JSON.parse(text.text) : text.text };
 }
 
-it("hides asked, denied, unselected and user-less Tools and excludes all built-ins", async () => {
+it("hides asked, denied, unselected and user-less Tools and excludes recursive or parking built-ins", async () => {
   const { output } = await run("export default () => Object.keys(tools)", {
     policy: [
       { match: { tool: "book" }, effect: "ask" },
@@ -81,7 +81,7 @@ it("hides asked, denied, unselected and user-less Tools and excludes all built-i
       { match: { tool: "*" }, effect: "allow" },
     ],
   });
-  expect(output.value).toEqual(["weather"]);
+  expect(output.value).toEqual(["weather", "read_output", "tool_search"]);
   expect(provider.requests[0]?.system).toContain("Unavailable on this user-less Thread: whoami");
   const selected = await run("export default () => Object.keys(tools)", {
     capabilities: { scripts: { tier: "isolate", tools: ["book"] } },
@@ -130,13 +130,14 @@ it("validates nested inputs and applies denial Hooks", async () => {
 
 it("bounds a waiting script by wallMs and records script usage", async () => {
   const { output, result, events } = await run(
-    "export default async () => await new Promise(resolve => setTimeout(resolve, 10000))",
+    "export default async () => { console.log('checkpoint'); await new Promise(resolve => setTimeout(resolve, 10000)); }",
     {
       capabilities: { scripts: { tier: "isolate", limits: { wallMs: 30 } } },
     },
   );
   expect(result.isError).toBe(true);
   expect(output.error.message).toBe("limit_exceeded: wallMs");
+  expect(output.logs).toEqual(["checkpoint"]);
   expect(events).toContainEvent({ type: "usage.recorded", kind: "script", tier: "isolate" });
 });
 
@@ -179,6 +180,68 @@ it("reads prior results by stable callId on the same Thread", async () => {
     .thread({ agent: threadId, threadId })
     .send({ kind: "message", parts: [{ type: "text", text: "Read another" }] });
   expect(rejected).toContainEvent({ type: "tool.result", name: "run_script", isError: true });
+});
+
+it("composes complete spilled text and structured results and reads them on later Turns", async () => {
+  for (const [tool, code, expected] of [
+    ["big_output", 'return (await tools.big_output({lines:10000})).split("\\n").length', 10000],
+    ["large_structured", "return (await tools.large_structured({})).rows.length", 100000],
+  ] as const) {
+    const { events, output } = await run(`export default async () => { ${code}; }`, { tools: [tool] });
+    expect(output.value).toBe(expected);
+    const call = events.find((e) => e.type === "tool.call" && e.name === tool);
+    const threadId = `script-${serial}`;
+    const read = `await __result(${JSON.stringify(`${threadId}:${call?.seq}`)})`;
+    provider.script([
+      [
+        reply.toolCall("run_script", {
+          code: `export default async () => { const value = ${read}; return ${tool === "big_output" ? 'value.split("\\n").length' : "value.rows.length"}; }`,
+        }),
+      ],
+      "done",
+    ]);
+    const continued = await scope
+      .thread({ agent: threadId, threadId })
+      .send({ kind: "message", parts: [{ type: "text", text: "Read" }] });
+    expect(JSON.stringify(continued.find((e) => e.type === "tool.result" && e.name === "run_script"))).toContain(
+      `\\"value\\":${expected}`,
+    );
+    if (tool === "large_structured") {
+      const result = events.find((e) => e.type === "tool.result" && e.name === tool);
+      expect(result).toHaveProperty("structuredOutput");
+      expect(result).not.toHaveProperty("structuredContent");
+    }
+  }
+});
+
+it("allows supported capability built-ins through the script gate", async () => {
+  const { result } = await run("export default async () => await tools.list_schedules({})", {
+    capabilities: { scripts: { tier: "isolate" }, scheduling: {} },
+  });
+  expect(result.isError).toBe(false);
+});
+
+it("preserves small binary structured values across Turns", async () => {
+  const { events, output } = await run("export default async () => Array.from(await tools.binary_result({}))", {
+    tools: ["binary_result"],
+  });
+  expect(output.value).toEqual([1, 2, 255]);
+  const call = events.find((e) => e.type === "tool.call" && e.name === "binary_result");
+  const threadId = `script-${serial}`;
+  provider.script([
+    [
+      reply.toolCall("run_script", {
+        code: `export default async () => Array.from(await __result(${JSON.stringify(`${threadId}:${call?.seq}`)}))`,
+      }),
+    ],
+    "done",
+  ]);
+  const continued = await scope
+    .thread({ agent: threadId, threadId })
+    .send({ kind: "message", parts: [{ type: "text", text: "Read" }] });
+  expect(JSON.stringify(continued.find((e) => e.type === "tool.result" && e.name === "run_script"))).toContain(
+    '\\"value\\":[1,2,255]',
+  );
 });
 
 it("inherits the Scope script ceiling when the grant omits limits and rejects an over-ask", async () => {

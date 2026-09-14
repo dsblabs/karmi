@@ -178,6 +178,7 @@ type EventData =
       name: string;
       content: ToolContent[];
       structuredContent?: unknown;
+      structuredOutput?: MediaRef;
       isError: boolean;
       interrupted?: { attempt: number };
       output?: MediaRef;

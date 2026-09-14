@@ -70,13 +70,8 @@ export function resolveToolSet({
   const mcpRefs: { ref: McpReference; alwaysLoad: boolean }[] = [];
   // A pinned ref stays in context; a denied Tool is never indexed, so it has nothing to defer.
   const offer = (tool: Tool, settings: unknown, alwaysLoad: boolean | undefined) => {
-    const entry: AvailableTool = {
-      tool,
-      settings,
-      effect: evaluatePolicy(policy, tool, remembered),
-      deferred: false,
-      scriptUnavailable: mcp?.scriptUnavailable?.(tool.name) ?? false,
-    };
+    const entry: AvailableTool = { tool, settings, effect: evaluatePolicy(policy, tool, remembered), deferred: false };
+    if (mcp?.scriptUnavailable?.(tool.name)) entry.scriptUnavailable = true;
     available.set(tool.name, entry);
     if (!alwaysLoad && entry.effect !== "deny") deferrable.push(entry);
   };
@@ -169,7 +164,7 @@ function definition({ tool }: AvailableTool): ToolDefinition {
 }
 
 /** The Spill limit for one Tool: the Agent's `context.toolOutput`, which the Tool's `output.max` may only lower. */
-export function outputLimits(spec: AgentSpec, tool: Tool): OutputLimits {
+export function outputLimits(spec: AgentSpec, tool: Pick<Tool, "output">): OutputLimits {
   const defaults = AGENT_SPEC_DEFAULTS.context.toolOutput;
   const agent = spec.context?.toolOutput ?? {};
   const own = tool.output?.max ?? {};

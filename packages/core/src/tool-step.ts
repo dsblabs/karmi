@@ -1,3 +1,4 @@
+import { scriptValue, storeStructuredResult } from "./script-results";
 import { ScriptInput, scriptTools, type ScriptExecution } from "./scripts";
 import { ingestToolResult } from "./media-ingress";
 import type { ToolOutputResult } from "./tool";
@@ -36,6 +37,7 @@ import { inContext, outputLimits, type AvailableTool } from "./tools";
 
 /** What the Step reads from and writes to: the Thread DO, narrowed to what a batch needs. */
 export interface ToolStepHost {
+  captureResult?(result: ToolResult): void;
   now(): number;
   scripts?: ScriptExecution;
   parentCallId?: string;
@@ -211,13 +213,20 @@ function finisher(
 ): Finish {
   return async (seq, result, extra = {}) => {
     const logged = seq ?? host.append({ type: "tool.call", id: call.id, name: call.name, input: call.input }).seq;
+    host.captureResult?.(result);
+    const structured = await storeStructuredResult(
+      host,
+      logged,
+      result,
+      outputLimits(host.spec, host.available.get(call.name)?.tool ?? {}),
+    );
     host.append({
       type: "tool.result",
       id: call.id,
       name: call.name,
       content: result.content,
       isError: result.isError === true,
-      ...(result.structuredContent !== undefined && { structuredContent: result.structuredContent }),
+      ...structured,
       ...extra,
     });
     await afterTool(
@@ -317,11 +326,12 @@ async function execute(
       result = error(started.message);
     } else result = error(errorMessage(caught));
   }
+  host.captureResult?.(result);
   const spilled = await spill(host, tool, seq, result);
   return finish(seq, spilled.result, spilled.output ? { output: spilled.output } : {});
 }
 
-const callId = (host: ToolStepHost, seq: number) => `${host.threadId}:${seq}`;
+const callId = (host: ToolStepHost, seq: number) => keys.toolCall(host.threadId, seq);
 const notLoaded = ({ tool, skill }: AvailableTool): string =>
   skill === undefined
     ? `Tool "${tool.name}" is not loaded. Load it with tool_search (select:${tool.name}) before calling it.`
@@ -496,28 +506,27 @@ async function executeOutcome(
 function scriptCaller(host: ToolStepHost, ctx: ToolContext<unknown>, available: ReadonlyMap<string, AvailableTool>) {
   let count = 0;
   return async (name: string, input: unknown, signal: AbortSignal) => {
-    const id = `${ctx.callId}/script/${++count}`;
+    const id = keys.scriptCall(ctx.callId, ++count);
     let callId = id;
     let value: unknown;
     let isError = true;
+    let captured = false;
     const child: ToolStepHost = {
       ...host,
       available,
       parentCallId: ctx.callId,
+      captureResult: (result) => {
+        if (!captured) {
+          value = scriptValue(result);
+          isError = result.isError === true;
+          captured = true;
+        }
+      },
       signal,
       append: (data) => {
         signal.throwIfAborted();
         const event = host.append({ ...data, parentCallId: ctx.callId });
-        if (event.type === "tool.call") callId = `${host.threadId}:${event.seq}`;
-        if (event.type === "tool.result") {
-          isError = event.isError;
-          value =
-            event.structuredContent ??
-            event.content
-              .filter((b) => b.type === "text")
-              .map((b) => b.text)
-              .join("\n");
-        }
+        if (event.type === "tool.call") callId = keys.toolCall(host.threadId, event.seq);
         return event;
       },
     };
