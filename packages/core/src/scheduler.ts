@@ -5,6 +5,7 @@ import type { Deployment } from "./deployment";
 
 /** The kinds of durable alarm job a Durable Object can schedule. Each is handled by the object that owns it. */
 export type JobKind =
+  | "usage"
   | "delegation"
   | "delegation-notify"
   | "delegation-deadline"

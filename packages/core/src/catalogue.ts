@@ -8,6 +8,7 @@ import type { Retriever } from "./retriever";
 import { toJsonSchema, type JsonSchema } from "./schema";
 import type { Skill } from "./skill";
 import type { Tool, ToolAnnotations } from "./tool";
+import type { UsageHandler } from "./usage";
 import { sha256Hex } from "./digest";
 import { validateAgentSpec } from "./validate";
 
@@ -20,6 +21,8 @@ export interface CatalogueInput {
   retrievers?: Retriever[];
   hooks?: Hook[];
   agents?: Agent[];
+  /** Receives Usage records through the Queue. Without one, the records stay in each Thread's log. */
+  usageHandler?: UsageHandler;
 }
 
 /** The assembled Catalogue. It holds every item by name and can describe itself as data. */
@@ -31,6 +34,8 @@ export interface Catalogue {
   readonly retrievers: ReadonlyMap<string, Retriever>;
   readonly hooks: ReadonlyMap<string, Hook>;
   readonly agents: ReadonlyMap<string, Agent>;
+  /** The Usage handler, when the Deployment listed one. */
+  readonly usageHandler?: UsageHandler;
   /** The Catalogue as data, so a Platform can build its editors from it. */
   describe(): CatalogueDescription;
   /**
@@ -135,6 +140,7 @@ export function assembleCatalogue(input: CatalogueInput): Catalogue {
     retrievers,
     hooks,
     agents,
+    ...(input.usageHandler && { usageHandler: input.usageHandler }),
     describe: () => describe(catalogue),
     fingerprint: () => (fingerprint ??= sha256Hex(JSON.stringify(catalogue.describe()))),
   };

@@ -176,11 +176,19 @@ it("rejects an unknown delivery route before accepting the input", async () => {
 it.each([
   {
     name: "receipt-parts",
-    types: ["turn.started", "step.started", "message.part", "step.completed", "turn.completed"],
+    types: ["turn.started", "step.started", "message.part", "usage.recorded", "step.completed", "turn.completed"],
   },
   {
     name: "receipt-deltas",
-    types: ["turn.started", "step.started", "message.delta", "message.part", "step.completed", "turn.completed"],
+    types: [
+      "turn.started",
+      "step.started",
+      "message.delta",
+      "message.part",
+      "usage.recorded",
+      "step.completed",
+      "turn.completed",
+    ],
   },
 ])("delivers the selected granularity through $name", async ({ name, types }) => {
   provider.script(["Paid"]);

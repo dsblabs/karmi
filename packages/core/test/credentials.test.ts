@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateKeyringKey } from "../src/envelope";
 import { envelopeSecrets } from "../src/envelope-secrets";
 import { KarmiError } from "../src/errors";
-import { consoleLogger } from "../src/logger";
+import { bindLogger, consoleLogger } from "../src/logger";
 import { isSensitiveValue, sensitive } from "../src/secrets";
 import { karmi, provider } from "./worker";
 
@@ -144,7 +144,9 @@ describe("consoleLogger", () => {
   it("redacts SensitiveValues from every field", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     try {
-      consoleLogger({ scope: "s", key: sensitive("sk") }).info("hello", { nested: { token: sensitive("t") } });
+      bindLogger(consoleLogger(), { scope: "s", key: sensitive("sk") }).info("hello", {
+        nested: { token: sensitive("t") },
+      });
       expect(info).toHaveBeenCalledWith(
         JSON.stringify({
           level: "info",

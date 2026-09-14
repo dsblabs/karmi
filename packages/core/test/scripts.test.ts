@@ -138,7 +138,7 @@ it("bounds a waiting script by wallMs and records script usage", async () => {
   expect(result.isError).toBe(true);
   expect(output.error.message).toBe("limit_exceeded: wallMs");
   expect(output.logs).toEqual(["checkpoint"]);
-  expect(events).toContainEvent({ type: "usage.recorded", kind: "script", tier: "isolate" });
+  expect(events).toContainEvent({ type: "usage.recorded", kind: "script", tier: "isolate", scope: "test" });
 });
 
 it("returns structured Tool values for composition", async () => {

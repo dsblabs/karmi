@@ -1,7 +1,8 @@
 import type { MediaRef } from "./context";
 import type { ContentBlock, StopReason, Usage } from "./provider";
 import type { ToolContent, ToolResult } from "./tool";
-import type { CredentialUse, FallbackReason } from "./secrets";
+import type { CredentialSource, CredentialUse, FallbackReason } from "./secrets";
+import type { UsageAttribution } from "./usage";
 
 // This module defines the Thread's public vocabulary: the Turn inputs that go in and the Thread events that
 // come out. Everything is plain JSON. The event log is the only state a Thread has, and every client reads
@@ -94,9 +95,39 @@ export interface StepCredentials {
   fallback?: { from: string; reason: FallbackReason };
 }
 
+/**
+ * What one model or compaction call spent, and how it was authenticated. The token fields are the call's
+ * `Usage`. `cost` is present only when the provider or gateway reported one. `gateway` names the Cloudflare
+ * AI Gateway log entry to join against when the gateway reported no cost.
+ */
+export type ModelUsageRecord = Usage & {
+  /** The provider-native model id, without the profile prefix. */
+  model: string;
+  /** The adapter that served the call. */
+  provider: string;
+  /** The Provider profile the call ran under, after any fallback. */
+  profile: string;
+  /** The source of the credential used, absent for a profile without one. */
+  credentialSource?: CredentialSource;
+  /** The version of the credential used, absent for a profile without one. */
+  credentialVersion?: number;
+  /** The profile the call fell back from and why. */
+  fallback?: { from: string; reason: FallbackReason };
+};
+
+/**
+ * What one Step spent, with the attribution a bill needs. A model Step records its call, a compact Step
+ * records its summarising call, and a Script run records its tier and wall time. It is logged in the same
+ * write as the Step it accounts for.
+ */
+export type UsageRecordData = { type: "usage.recorded" } & UsageAttribution &
+  (
+    | ({ kind: "model" | "compaction" } & ModelUsageRecord)
+    | { kind: "script"; tier: "isolate"; wallMs: number; callId: string }
+  );
+
 type EventData =
-  /** A Usage record for one Script run: its tier and wall time. */
-  | { type: "usage.recorded"; kind: "script"; tier: "isolate"; wallMs: number; callId: string }
+  | UsageRecordData
   /**
    * A Schedule was created on this Thread. It carries the timing as requested, `delay` in milliseconds, and
    * the first firing time.

@@ -441,6 +441,7 @@ describe("cancel, steer and coalescing", () => {
       "step.started",
       "message.delta",
       "message.part",
+      "usage.recorded",
       "step.completed",
       "step.started",
       "tool.call",
@@ -450,6 +451,7 @@ describe("cancel, steer and coalescing", () => {
       "step.started",
       "message.delta",
       "message.part",
+      "usage.recorded",
       "step.completed",
       "turn.completed",
     ]);

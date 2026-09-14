@@ -44,10 +44,12 @@ describe("automatic Compaction", () => {
       "turn.started",
       "step.started",
       "thread.compacted",
+      "usage.recorded",
       "step.completed",
       "step.started",
       "message.delta",
       "message.part",
+      "usage.recorded",
       "step.completed",
       "turn.completed",
     ]);
@@ -113,6 +115,7 @@ describe("automatic Compaction", () => {
       "step.started",
       "message.delta",
       "message.part",
+      "usage.recorded",
       "step.completed",
       "step.started",
       "tool.call",
@@ -123,6 +126,7 @@ describe("automatic Compaction", () => {
       "step.started",
       "message.delta",
       "message.part",
+      "usage.recorded",
       "step.completed",
       "turn.completed",
     ]);
@@ -158,6 +162,7 @@ describe("overflow", () => {
       "step.started",
       "step.started",
       "thread.compacted",
+      "usage.recorded",
       "step.completed",
       "step.started",
       "turn.completed",
@@ -198,6 +203,7 @@ describe("thread.compact()", () => {
     expect(events.map((e) => [e.turn, e.type])).toEqual([
       [2, "step.started"],
       [2, "thread.compacted"],
+      [2, "usage.recorded"],
       [2, "step.completed"],
     ]);
     expect(events).toContainEvent({ type: "step.started", kind: "compact", n: 2, trigger: "manual" });
