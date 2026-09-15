@@ -1,3 +1,4 @@
+import type { ProviderToolName } from "./agent";
 import type { MediaWriter } from "./media";
 import type { Logger, MediaRef } from "./context";
 import type { JsonSchema } from "./schema";
@@ -33,7 +34,14 @@ export type ContentBlock = (
    * A Provider Tool call the provider executed itself. `result.raw` replays byte-exact to the same
    * provider, and `summary` stands in for it on any other.
    */
-  | { type: "server_tool"; id: string; name: string; input: unknown; result?: { raw: unknown; summary: string } }
+  | {
+      type: "server_tool";
+      id: string;
+      name: string;
+      input: unknown;
+      raw?: unknown;
+      result?: { raw: unknown; summary: string };
+    }
   /**
    * A provider-side Compaction. `raw` replays to the same provider, and `summary` stands in for it elsewhere.
    */
@@ -134,6 +142,8 @@ export interface ProviderRequest {
   system?: string;
   messages: Message[];
   tools?: ToolDefinition[];
+  /** Provider Tools allowed for this Step, with the remaining shared call budget. Absent grants none. */
+  providerTools?: { tools: ProviderToolName[]; maxCalls?: number };
   toolChoice?: "auto" | "any" | "none" | { name: string };
   parallelToolCalls?: boolean;
   params?: {
@@ -187,6 +197,8 @@ export interface ProviderError {
  * anywhere and is an opt-in passthrough of the provider's own event.
  */
 export type ProviderEvent =
+  /** A provider-executed call has started; its completed part follows when a result is available. */
+  | { type: "server_tool.called"; block: Extract<ContentBlock, { type: "server_tool" }> }
   | { type: "message.start"; model: string; responseId?: string }
   | { type: "delta"; index: number; kind: "text" | "thinking" | "tool_input"; text: string }
   | { type: "part"; index: number; block: ContentBlock }

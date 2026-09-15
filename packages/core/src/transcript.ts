@@ -1,3 +1,4 @@
+import { providerReplayKey } from "./replay";
 import { filePlaceholder } from "./media-request";
 import { summaryMessages } from "./compaction";
 import type { ContentBlock, Message } from "./provider";
@@ -30,7 +31,11 @@ export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] 
         break;
       case "step.started":
         if (event.kind === "model")
-          step = { provider: event.provider, model: splitModelId(event.model)[1], content: [] };
+          step = {
+            provider: providerReplayKey(event.provider, event.model),
+            model: splitModelId(event.model)[1],
+            content: [],
+          };
         break;
       case "message.part":
         step?.content.push(event.block);

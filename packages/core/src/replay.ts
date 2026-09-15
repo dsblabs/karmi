@@ -167,3 +167,8 @@ function fnv1a(input: string): string {
   }
   return hash.toString(16).padStart(8, "0");
 }
+
+/** The replay identity of an adapter, including the model vendor when the AI SDK serves several vendors. */
+export function providerReplayKey(adapter: string, model: string): string {
+  return adapter === "ai-sdk" ? `${adapter}:${model.split("/")[0]}` : adapter;
+}

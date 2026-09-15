@@ -13,6 +13,8 @@ import type { Tool } from "./tool";
 
 /** The Harness sections that follow the Spec's instructions. */
 export interface PromptSections {
+  /** Provider Tools enabled for this model Step. */
+  providerTools?: readonly string[];
   /** Tools in the model's context, for their usage instructions. */
   tools?: readonly Tool[];
   /** Deferred Tools the model has not loaded, for the names-only index. */
@@ -48,6 +50,10 @@ export async function evaluatePrompt(
     const text = tool.instructions ? await tool.instructions.render(ctx, undefined) : undefined;
     if (text) out.push(text);
   }
+  if (sections.providerTools?.length)
+    out.push(
+      `Provider tools enabled: ${sections.providerTools.join(", ")}. The provider executes these directly; they cannot be called from scripts.`,
+    );
   const index = deferredIndex(sections.deferred ?? []);
   if (index) out.push(index);
   const skills = skillIndex(sections.skills ?? []);

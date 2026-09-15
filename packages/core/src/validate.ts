@@ -2,11 +2,14 @@ import * as z from "zod/mini";
 import { AGENT_SPEC_DEFAULTS, AgentSpecSchema, type NormalizedAgentSpec } from "./agent-spec";
 import type { AgentSpec, Capabilities, MemoryProfileProperty } from "./agent";
 import type { Catalogue } from "./catalogue";
+import { supportsProviderTool } from "./provider-tools";
+import { explicitEffect } from "./policy";
 import { matchGlob } from "./glob";
 import { parseMcpReference, type McpReference } from "./mcp-catalog";
 import { BUILT_IN_TOOL_NAMES } from "./names";
 import { chooseProfile, type Ceilings, type ProviderConfig, type ScopeConfigDocument } from "./scope-config";
 import type { Schema } from "./schema";
+import { DEFAULT_ANNOTATIONS } from "./tool";
 import type { Tool } from "./tool";
 
 // Agent Spec validation runs in three layers: shape (zod), references (the Catalogue) and Scope-resolved
@@ -157,7 +160,7 @@ export function validateAgentSpec(spec: unknown, catalogue: Catalogue, scope?: S
     return { ok: false, issues: [shapeIssue(first), ...parsed.error.issues.slice(1).map(shapeIssue)] };
   }
   const issues = new Issues();
-  new ReferenceChecker(parsed.data, catalogue, issues).run();
+  new ReferenceChecker(parsed.data, catalogue, issues, scope?.config.policy).run();
   if (scope) new ScopeChecker(parsed.data, catalogue, scope, issues).run();
   const error = issues.list.find((issue): issue is ErrorIssue => issue.severity === "error");
   if (error) return { ok: false, issues: [error, ...issues.list.filter((issue) => issue !== error)] };
@@ -177,6 +180,7 @@ class ReferenceChecker {
     private readonly spec: NormalizedAgentSpec,
     private readonly catalogue: Catalogue,
     private readonly issues: Issues,
+    private readonly scopePolicy: NonNullable<ScopeConfigDocument["policy"]> = [],
   ) {}
 
   run(): void {
@@ -395,6 +399,7 @@ class ReferenceChecker {
     const tools = this.spec.capabilities?.scripts?.tools;
     if (!Array.isArray(tools)) return;
     const granted = this.grantedToolNames();
+    for (const name of this.spec.capabilities?.providerTools?.tools ?? []) granted.delete(name);
     const wholeServers = this.mcpRefs.some((ref) => ref.tool === undefined);
     tools.forEach((toolName, i) => {
       if (!granted.has(toolName) && !(wholeServers && toolName.includes("__"))) {
@@ -452,17 +457,18 @@ class ReferenceChecker {
     // Provider Tools run inside the provider's turn, so there is no call to pause on and `ask` cannot be honoured.
     // Only an explicit `ask` is an error. A Provider Tool no rule names is included, because the grant is the
     // consent.
+    const providerRules = [...this.scopePolicy, ...rules];
     for (const providerTool of providerTools) {
-      const index = rules.findIndex((rule) => {
-        return (
-          rule.match.annotations === undefined &&
-          toList(rule.match.tool ?? []).some((glob) => matchGlob(glob, providerTool))
-        );
-      });
-      if (rules[index]?.effect === "ask") {
+      const tool = { name: providerTool, annotations: DEFAULT_ANNOTATIONS };
+      const index = providerRules.findIndex((rule) => explicitEffect([rule], tool) !== undefined);
+      if (providerRules[index]?.effect === "ask") {
+        const path =
+          index < this.scopePolicy.length
+            ? "/capabilities/providerTools"
+            : `/policy/${index - this.scopePolicy.length}/effect`;
         this.issues.error(
           "policy.ask-on-provider-tool",
-          `/policy/${index}/effect`,
+          path,
           `Provider Tool "${providerTool}" can only be allowed or denied, never asked.`,
           { tool: providerTool },
         );
@@ -563,6 +569,14 @@ class ScopeChecker {
     if (profile.fallback && target) serving.push([profile.fallback.profile, target]);
     const check = (id: string, path: string) => {
       for (const [name, served] of serving) {
+        for (const tool of this.spec.capabilities?.providerTools?.tools ?? []) {
+          if (!supportsProviderTool(served, id, tool, this.spec.model.providerOptions))
+            this.issues.error(
+              "capability.unavailable",
+              "/capabilities/providerTools",
+              `Provider profile "${name}" does not support "${tool}" on "${id}".`,
+            );
+        }
         const globs = served.models ?? [`${served.adapter}/*`];
         if (!globs.some((glob) => matchGlob(glob, id))) {
           this.issues.error("provider.model.unsupported", path, `Provider profile "${name}" does not serve "${id}".`, {

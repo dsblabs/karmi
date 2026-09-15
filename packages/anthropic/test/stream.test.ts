@@ -91,6 +91,7 @@ describe("stream mapping", () => {
           id: "srvtoolu_01",
           name: "web_search",
           input: { query: "karmi framework" },
+          raw: { type: "server_tool_use", id: "srvtoolu_01", name: "web_search", input: { query: "karmi framework" } },
           result: { raw, summary: "karmi — https://example.com/karmi" },
         },
       },
@@ -110,6 +111,12 @@ describe("stream mapping", () => {
           id: "srvtoolu_02",
           name: "tool_search_tool_regex",
           input: { query: "weather" },
+          raw: {
+            type: "server_tool_use",
+            id: "srvtoolu_02",
+            name: "tool_search_tool_regex",
+            input: { query: "weather" },
+          },
           result: {
             raw: {
               type: "tool_search_tool_result",

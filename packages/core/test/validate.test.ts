@@ -553,3 +553,53 @@ describe("boot verification", () => {
     expect(assembleCatalogue({ agents: [quiet] }).agents.has("concierge")).toBe(true);
   });
 });
+
+it("rejects Provider Tools unsupported by the resolved profile and Scope asks", () => {
+  const granted = spec({ capabilities: { providerTools: { tools: ["web_fetch"] } } });
+  expect(
+    diagnostics(
+      validate(granted, {
+        config: { providers: { default: { adapter: "ai-sdk", models: ["*"] } } },
+        agents: [],
+      }),
+    ),
+  ).toContainEqual(expect.objectContaining({ code: "capability.unavailable" }));
+  expect(
+    diagnostics(
+      validate(granted, {
+        ...scope,
+        config: { ...scope.config, policy: [{ match: { tool: "web_*" }, effect: "ask" }] },
+      }),
+    ),
+  ).toContainEqual(expect.objectContaining({ code: "policy.ask-on-provider-tool" }));
+});
+
+it("uses the effective Scope Policy and refuses stateless OpenAI Provider Tools", () => {
+  const granted = spec({
+    capabilities: { providerTools: { tools: ["web_search"] } },
+    policy: [{ match: { tool: "web_search" }, effect: "ask" }],
+  });
+  expect(
+    validate(granted, {
+      ...scope,
+      config: { ...scope.config, policy: [{ match: { tool: "web_search" }, effect: "deny" }] },
+    }).ok,
+  ).toBe(true);
+  const openai = spec({ model: { id: "openai/gpt-test" }, capabilities: { providerTools: { tools: ["web_search"] } } });
+  expect(
+    diagnostics(
+      validate(openai, {
+        config: {
+          providers: {
+            default: {
+              adapter: "ai-sdk",
+              models: ["openai/*"],
+              providerOptions: { aiSdk: { openai: { store: false } } },
+            },
+          },
+        },
+        agents: [],
+      }),
+    ),
+  ).toContainEqual(expect.objectContaining({ code: "capability.unavailable" }));
+});

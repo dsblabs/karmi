@@ -15,7 +15,7 @@ import {
   type ToolOutcome,
   type ToolResult,
 } from "../src/index";
-import { createTestKarmi, fakeMcpServer } from "../src/testing/index";
+import { createTestKarmi, fakeMcpServer, fakeProvider } from "../src/testing/index";
 
 /** What the Tools and Hooks below saw, in order; tests read and reset it. */
 export const trace: string[] = [];
@@ -599,6 +599,9 @@ const mcpPinned = defineAgent({
   policy: [{ match: { tool: "*" }, effect: "allow" }],
 });
 
+/** The recorded Provider Tool streams used by integration tests. */
+export const serverProvider = fakeProvider(["OK"]);
+
 export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
   {
     deliverers: [
@@ -670,10 +673,15 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
   },
   {
     logger,
+    providers: { anthropic: serverProvider, "ai-sdk": serverProvider },
     mcpServers: [github, legacy, drive, crm, locked],
     credentials: { shared: "deployment-key" },
     defaults: {
-      providers: { shared: { adapter: "fake", models: ["*"], credential: "deployment:shared" } },
+      providers: {
+        server: { adapter: "anthropic", models: ["*"] },
+        "server-sdk": { adapter: "ai-sdk", models: ["*"] },
+        shared: { adapter: "fake", models: ["*"], credential: "deployment:shared" },
+      },
     },
     media: {
       accountId: "test-account",

@@ -1,4 +1,5 @@
-import type { PolicyRule } from "./agent";
+import type { NormalizedAgentSpec } from "./agent-spec";
+type PolicyRule = NonNullable<NormalizedAgentSpec["policy"]>[number];
 import { matchGlob } from "./glob";
 import type { ToolAnnotations } from "./tool";
 

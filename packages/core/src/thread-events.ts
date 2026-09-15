@@ -128,6 +128,10 @@ export type UsageRecordData = { type: "usage.recorded" } & UsageAttribution &
 
 type EventData =
   | UsageRecordData
+  /** A Provider Tool ran inside a model Step, without a Harness Tool gate. */
+  | { type: "server_tool.called"; id: string; name: string; input: unknown; raw: unknown; summary: string }
+  /** A Provider Tool result, with its native payload or a spilled MediaRef and a portable summary. */
+  | { type: "server_tool.result"; id: string; name: string; raw: unknown; summary: string }
   /**
    * A Schedule was created on this Thread. It carries the timing as requested, `delay` in milliseconds, and
    * the first firing time.

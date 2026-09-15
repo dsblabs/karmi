@@ -291,3 +291,44 @@ Adapters read refs through `ProviderCallOptions.media` and inline base64 when bu
 For read URLs, configure `createKarmi({ media: { accountId, bucket, accessKeyId, secretAccessKey } })` with R2 S3 credentials from Worker secrets. `await karmi.media.url(ref, { ttl: 300 })` returns a presigned GET; `ttl` is seconds, from 1 through 604800. Signing credentials stay outside Scope config and Thread state.
 
 `await thread.delete()` immediately tombstones the Thread and stops new work. Its scheduler removes media and Tool-output spill in batches, then clears conversation rows and the Scope's Thread index. Only the deletion marker remains, preventing reuse of that Thread identity. Media has no TTL. Forks share refs with their source Thread, so deleting the source makes those attachments unavailable in its forks.
+
+### Provider tools
+
+Grant provider execution separately from Harness Tools:
+
+```ts
+capabilities: {
+  providerTools: {
+    tools: ["web_search", "web_fetch"],
+    limits: { maxCallsPerTurn: 4, maxCallsPerThread: 20 },
+  },
+}
+```
+
+Anthropic supports both names. The AI SDK adapter supports `web_search` through
+OpenAI Responses (`openai/*` models); other resolved providers fail validation.
+`code_execution` is reserved. Scope ceilings also apply when a Spec omits limits.
+Policy rules include or exclude Provider Tools at request build; explicit `ask`
+is invalid, and a grant with no matching rule allows the tool. Provider Tools
+are absent from scripts, and a delegated Agent uses its own grants.
+
+Profile pins live at `providerOptions.anthropic.serverTools`, for example
+`[{ name: "web_search", type: "web_search_20260318" }]`, or at
+`providerOptions.openai.serverTools`, for example
+`[{ name: "web_search", type: "web_search_preview" }]`. Pins never grant access.
+Anthropic defaults to the `20260318` search and fetch versions. OpenAI defaults
+to `web_search`. Anthropic divides the remaining budget among enabled tools using
+`max_uses`; OpenAI sends it as `max_tool_calls`. Tools disappear at the ceiling.
+
+Each call produces `server_tool.called` and `server_tool.result` events within
+the model Step and contributes to `Usage.serverToolCalls`. Large native results
+spill to R2 under the same limits as Tool output. Same-provider replay restores
+the native result; a provider switch sends its summary as assistant text.
+OpenAI's AI SDK transport replays the original result by its stored item ID and
+requires `store: true` (the SDK default). A grant with `store: false` fails
+validation, and a later attempt to replay history with storage disabled fails
+before sending a request. An `aiSdk` model factory serving `openai/*` must return
+an OpenAI Responses model; the adapter rejects a mismatched factory at request
+build because the factory is arbitrary application code.
+`before-tool` does not run; `after-tool` observes the result and cannot change it.
+The Prompt names the Provider Tools enabled for the current Step.
