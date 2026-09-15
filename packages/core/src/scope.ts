@@ -6,7 +6,9 @@ import { KarmiError } from "./errors";
 import { keys } from "./keys";
 import type { McpHolderRef } from "./mcp-auth";
 import { McpRegistry, type McpSnapshot, type McpSnapshotInput } from "./mcp-registry";
-import { remote, unwrap as call } from "./outcome";
+import type { MemoryView } from "./memory";
+import type { MemoryDurableObject } from "./memory-do";
+import { remote, unwrap as call, type Remote } from "./outcome";
 import type { ProviderError, ProviderRequest } from "./provider";
 import { providerHosts, scopedFetch } from "./scoped-fetch";
 import {
@@ -87,6 +89,15 @@ export interface Scope {
       delete(user: string, name: string): Promise<void>;
       /** The set values, followed by the OAuth grants the User holds as `mcp:<serverId>`. */
       list(user: string): Promise<{ name: string; updatedAt: number }[]>;
+    };
+    /** What the Scope's Agents remember about a User. Turns write it through `remember`; this reads and deletes it. */
+    readonly memory: {
+      /** The Profile and the most recent Notes, at most `options.notes` of them (100 by default). */
+      get(user: string, options?: { notes?: number }): Promise<MemoryView>;
+      /** Every User this Scope holds a Memory for. */
+      list(): Promise<string[]>;
+      /** Removes the User's Profile and Notes and drops them from the index. */
+      delete(user: string): Promise<void>;
     };
   };
   /**
@@ -208,13 +219,7 @@ export function openScope(deployment: Deployment, bindings: KarmiBindings, id: S
         list: (agentId) => call(stub.connectionsList(id, agentId)),
       },
     },
-    users: {
-      connections: {
-        set: (user, name, value) => call(stub.userConnectionSet(id, user, name, value)),
-        delete: (user, name) => call(stub.userConnectionDelete(id, user, name)),
-        list: (user) => call(stub.userConnectionsList(id, user)),
-      },
-    },
+    users: usersHandle(stub, bindings, id),
     thread: (target) => openThread(bindings, id, target),
     threads: { list: (filter) => call(stub.threadsList(id, filter.agent, filter.user, filter.parent)) },
     status: () => call(stub.status(id)),
@@ -222,6 +227,25 @@ export function openScope(deployment: Deployment, bindings: KarmiBindings, id: S
     resume: () => call(stub.resume(id)),
     destroy: () => call(stub.destroy(id)),
     destroyStatus: (operationId) => call(stub.destroyStatus(id, operationId)),
+  };
+}
+
+function usersHandle(stub: Remote<ScopeConfigDurableObject>, bindings: KarmiBindings, id: ScopeId): Scope["users"] {
+  const memory = (user: string) => remote<MemoryDurableObject>(bindings.KARMI_MEMORY, keys.memory(id, user));
+  return {
+    connections: {
+      set: (user, name, value) => call(stub.userConnectionSet(id, user, name, value)),
+      delete: (user, name) => call(stub.userConnectionDelete(id, user, name)),
+      list: (user) => call(stub.userConnectionsList(id, user)),
+    },
+    memory: {
+      get: async (user, options) => call(memory(user).get(id, user, options?.notes ?? 100)),
+      list: () => call(stub.memoryUsersList(id)),
+      delete: async (user) => {
+        await call(memory(user).clear(id, user));
+        await call(stub.memoryUserForget(id, user));
+      },
+    },
   };
 }
 

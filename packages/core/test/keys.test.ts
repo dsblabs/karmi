@@ -7,6 +7,7 @@ describe("keys", () => {
   it("mints every Durable Object name under {scope}/", () => {
     expect(keys.config("acme")).toBe("acme/config");
     expect(keys.thread("acme", "t-42")).toBe("acme/thread/t-42");
+    expect(keys.memory("acme", "guest-1")).toBe("acme/memory/guest-1");
   });
 
   it("mints every R2 key under {scope}/", () => {
@@ -24,5 +25,8 @@ describe("keys", () => {
       new KarmiError("scope.id.invalid", 'ScopeId "../other" must match [A-Za-z0-9_-]{1,64}.'),
     );
     expect(() => keys.thread("a", "b/../c")).toThrowError(new KarmiError("thread.id.invalid", "Invalid Thread id."));
+    expect(() => keys.memory("a", "../b")).toThrowError(
+      new KarmiError("user.id.invalid", 'user "../b" must match [A-Za-z0-9_-]{1,64}.'),
+    );
   });
 });

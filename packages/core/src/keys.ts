@@ -34,6 +34,10 @@ export const keys = {
   config(scope: ScopeId): string {
     return `${assertScope(scope)}/config`;
   },
+  memory(scope: ScopeId, user: string): string {
+    assertIdentifier("user.id.invalid", "user", user);
+    return `${assertScope(scope)}/memory/${user}`;
+  },
   thread(scope: ScopeId, threadId: string): string {
     assertThreadId(threadId);
     return `${assertScope(scope)}/thread/${threadId}`;

@@ -599,6 +599,61 @@ const mcpPinned = defineAgent({
   policy: [{ match: { tool: "*" }, effect: "allow" }],
 });
 
+// Memory fixtures: two Agents sharing one User's Memory through a union Profile, one without Notes, one that
+// delegates to the first, and one whose Policy forbids `remember`.
+const memoProfile = {
+  properties: {
+    tier: { type: "string" as const, enum: ["silver", "gold"] },
+    seat: { type: "string" as const, description: "Preferred seat" },
+  },
+};
+const memo = defineAgent({
+  agentId: "memo",
+  name: "Memo",
+  instructions: [{ text: "Remember the guest." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  skills: ["deploy"],
+  memory: { profile: memoProfile },
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+});
+const porter = defineAgent({
+  agentId: "porter",
+  name: "Porter",
+  instructions: [{ text: "Carry the bags." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  memory: { profile: { properties: { seat: { type: "string" }, visits: { type: "integer", minimum: 0 } } } },
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+});
+const memoQuiet = defineAgent({
+  agentId: "memo-quiet",
+  name: "Quiet memo",
+  instructions: [{ text: "Profile only." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  memory: { profile: memoProfile, notes: false },
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+});
+const memoDelegator = defineAgent({
+  agentId: "memo-delegator",
+  name: "Memo delegator",
+  instructions: [{ text: "Delegate." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  memory: { profile: memoProfile },
+  delegates: ["memo"],
+  capabilities: { delegation: {} },
+  policy: [{ match: { tool: "*" }, effect: "allow" }],
+});
+const memoDenied = defineAgent({
+  agentId: "memo-denied",
+  name: "Memo denied",
+  instructions: [{ text: "Read only." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  memory: { profile: memoProfile },
+  policy: [
+    { match: { tool: "remember" }, effect: "deny" },
+    { match: { tool: "*" }, effect: "allow" },
+  ],
+});
+
 /** The recorded Provider Tool streams used by integration tests. */
 export const serverProvider = fakeProvider(["OK"]);
 
@@ -668,6 +723,11 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
       mcpDrive,
       mcpCrm,
       mcpLocked,
+      memo,
+      porter,
+      memoQuiet,
+      memoDelegator,
+      memoDenied,
     ],
     usageHandler: meter,
   },
@@ -692,7 +752,7 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
   },
 );
 
-export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
+export const { ThreadDO, ScopeConfigDO, MemoryDO } = karmi.durableObjects;
 
 export default {
   fetch(request: Request): Response {
