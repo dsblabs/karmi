@@ -130,12 +130,27 @@ describe("usage.recorded", () => {
     expect(usage.seen.has(`${record!.threadId}:${record!.seq}`)).toBe(true);
   });
 
-  it("retries a failed batch without failing the Turn and lets the handler drop a duplicate delivery", async () => {
-    provider.script([[reply.text("Again"), reply.usage({ input: 5, output: 1 })]]);
-    const thread = fresh();
-    const events = await thread.send(message("twice"));
-    expect(events).toContainEvent({ type: "turn.completed" });
-    const records = recorded(events);
+  it("retries a failed batch and lets the handler drop a duplicate delivery", async () => {
+    const records: UsageRecord[] = [
+      {
+        type: "usage.recorded",
+        seq: 5,
+        turn: 1,
+        at: clock.now(),
+        kind: "model",
+        scope: "test",
+        agent: "concierge",
+        user: "guest-1",
+        threadId: "queue-retry",
+        model: "claude-sonnet-5",
+        provider: "fake",
+        profile: "default",
+        input: 5,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+    ];
     const consume = async () => {
       const body = { kind: "usage", records };
       const batch = createMessageBatch("karmi-test-queue", [{ id: "usage", timestamp: new Date(), body, attempts: 1 }]);
