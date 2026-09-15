@@ -157,12 +157,14 @@ function* toolPart(
     }
     const block: Extract<ContentBlock, { type: "server_tool" }> = {
       type: "server_tool",
+      raw: part,
       id: part.toolCallId,
       name: part.toolName,
       input,
       ...meta,
     };
     blocks.tools.set(part.toolCallId, block);
+    yield { type: "server_tool.called", block };
   } else {
     const block = blocks.tools.get(part.toolCallId);
     if (!block) throw new TypeError(`Provider result has no call: ${part.toolCallId}`);

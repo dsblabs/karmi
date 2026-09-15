@@ -201,11 +201,34 @@ function toTools(
     ...(tool.strict && { strict: true }),
     ...(tool.deferred && { defer_loading: true }),
   }));
-  if (options.serverTools) out.push(...options.serverTools);
+  out.push(...providerTools(request));
   out.push(...mcpConnector(request).map(({ toolset }) => toolset));
   const last = out.filter((tool): tool is BetaTool => "input_schema" in tool && !tool.defer_loading).at(-1);
   if (cache && last) last.cache_control = cache;
   return out;
+}
+
+function providerTools(request: ProviderRequest): BetaToolUnion[] {
+  const options = anthropicOptions({ ...request, providerOptions: request.config.providerOptions ?? {} });
+  const names = [...new Set(request.providerTools?.tools)];
+  let remaining = request.providerTools?.maxCalls ?? Infinity;
+  return names.flatMap((name, index) => {
+    const pin = options.serverTools?.find((tool) => "name" in tool && tool.name === name);
+    if (pin && (!("type" in pin) || !pin.type?.startsWith(`${name}_`)))
+      throw new Error(`Invalid Provider Tool pin for ${name}.`);
+    const native =
+      pin ??
+      (name === "web_search"
+        ? { type: "web_search_20260318" as const, name: "web_search" as const }
+        : { type: "web_fetch_20260318" as const, name: "web_fetch" as const });
+    const max = Math.min(
+      Math.ceil(remaining / (names.length - index)),
+      "max_uses" in native && typeof native.max_uses === "number" ? native.max_uses : Infinity,
+    );
+    if (max <= 0) return [];
+    if (Number.isFinite(max)) remaining -= max;
+    return [{ ...native, ...(Number.isFinite(max) && { max_uses: max }) }];
+  });
 }
 
 function toolChoice(choice: ProviderRequest["toolChoice"], parallel: boolean | undefined): BetaToolChoice | undefined {
@@ -310,12 +333,12 @@ function assistantBlock(block: ContentBlock, media: RequestMedia): BetaContentBl
     case "server_tool":
       return [
         // The block is replayed only to the provider that produced it, so the name is one Anthropic emitted.
-        {
+        (block.raw ?? {
           type: "server_tool_use",
           id: block.id,
-          name: block.name as BetaServerToolUseBlockParam["name"],
+          name: block.name,
           input: block.input,
-        },
+        }) as BetaServerToolUseBlockParam,
         ...(block.result ? [hydrateMedia(block.result.raw, media) as BetaContentBlockParam] : []),
       ];
     case "compaction":

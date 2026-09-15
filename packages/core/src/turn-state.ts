@@ -193,6 +193,7 @@ class TurnFold {
     if (started.kind === "tool" || this.steered) return plan({ kind: "model", n: started.n + 1, fresh: true });
     const pending = batch();
     if (pending.length > 0) return plan({ kind: "tool", n: started.n + 1, fresh: true, batch: pending, prior });
+    if (last.stopReason === "pause_turn") return plan({ kind: "model", n: started.n + 1, fresh: true });
     return plan({ kind: "finish", stopReason: last.stopReason, message: last.message });
   }
 

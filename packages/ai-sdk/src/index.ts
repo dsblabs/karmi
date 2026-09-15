@@ -8,6 +8,7 @@ import {
   type ModelCapabilities,
 } from "@karmi/core";
 import { mapProviderOptions } from "./options";
+import { addProviderTools } from "./provider-tools";
 import { buildRequest } from "./request";
 import { mapStream } from "./stream";
 import { toProviderError } from "./errors";
@@ -38,6 +39,7 @@ export function aiSdk(model: ModelFactory): Provider {
         known.set(request.model, supported);
         const params = buildRequest(request, call, await prepareMedia(request, call, supported));
         params.providerOptions = mapProviderOptions(params.providerOptions ?? {}, request, api.provider);
+        addProviderTools(request, params, api.provider);
         call.signal.throwIfAborted();
         const result = await api.doStream(params);
         const gatewayId = request.config.gateway ? result.response?.headers?.["cf-aig-log-id"] : undefined;

@@ -4,7 +4,10 @@ import type { ProviderRequest } from "@karmi/core";
 
 /** The schema of AI SDK provider metadata: a JSON record per provider namespace. */
 export const metadataSchema = z.record(z.string(), z.record(z.string(), z.json()));
-const optionsSchema = z.strictObject({ aiSdk: metadataSchema.optional() });
+const optionsSchema = z.strictObject({
+  aiSdk: metadataSchema.optional(),
+  openai: z.object({ serverTools: z.unknown().optional() }).optional(),
+});
 
 /**
  * The `aiSdk` namespace of the request's provider options, validated as the namespaced JSON the AI SDK

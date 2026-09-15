@@ -1,3 +1,8 @@
+import { providerOutput, restoreProviderTool } from "./provider-output";
+import { offeredProviderTools, resolveProviderTools } from "./provider-tools";
+import { isMediaRef } from "./context";
+import { truncateOutput, renderTruncated } from "./spill";
+import { DEFAULT_ANNOTATIONS } from "./tool";
 import { readScriptResult } from "./script-results";
 import { CloudflareIsolateSandbox } from "./isolate-sandbox";
 import { scriptTool, resolveScriptLimits } from "./scripts";
@@ -68,7 +73,7 @@ import { fail, ok, remote, type Outcome } from "./outcome";
 import { isPlatformFailure } from "./platform-failure";
 import { evaluatePrompt } from "./prompt";
 import type { ContentBlock, ProviderError, ProviderEvent, ProviderRequest, StopReason, Usage } from "./provider";
-import { prepareMessages } from "./replay";
+import { prepareMessages, providerReplayKey } from "./replay";
 import { ScheduledDurableObject, type ScheduledJob } from "./scheduler";
 import { providerHosts, scopedFetch } from "./scoped-fetch";
 import type { ConnectOutcome, ScopeConfigDurableObject, ScopeState, TurnSnapshotSource } from "./scope-config-do";
@@ -115,6 +120,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS deleted (id INTEGER PRIMARY KEY CHECK (id = 1));
   CREATE TABLE IF NOT EXISTS thread (scope_id TEXT NOT NULL, agent_id TEXT NOT NULL, user_id TEXT, thread_id TEXT NOT NULL, created_at INTEGER NOT NULL, state TEXT NOT NULL, turn INTEGER NOT NULL, step INTEGER NOT NULL, attempt INTEGER NOT NULL, recoveries INTEGER NOT NULL, agent_version INTEGER, snapshot_json TEXT, usage_json TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, turn INTEGER NOT NULL, at INTEGER NOT NULL, type TEXT NOT NULL, json TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS provider_tool_calls ON events (turn) WHERE type = 'server_tool.called';
   CREATE INDEX IF NOT EXISTS events_turn_seq ON events (turn, seq);
   CREATE TABLE IF NOT EXISTS delivery_route (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS deliveries (to_seq INTEGER PRIMARY KEY, from_seq INTEGER NOT NULL, turn INTEGER NOT NULL, binding_json TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
@@ -146,6 +152,8 @@ const CANCELLED = Symbol("cancelled");
 export interface TurnSnapshot {
   /** The `scripts` Capability under the Scope ceiling. Absent without the grant. */
   scripts?: ScriptLimits;
+  /** The Provider Tool grant bounded by Scope ceilings. */
+  providerTools?: Capabilities["providerTools"];
   /** The Scope's media limits. */
   media?: ScopeConfigDocument["media"];
   agentVersion: number;
@@ -1796,7 +1804,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   // Turn-level Hooks are dispatched by name with the Turn's context. `before-turn` and `before-compact`
   // may refuse by throwing, and the first `before-compact` decision wins. The observing points only log
   // a failure.
-  private async turnHooks<P extends "before-turn" | "after-turn" | "on-error" | "before-compact" | "after-compact">(
+  private async turnHooks<
+    P extends "before-turn" | "after-turn" | "on-error" | "before-compact" | "after-compact" | "after-tool",
+  >(
     row: ThreadRow,
     snapshot: TurnSnapshot,
     point: P,
@@ -1935,7 +1945,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       firstKeptSeq: cut.firstKeptSeq,
       tokensBefore,
       tokensAfter: estimateTokens(summary.summary) + cut.tokensKept,
-      provider: profile.adapter,
+      provider: providerReplayKey(profile.adapter, spec.model.id),
       model: native,
       attachments: attachmentsOf(dropped),
     };
@@ -2011,7 +2021,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const { spec } = snapshot;
     const provider = this.deployment.providers[profile.adapter];
     if (!provider) return compactionFailed(`Provider adapter "${profile.adapter}" is not registered.`);
-    const { messages } = prepareMessages(transcriptFromEvents(dropped), { provider: profile.adapter, model: native });
+    const messages = await this.replayMessages(row, dropped, profile, spec.model.id);
     const request: ProviderRequest = {
       model: native,
       config: profile,
@@ -2087,11 +2097,25 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         media: this.media(row, snapshot.media),
         credentials,
       });
-      return await this.recordStream(row, stream, signal, channelRef, splitModelId(model)[1], call);
+      return await this.recordStream(row, stream, signal, channelRef, splitModelId(model)[1], call, snapshot);
     } catch (error) {
       if (isPlatformFailure(error)) throw error;
       return stepError(errorMessage(error));
     }
+  }
+
+  private providerToolCounts(turn: number, limits: NonNullable<Capabilities["providerTools"]>["limits"]) {
+    const count = (max: number | undefined, currentTurn: boolean): number => {
+      if (max === undefined) return 0;
+      return this.sql
+        .exec<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM
+          (SELECT 1 FROM events WHERE type = 'server_tool.called' ${currentTurn ? "AND turn = ?" : ""} LIMIT ?)`,
+          ...(currentTurn ? [turn, max] : [max]),
+        )
+        .one().count;
+    };
+    return { turn: count(limits?.maxCallsPerTurn, true), thread: count(limits?.maxCallsPerThread, false) };
   }
 
   /** The Provider request for one model Step: the Prompt, the replayed transcript and the offered Tools. */
@@ -2106,11 +2130,14 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const { spec } = snapshot;
     const [, native] = splitModelId(model);
     const tools = toolDefinitions(available);
+    const calls = this.providerToolCounts(row.turn, snapshot.providerTools?.limits);
+    const providerTools = offeredProviderTools(snapshot.providerTools, snapshot.policy, calls);
     const system = await evaluatePrompt(
       spec,
       this.deployment.catalogue,
       this.fragmentContext(row, snapshot, available, model),
       {
+        ...(providerTools && { providerTools: providerTools.tools }),
         tools: toolsInContext(available),
         deferred: unloadedDeferred(available),
         skills: available.skills.map(({ skill, invokableBy }) => ({
@@ -2120,14 +2147,12 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         })),
       },
     );
-    const { messages } = prepareMessages(transcriptFromEvents(events), {
-      provider: profile.adapter,
-      model: native,
-    });
+    const messages = await this.replayMessages(row, events, profile, model);
     const mcpServers = this.mcp?.turn === row.turn ? (this.mcp.source?.providerServers() ?? []) : [];
     return {
       model: native,
       config: profile,
+      ...(providerTools && { providerTools }),
       ...(system !== undefined && { system }),
       messages,
       ...(tools.length > 0 && { tools }),
@@ -2139,6 +2164,84 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     };
   }
 
+  private async replayMessages(row: ThreadRow, events: ThreadEvent[], profile: ProviderConfig, model: string) {
+    const { messages } = prepareMessages(transcriptFromEvents(events), {
+      provider: providerReplayKey(profile.adapter, model),
+      model: splitModelId(model)[1],
+    });
+    const media = this.media(row);
+    for (const message of messages) {
+      if (message.role !== "assistant") continue;
+      for (const [index, block] of message.content.entries()) {
+        if (block.type === "server_tool")
+          message.content[index] = await restoreProviderTool(block, (ref) => media.get(ref));
+      }
+    }
+    return messages;
+  }
+
+  private async recordProviderTool(
+    row: ThreadRow,
+    snapshot: TurnSnapshot,
+    block: ContentBlock,
+    channelRef: unknown,
+    calls: Map<string, Extract<ContentBlock, { type: "server_tool" }>>,
+  ): Promise<ContentBlock> {
+    if (block.type !== "server_tool") return block;
+    const limits = { ...AGENT_SPEC_DEFAULTS.context.toolOutput, ...snapshot.spec.context?.toolOutput };
+    let called = calls.get(block.id);
+    if (!called) {
+      const output = providerOutput(
+        block.raw ?? { id: block.id, name: block.name, input: block.input },
+        limits,
+        row.scope_id,
+        row.thread_id,
+        this.head + 1,
+      );
+      const { result, ...call } = block;
+      called = { ...call, raw: output.raw, input: output.bytes ? output.raw : block.input };
+      this.append(
+        row.turn,
+        {
+          type: "server_tool.called",
+          id: block.id,
+          name: block.name,
+          input: called.input,
+          raw: output.raw,
+          summary: `Called ${block.name}.`,
+        },
+        channelRef,
+      );
+      calls.set(block.id, called);
+      await this.storeProviderOutput(output);
+    }
+    const persisted = { ...block, raw: called.raw, input: called.input };
+    if (!block.result) return persisted;
+    const output = providerOutput(block.result.raw, limits, row.scope_id, row.thread_id, this.head + 1);
+    const raw = output.raw;
+    const summaryCut = truncateOutput(block.result.summary, limits);
+    const summary = summaryCut.truncated
+      ? renderTruncated(summaryCut, isMediaRef(raw) ? raw : undefined)
+      : block.result.summary;
+    this.append(row.turn, { type: "server_tool.result", id: block.id, name: block.name, raw, summary }, channelRef);
+    await this.storeProviderOutput(output);
+    await this.turnHooks(row, snapshot, "after-tool", {
+      call: structuredClone({ id: block.id, name: block.name, input: block.input, annotations: DEFAULT_ANNOTATIONS }),
+      result: { content: [{ type: "text", text: summary }] },
+    });
+    return { ...persisted, result: { raw, summary } };
+  }
+
+  private async storeProviderOutput(output: ReturnType<typeof providerOutput>): Promise<void> {
+    if (!output.bytes || !isMediaRef(output.raw)) return;
+    if (!this.env.KARMI_MEDIA) throw new Error("Provider Tool output requires media storage.");
+    await this.env.KARMI_MEDIA.put(output.raw.key, output.bytes, { httpMetadata: { contentType: "application/json" } });
+    if (this.turnAbort.signal.aborted) {
+      await this.env.KARMI_MEDIA.delete(output.raw.key);
+      this.turnAbort.signal.throwIfAborted();
+    }
+  }
+
   /** Logs a Provider stream as it arrives and ends the model Step on the stream's terminal event. */
   private async recordStream(
     row: ThreadRow,
@@ -2147,12 +2250,17 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     channelRef: unknown,
     model: string,
     call: StepCall,
+    snapshot: TurnSnapshot,
   ): Promise<StepResult> {
     const parts: ContentBlock[] = [];
+    const calls = new Map<string, Extract<ContentBlock, { type: "server_tool" }>>();
     for await (const event of stream) {
       // A cancelled Turn has ended, so nothing of this stream belongs in the log any more.
       if (signal.aborted) return stepError("The Turn was cancelled.");
       switch (event.type) {
+        case "server_tool.called":
+          await this.recordProviderTool(row, snapshot, event.block, channelRef, calls);
+          break;
         case "delta":
           this.append(
             row.turn,
@@ -2160,17 +2268,25 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
             channelRef,
           );
           break;
-        case "part":
-          parts[event.index] = event.block;
-          this.append(row.turn, { type: "message.part", index: event.index, block: event.block }, channelRef);
+        case "part": {
+          const block = await this.recordProviderTool(row, snapshot, event.block, channelRef, calls);
+          if (signal.aborted) return stepError("The Turn was cancelled.");
+          parts[event.index] = block;
+          this.append(row.turn, { type: "message.part", index: event.index, block }, channelRef);
           break;
+        }
         case "message.end": {
-          const usage = addUsage(decodeUsage(this.row().usage_json), event.usage);
+          const count = calls.size;
+          const measured = {
+            ...event.usage,
+            ...(count > 0 && { serverToolCalls: Math.max(count, event.usage.serverToolCalls ?? 0) }),
+          };
+          const usage = addUsage(decodeUsage(this.row().usage_json), measured);
           this.update({ usage_json: JSON.stringify(usage) });
-          this.append(row.turn, this.modelUsage(row, "model", model, call, event.usage), channelRef);
+          this.append(row.turn, this.modelUsage(row, "model", model, call, measured), channelRef);
           this.append(
             row.turn,
-            { type: "step.completed", kind: "model", n: row.step, stopReason: event.stopReason, usage: event.usage },
+            { type: "step.completed", kind: "model", n: row.step, stopReason: event.stopReason, usage: measured },
             channelRef,
           );
           return { ok: true, stopReason: event.stopReason, message: parts.filter((part) => part !== undefined) };
@@ -2808,6 +2924,9 @@ function buildSnapshot(
       }),
       ...(spec.capabilities?.scheduling && {
         scheduling: resolveSchedulingLimits(spec.capabilities.scheduling, ceilings.scheduling),
+      }),
+      ...(spec.capabilities?.providerTools && {
+        providerTools: resolveProviderTools(spec.capabilities.providerTools, ceilings.providerTools),
       }),
       budget: resolveBudget(spec.capabilities?.longRunning, ceilings.longRunning),
       context: resolveContext(spec, ceilings),

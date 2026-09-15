@@ -137,6 +137,7 @@ describe("request building", () => {
       tools,
       toolChoice: { name: "weather" },
       parallelToolCalls: false,
+      providerTools: { tools: ["web_search"] },
       providerOptions: {
         anthropic: { serverTools: [{ type: "web_search_20260318", name: "web_search" }], cache: false },
       },
@@ -394,5 +395,41 @@ describe("countTokens and capabilities", () => {
       video: "unknown",
       pdf: "unknown",
     });
+  });
+});
+
+it("only sends granted Provider Tools and bounds the profile pin's max_uses", async () => {
+  const config = {
+    adapter: "anthropic",
+    providerOptions: {
+      anthropic: {
+        serverTools: [
+          { type: "web_search_20260318", name: "web_search", max_uses: 9 },
+          { type: "web_fetch_20260309", name: "web_fetch" },
+        ],
+        cache: false,
+      },
+    },
+  };
+  expect((await sent({ config, providerOptions: config.providerOptions })).body).not.toHaveProperty("tools");
+  expect(
+    (
+      await sent({
+        config,
+        providerOptions: config.providerOptions,
+        providerTools: { tools: ["web_search"], maxCalls: 2 },
+      })
+    ).body,
+  ).toMatchObject({
+    tools: [{ type: "web_search_20260318", name: "web_search", max_uses: 2 }],
+  });
+});
+
+it("shares a finite call budget across search and fetch", async () => {
+  expect((await sent({ providerTools: { tools: ["web_search", "web_fetch"], maxCalls: 3 } })).body).toMatchObject({
+    tools: [
+      { name: "web_search", max_uses: 2 },
+      { name: "web_fetch", max_uses: 1 },
+    ],
   });
 });

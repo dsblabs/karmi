@@ -27,8 +27,9 @@ export interface AnthropicOptions {
   /** A token budget for the whole task, forwarded as `output_config.task_budget`. */
   taskBudget?: { type: "tokens"; total: number };
   /**
-   * Native Provider Tool definitions appended after the Harness Tools, e.g.
-   * `{ type: "web_search_20260318", name: "web_search" }`.
+   * Profile version pins and options for granted Provider Tools, such as
+   * `{ type: "web_search_20260318", name: "web_search" }`. Pins never grant access.
+   * Configure these on `ProviderConfig.providerOptions.anthropic`, not on a Spec.
    */
   serverTools?: BetaToolUnion[];
   /**

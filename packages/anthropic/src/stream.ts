@@ -26,7 +26,7 @@ type Open =
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string; signature: string }
   | { kind: "tool"; id: string; name: string; json: string; input: unknown }
-  | { kind: "server"; id: string; name: string; json: string; input: unknown }
+  | { kind: "server"; raw: Record<string, unknown>; id: string; name: string; json: string; input: unknown }
   | { kind: "compaction"; block: Record<string, unknown>; content: string }
   /**
    * Any other block. It is emitted as a `provider` block, or attached to a server tool when it is that tool's
@@ -157,17 +157,18 @@ function close(current: Open, index: number, pending: Pending): ProviderEvent | 
           input: parseInput(current.json, current.input),
         },
       };
-    case "server":
-      pending.set(current.id, {
-        index,
-        block: {
-          type: "server_tool",
-          id: current.id,
-          name: current.name,
-          input: parseInput(current.json, current.input),
-        },
-      });
-      return undefined;
+    case "server": {
+      const input = parseInput(current.json, current.input);
+      const block: Extract<ContentBlock, { type: "server_tool" }> = {
+        type: "server_tool",
+        raw: { ...current.raw, input },
+        id: current.id,
+        name: current.name,
+        input,
+      };
+      pending.set(current.id, { index, block });
+      return { type: "server_tool.called", block };
+    }
     case "compaction":
       return {
         type: "part",
@@ -191,7 +192,7 @@ function openBlock(block: StartedBlock, logger: Logger | undefined): Open {
     case "tool_use":
       return { kind: "tool", id: block.id, name: block.name, json: "", input: block.input };
     case "server_tool_use":
-      return { kind: "server", id: block.id, name: block.name, json: "", input: block.input };
+      return { kind: "server", raw: { ...block }, id: block.id, name: block.name, json: "", input: block.input };
     case "compaction":
       return { kind: "compaction", block: { ...block }, content: block.content ?? "" };
     default:
