@@ -99,18 +99,21 @@ describe("remember and recall", () => {
     expect(await scope.users.memory.get("bob")).toEqual({ profile: {}, notes: [] });
   });
 
-  it("ranks recall by match and caps it at limit", async () => {
+  it("ranks recall best match first and leaves out Notes that match no term", async () => {
     provider.script([
       [
         reply.toolCall("remember", { note: "Likes window seats" }, "c0"),
         reply.toolCall("remember", { note: "Window seat, aisle never; window is a must" }, "c1"),
         reply.toolCall("remember", { note: "Vegetarian" }, "c2"),
-        reply.toolCall("recall", { query: "window seat", limit: 1 }, "c3"),
+        reply.toolCall("recall", { query: "window seat" }, "c3"),
       ],
       "Ok",
     ]);
     const events = await fresh("memo", "carol").send(message("hi"));
-    expect(resultText(events, "c3")).toMatch(/^- \S+: Window seat, aisle never; window is a must$/);
+    const lines = resultText(events, "c3")?.split("\n") ?? [];
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/: Window seat, aisle never; window is a must$/);
+    expect(lines[1]).toMatch(/: Likes window seats$/);
   });
 });
 
@@ -216,9 +219,13 @@ describe("degrade", () => {
 });
 
 describe("scope.users.memory", () => {
-  it("indexes every User a Memory Turn ran for, and delete empties the Memory and the index", async () => {
-    provider.script([[reply.toolCall("remember", { note: "Keep" }, "c0")], "Ok"]);
+  it("indexes a User on their first write, and delete empties the Memory and the index", async () => {
+    provider.script(["Hi", [reply.toolCall("remember", { note: "Keep" }, "c0")], "Ok"]);
     await fresh("memo", "hank").send(message("hi"));
+    expect(await scope.users.memory.get("ivy")).toEqual({ profile: {}, notes: [] });
+    expect(await scope.users.memory.list()).not.toContain("hank");
+    expect(await scope.users.memory.list()).not.toContain("ivy");
+    await fresh("memo", "hank").send(message("remember"));
     expect(await scope.users.memory.list()).toContain("hank");
     await scope.users.memory.delete("hank");
     expect(await scope.users.memory.get("hank")).toEqual({ profile: {}, notes: [] });

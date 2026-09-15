@@ -528,14 +528,6 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         thread.parent.threadKey,
         thread.parent.callId,
       );
-    // The User index names every User whose Memory a Turn may have written, so a Platform can find and
-    // delete it without listing Durable Objects.
-    if (thread.userId !== undefined && agent.value.spec.memory !== undefined)
-      this.sql.exec(
-        "INSERT OR IGNORE INTO memory_users (user_id, created_at) VALUES (?, ?)",
-        thread.userId,
-        thread.activeAt,
-      );
     return ok({
       state: head.value.state,
       agent: agent.value,
@@ -683,8 +675,20 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     );
   }
 
-  /** Removes a User from the Memory index once their Memory object has been cleared. */
-  memoryUserForget(scope: ScopeId, user: string): Outcome<void> {
+  /** Adds a User to the Memory index. A Turn calls it before every write to the User's Memory. */
+  memoryUsersAdd(scope: ScopeId, user: string): Outcome<void> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    this.sql.exec(
+      "INSERT OR IGNORE INTO memory_users (user_id, created_at) VALUES (?, ?)",
+      user,
+      this.deployment.clock.now(),
+    );
+    return ok(undefined);
+  }
+
+  /** Removes a User from the Memory index. `scope.users.memory.delete` calls it before clearing the Memory. */
+  memoryUsersRemove(scope: ScopeId, user: string): Outcome<void> {
     const head = this.enter(scope, false);
     if (!head.ok) return head;
     this.sql.exec("DELETE FROM memory_users WHERE user_id = ?", user);

@@ -5,7 +5,7 @@ import { isMediaRef, MediaRefSchema } from "./context";
 import { defineFragment } from "./fragment";
 import type { ThreadAddress } from "./thread";
 import type { Budget, ThreadEvent, TurnInput } from "./thread-events";
-import type { Tool, ToolResult } from "./tool";
+import { errorResult, type Tool, type ToolResult } from "./tool";
 
 /** The delegating Thread and the `delegate` call that opened a child Thread. */
 export interface ParentLink {
@@ -155,7 +155,7 @@ export function delegateTool(
 }
 /** Wraps `message` as an error Tool result. */
 export function delegationError(message: string): ToolResult {
-  return { content: [{ type: "text", text: message }], isError: true };
+  return errorResult(message);
 }
 /**
  * Converts a child's final `turn.completed` or `turn.failed` event into the parent's Tool result. Text and media

@@ -15,7 +15,7 @@ import { classifyAuth, describeMcpError, McpSession, type McpCallOutcome } from 
 import { connection, type McpRegistry, type McpServerSnapshot } from "./mcp-registry";
 import type { ProviderMcpServer } from "./provider";
 import { rawJsonSchema } from "./schema";
-import type { Tool, ToolContext, ToolOutputResult } from "./tool";
+import { errorResult, type Tool, type ToolContext, type ToolOutputResult } from "./tool";
 
 // One Turn's view of its MCP servers: the catalogues resolved at Turn start, each server's tools as
 // ordinary Tool objects, and a lazily opened session per server that lives until the Turn ends.
@@ -177,13 +177,13 @@ export class McpTurnSource implements McpToolSource {
 
   private async call(id: string, tool: McpTool, input: unknown, ctx: ToolContext<unknown>): Promise<ToolOutputResult> {
     const entry = this.servers.get(id);
-    if (!entry) return failed(`MCP server "${id}" is not part of this Turn.`);
+    if (!entry) return errorResult(`MCP server "${id}" is not part of this Turn.`);
     const { server } = entry;
     if (server.missing !== undefined)
-      return failed(`Credential "${server.missing}" for MCP server "${id}" is missing.`);
+      return errorResult(`Credential "${server.missing}" for MCP server "${id}" is missing.`);
     const { oauth } = server;
     if (oauth && !oauth.holder)
-      return failed(
+      return errorResult(
         `connection.unavailable: Connection "mcp:${id}" is user-level and this Thread has no User to hold it.`,
       );
     if (oauth?.holder && !oauth.token)
@@ -203,14 +203,14 @@ export class McpTurnSource implements McpToolSource {
       throw new McpConnectRequired({ serverId: id, level: oauth.level, holder: oauth.holder, ...(scope && { scope }) });
     }
     if (failure.kind === "unauthorized" || failure.kind === "insufficient_scope")
-      return failed(`MCP server "${id}" refused the request as unauthorized.`);
+      return errorResult(`MCP server "${id}" refused the request as unauthorized.`);
     if (failure.kind === "input_required")
-      return failed(`Tool "${tool.name}" needs interactive input from a user, which is not supported.`);
+      return errorResult(`Tool "${tool.name}" needs interactive input from a user, which is not supported.`);
     if (failure.kind === "invalid_params") {
       await this.refetch(entry);
-      return failed(`${failure.message} The tool's definition has been refreshed; check it before retrying.`);
+      return errorResult(`${failure.message} The tool's definition has been refreshed; check it before retrying.`);
     }
-    return failed(failure.message);
+    return errorResult(failure.message);
   }
 
   /**
@@ -251,7 +251,6 @@ export class McpTurnSource implements McpToolSource {
 }
 
 const defined = <T>(value: T | undefined): value is T => value !== undefined;
-const failed = (text: string): ToolOutputResult => ({ content: [{ type: "text", text }], isError: true });
 
 /**
  * Converts MCP content into a Tool result. Text and images stay inline, and the Harness Spills the images at

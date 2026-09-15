@@ -230,6 +230,9 @@ export function openScope(deployment: Deployment, bindings: KarmiBindings, id: S
   };
 }
 
+/** How many Notes `scope.users.memory.get` returns when the call names no limit. */
+const MEMORY_GET_NOTES = 100;
+
 function usersHandle(stub: Remote<ScopeConfigDurableObject>, bindings: KarmiBindings, id: ScopeId): Scope["users"] {
   const memory = (user: string) => remote<MemoryDurableObject>(bindings.KARMI_MEMORY, keys.memory(id, user));
   return {
@@ -239,11 +242,13 @@ function usersHandle(stub: Remote<ScopeConfigDurableObject>, bindings: KarmiBind
       list: (user) => call(stub.userConnectionsList(id, user)),
     },
     memory: {
-      get: async (user, options) => call(memory(user).get(id, user, options?.notes ?? 100)),
+      get: async (user, options) => call(memory(user).get(id, user, options?.notes ?? MEMORY_GET_NOTES)),
       list: () => call(stub.memoryUsersList(id)),
+      // The index entry goes first, so a failure part-way leaves Memory that can still be listed or none.
       delete: async (user) => {
-        await call(memory(user).clear(id, user));
-        await call(stub.memoryUserForget(id, user));
+        const target = memory(user);
+        await call(stub.memoryUsersRemove(id, user));
+        await call(target.clear(id, user));
       },
     },
   };

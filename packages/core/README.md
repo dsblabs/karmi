@@ -236,11 +236,11 @@ defineAgent({
 The model sees a Memory Fragment after the Skill index. It shows the Profile and the 20 most recent Notes, and is read once at the start of each Turn. Two built-ins write and search it:
 
 - **`remember { profile?, note? }`** merges Profile fields and appends a Note. An Agent may write only the fields its own schema declares, each checked against that schema, and every other field is kept. Setting a field to `null` clears it.
-- **`recall { query, limit? }`** searches Notes with full-text search, best match first. It sees a `remember` from earlier in the same Turn.
+- **`recall { query }`** searches Notes with full-text search and returns the 10 best matches. It sees a `remember` from earlier in the same Turn.
 
 `memory.notes: false` drops Notes: `recall` is not offered and `remember` takes only `profile`. Both built-ins are allowed by default, and a Policy rule that names one of them applies. On a user-less Thread the Fragment renders nothing and both Tools answer `isError`. A Delegation child acts for its parent's User, so it reads and writes the same Memory.
 
-`scope.users.memory.get(user)` reads a Memory, and `list()` names every User whose Thread ran an Agent with Memory. `delete(user)` empties the Memory and removes the User from that list.
+`scope.users.memory.get(user)` reads a Memory, and `list()` names every User with stored Memory. `delete(user)` removes the User from that list and deletes their Memory.
 
 ## Offline delivery
 

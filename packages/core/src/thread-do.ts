@@ -72,7 +72,7 @@ import { McpTurnSource, type ConnectRequest } from "./mcp-source";
 import { fail, ok, remote, unwrap, type Outcome } from "./outcome";
 import { isPlatformFailure } from "./platform-failure";
 import { evaluatePrompt } from "./prompt";
-import { MEMORY_FRAGMENT_NOTES, renderMemory } from "./memory";
+import { MEMORY_FRAGMENT_NOTES, notesEnabled, renderMemory, type MemoryConfig } from "./memory";
 import type { MemoryDurableObject } from "./memory-do";
 import type { ContentBlock, ProviderError, ProviderEvent, ProviderRequest, StopReason, Usage } from "./provider";
 import { prepareMessages, providerReplayKey } from "./replay";
@@ -1734,29 +1734,38 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return remote<ScopeConfigDurableObject>(this.env.KARMI_SCOPES, keys.config(row.scope_id));
   }
 
+  /** The Memory of this Thread's User as the `remember` and `recall` built-ins reach it. */
+  private memoryHost(row: ThreadRow, config: MemoryConfig): MemoryHost {
+    const user = row.user_id ?? undefined;
+    const stub = user === undefined ? undefined : this.memoryStub(row, user);
+    return {
+      config,
+      agent: row.agent_id,
+      user,
+      remember: async (write) => {
+        if (!stub || user === undefined) return;
+        // The index is written first, so stored Memory is always findable for deletion.
+        await unwrap(this.scopeStub(row).memoryUsersAdd(row.scope_id, user));
+        await unwrap(stub.remember(row.scope_id, user, write));
+      },
+      recall: async (query) => (stub && user !== undefined ? unwrap(stub.recall(row.scope_id, user, query)) : []),
+    };
+  }
+
   private memoryStub(row: ThreadRow, user: string) {
     return remote<MemoryDurableObject>(this.env.KARMI_MEMORY, keys.memory(row.scope_id, user));
   }
 
-  /** The Memory of this Thread's User as the `remember` and `recall` built-ins reach it. */
-  private memoryHost(row: ThreadRow, config: NonNullable<AgentSpec["memory"]>): MemoryHost {
-    return {
-      config,
-      agent: row.agent_id,
-      remember: (user, write) => unwrap(this.memoryStub(row, user).remember(row.scope_id, user, write)),
-      recall: (user, query, limit) => unwrap(this.memoryStub(row, user).recall(row.scope_id, user, query, limit)),
-    };
-  }
-
   /** The Memory Fragment of this Turn, or undefined on a user-less Thread or without a `memory` block. */
   private async memoryFragment(row: ThreadRow, spec: AgentSpec): Promise<string | undefined> {
-    if (this.memory?.turn !== row.turn) this.memory = { turn: row.turn, text: await this.renderMemory(row, spec) };
+    if (this.memory?.turn !== row.turn)
+      this.memory = { turn: row.turn, text: await this.loadMemoryFragment(row, spec) };
     return this.memory.text;
   }
 
-  private async renderMemory(row: ThreadRow, spec: AgentSpec): Promise<string | undefined> {
+  private async loadMemoryFragment(row: ThreadRow, spec: AgentSpec): Promise<string | undefined> {
     if (!spec.memory || row.user_id === null) return undefined;
-    const notes = spec.memory.notes !== false;
+    const notes = notesEnabled(spec.memory);
     const view = await unwrap(
       this.memoryStub(row, row.user_id).get(row.scope_id, row.user_id, notes ? MEMORY_FRAGMENT_NOTES : 0),
     );

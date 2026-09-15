@@ -1,45 +1,59 @@
-import type { JsonType, MemoryProfileProperty, MemoryProfileSchema } from "./agent";
+import type { AgentSpec, JsonType, MemoryProfileProperty, MemoryProfileSchema } from "./agent";
 
 // Memory is what Agents accumulate about a User across Threads. This module holds the pure logic: checking
-// a Profile write against the Agent's schema, building a full-text query and rendering the Fragment. The
-// storage is `memory-do.ts` and the Tools are in `builtins.ts`.
+// a Profile write against the Agent's schema, building a full-text query and rendering the Memory Fragment,
+// the Prompt section that shows Memory to the model. The storage is `memory-do.ts` and the Tools are in
+// `builtins.ts`.
 
-/** What Agents remember about one User in a Scope: the Profile fields and the Notes. */
+/** What the Agents of a Scope remember about one User: the Profile fields and the Notes. */
 export interface MemoryView {
-  /** The Profile as stored: only fields some Agent has written. */
+  /** The Profile as stored. It holds only the fields some Agent has written. */
   profile: Record<string, unknown>;
-  /** Notes, most recent first. */
+  /** The Notes, most recent first. */
   notes: MemoryNote[];
 }
 
 /** One free-form Note about a User. */
 export interface MemoryNote {
+  /** The Note's id, increasing in write order within the User's Memory. */
   id: number;
+  /** The text the model saved. */
   text: string;
-  /** The Agent that wrote it. */
+  /** The agentId of the Agent that wrote the Note. */
   agent: string;
-  /** When it was written, as epoch milliseconds. */
+  /** When the Note was written, as epoch milliseconds. */
   at: number;
 }
 
-/** What one `remember` call writes. A Profile field set to `null` is removed. */
+/** What one `remember` call writes. */
 export interface MemoryWrite {
+  /** The agentId of the Agent writing. */
   agent: string;
+  /** Profile fields to set. A field set to `null` is removed from the Profile. */
   profile?: Record<string, unknown>;
+  /** A Note to append. */
   note?: string;
 }
 
+/** The `memory` block of an Agent Spec. */
+export type MemoryConfig = NonNullable<AgentSpec["memory"]>;
+
 /** How many of the most recent Notes the Memory Fragment shows. Older ones are reached through `recall`. */
 export const MEMORY_FRAGMENT_NOTES = 20;
-/** How many Notes `recall` returns when the call names no limit. */
-export const RECALL_DEFAULT_LIMIT = 10;
+/** How many Notes one `recall` returns at most. */
+export const RECALL_LIMIT = 10;
 /** The longest Note `remember` accepts, in characters. */
 export const NOTE_MAX_CHARS = 2000;
 
+/** Whether the Agent keeps Notes. They are on unless the Spec sets `notes: false`. */
+export function notesEnabled(config: MemoryConfig): boolean {
+  return config.notes !== false;
+}
+
 /**
- * The reasons `fields` cannot be written to the Profile under `schema`, as sentences for the model. Empty
- * when the write is valid. Only the fields written are checked; a `null` value clears its field and is
- * always valid for a declared field.
+ * Returns the reasons `fields` cannot be written to the Profile under `schema`, as sentences for the model.
+ * The list is empty when the write is valid. Only the fields written are checked, and `null` is valid for
+ * any declared field because it clears the field.
  */
 export function profileWriteIssues(schema: MemoryProfileSchema | undefined, fields: Record<string, unknown>): string[] {
   if (!schema) return Object.keys(fields).length > 0 ? ["This Agent declares no profile fields."] : [];
@@ -47,22 +61,22 @@ export function profileWriteIssues(schema: MemoryProfileSchema | undefined, fiel
   for (const [field, value] of Object.entries(fields)) {
     const property = schema.properties[field];
     if (!property) issues.push(`"${field}" is not a profile field of this Agent.`);
-    else if (value !== null) check(property, value, field, issues);
+    else if (value !== null) collectIssues(property, value, field, issues);
   }
   return issues;
 }
 
-function check(property: MemoryProfileProperty, value: unknown, path: string, issues: string[]): void {
+function collectIssues(property: MemoryProfileProperty, value: unknown, path: string, issues: string[]): void {
   const types = property.type === undefined ? [] : Array.isArray(property.type) ? property.type : [property.type];
-  if (types.length > 0 && !types.some((type) => isType(type, value))) {
-    issues.push(`"${path}" must be ${types.map(article).join(" or ")}.`);
+  if (types.length > 0 && !types.some((type) => hasType(type, value))) {
+    issues.push(`"${path}" must be ${types.map(withArticle).join(" or ")}.`);
     return;
   }
-  if (property.enum && !property.enum.some((option) => same(option, value))) {
+  if (property.enum && !property.enum.some((option) => jsonEqual(option, value))) {
     issues.push(`"${path}" must be one of ${property.enum.map((option) => JSON.stringify(option)).join(", ")}.`);
     return;
   }
-  if (property.const !== undefined && !same(property.const, value)) {
+  if (property.const !== undefined && !jsonEqual(property.const, value)) {
     issues.push(`"${path}" must be ${JSON.stringify(property.const)}.`);
     return;
   }
@@ -80,16 +94,16 @@ function check(property: MemoryProfileProperty, value: unknown, path: string, is
       issues.push(`"${path}" must match /${property.pattern}/.`);
   } else if (Array.isArray(value)) {
     const items = property.items;
-    if (items) value.forEach((item, i) => check(items, item, `${path}[${i}]`, issues));
+    if (items) value.forEach((item, i) => collectIssues(items, item, `${path}[${i}]`, issues));
   } else if (isRecord(value)) {
     for (const key of property.required ?? [])
       if (value[key] === undefined) issues.push(`"${path}.${key}" is required.`);
     for (const [key, nested] of Object.entries(property.properties ?? {}))
-      if (value[key] !== undefined) check(nested, value[key], `${path}.${key}`, issues);
+      if (value[key] !== undefined) collectIssues(nested, value[key], `${path}.${key}`, issues);
   }
 }
 
-function isType(type: JsonType, value: unknown): boolean {
+function hasType(type: JsonType, value: unknown): boolean {
   switch (type) {
     case "string":
       return typeof value === "string";
@@ -108,15 +122,12 @@ function isType(type: JsonType, value: unknown): boolean {
   }
 }
 
-function article(type: JsonType): string {
-  return type === "null"
-    ? "null"
-    : type === "integer" || type === "array" || type === "object"
-      ? `an ${type}`
-      : `a ${type}`;
+function withArticle(type: JsonType): string {
+  if (type === "null") return "null";
+  return type === "integer" || type === "array" || type === "object" ? `an ${type}` : `a ${type}`;
 }
 
-function same(a: unknown, b: unknown): boolean {
+function jsonEqual(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
@@ -125,9 +136,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * The FTS5 match expression for a free-text `query`: every whitespace-separated term quoted and joined
- * with OR, so punctuation and FTS keywords are searched for rather than parsed. Undefined for a blank
- * query.
+ * Returns the FTS5 match expression for a free-text `query`, or undefined for a blank query. Every
+ * whitespace-separated term is quoted and the terms are joined with OR. Quoting makes punctuation and FTS
+ * keywords searchable instead of parsed as query syntax.
  */
 export function ftsQuery(query: string): string | undefined {
   const terms = query.split(/\s+/).filter((term) => term.length > 0);
@@ -135,7 +146,12 @@ export function ftsQuery(query: string): string | undefined {
   return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
 }
 
-/** The Memory Fragment for one Turn: the Profile and, when `notes` is on, the most recent Notes. */
+/** Formats one Note as a dated bullet line, the way the Memory Fragment and `recall` show it. */
+export function noteLine(note: MemoryNote): string {
+  return `- ${new Date(note.at).toISOString().slice(0, 10)}: ${note.text}`;
+}
+
+/** Renders the Memory Fragment: the Profile and, when `notes` is true, the most recent Notes. */
 export function renderMemory(view: MemoryView, notes: boolean): string {
   const lines = [
     "# Memory",
@@ -151,11 +167,6 @@ export function renderMemory(view: MemoryView, notes: boolean): string {
   }
   if (fields.length > 0)
     lines.push("", "## Profile", ...fields.map(([key, value]) => `- ${key}: ${JSON.stringify(value)}`));
-  if (recent.length > 0)
-    lines.push(
-      "",
-      "## Recent notes",
-      ...recent.map((note) => `- ${new Date(note.at).toISOString().slice(0, 10)}: ${note.text}`),
-    );
+  if (recent.length > 0) lines.push("", "## Recent notes", ...recent.map(noteLine));
   return lines.join("\n");
 }
