@@ -24,6 +24,7 @@ describe("createKarmi", () => {
   it("exposes the Durable Object classes as named exports", () => {
     expect(exports.ThreadDO).toBeTypeOf("function");
     expect(exports.ScopeConfigDO).toBeTypeOf("function");
+    expect(exports.MemoryDO).toBeTypeOf("function");
   });
 
   it("validates the ScopeId on scope()", () => {
@@ -44,14 +45,18 @@ describe("bindings", () => {
   });
 
   it("lets bindings(env) rename them", () => {
-    const renamed = { THREADS: env.KARMI_THREADS, SCOPES: env.KARMI_SCOPES };
-    const bindings = resolveBindings(renamed, (e) => ({ KARMI_THREADS: e.THREADS, KARMI_SCOPES: e.SCOPES }));
+    const renamed = { THREADS: env.KARMI_THREADS, SCOPES: env.KARMI_SCOPES, MEMORY: env.KARMI_MEMORY };
+    const bindings = resolveBindings(renamed, (e) => ({
+      KARMI_THREADS: e.THREADS,
+      KARMI_SCOPES: e.SCOPES,
+      KARMI_MEMORY: e.MEMORY,
+    }));
     expect(bindings.KARMI_THREADS).toBe(env.KARMI_THREADS);
     expect(bindings.KARMI_MEDIA).toBeUndefined();
   });
 
   it("fails clearly when a required binding is missing", () => {
-    expect(() => resolveBindings({ KARMI_THREADS: env.KARMI_THREADS })).toThrowError(
+    expect(() => resolveBindings({ KARMI_THREADS: env.KARMI_THREADS, KARMI_MEMORY: env.KARMI_MEMORY })).toThrowError(
       new KarmiError(
         "bindings.missing",
         "Missing Durable Object binding KARMI_SCOPES; see @karmi/core/wrangler.baseline.jsonc.",

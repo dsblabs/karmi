@@ -8,8 +8,8 @@ import type { SkillInvoker } from "./skill";
 import type { Tool } from "./tool";
 
 // The Prompt is the Spec's ordered entries, each rendered from the Turn context for the model actually in
-// use, followed by the Harness sections in a fixed order: Tool instructions, the deferred-tool index, then
-// the Skill index.
+// use, followed by the Harness sections in a fixed order: Tool instructions, the deferred-tool index, the
+// Skill index, then the Memory Fragment.
 
 /** The Harness sections that follow the Spec's instructions. */
 export interface PromptSections {
@@ -21,6 +21,8 @@ export interface PromptSections {
   deferred?: readonly string[];
   /** Every Skill of the Agent, for the always-visible index. */
   skills?: readonly { name: string; description: string; invokableBy: SkillInvoker }[];
+  /** The rendered Memory Fragment. Absent on a user-less Thread or for an Agent without `memory`. */
+  memory?: string;
 }
 
 /** Renders the Prompt for one Turn, or undefined when nothing renders. */
@@ -58,6 +60,7 @@ export async function evaluatePrompt(
   if (index) out.push(index);
   const skills = skillIndex(sections.skills ?? []);
   if (skills) out.push(skills);
+  if (sections.memory) out.push(sections.memory);
   return out.length > 0 ? out.join("\n\n") : undefined;
 }
 

@@ -191,6 +191,7 @@ export type {
   StepCredentials,
 } from "./thread-events";
 export { evaluatePrompt, type PromptSections } from "./prompt";
+export type { MemoryView, MemoryNote } from "./memory";
 export { loadedToolNames, type Loaded } from "./loading";
 export { transcriptFromEvents, renderEvent } from "./transcript";
 export { DEFAULT_WINDOW, type ContextLimits } from "./compaction";

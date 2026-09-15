@@ -16,7 +16,7 @@ const http = createHttpHandler({
   },
 });
 
-export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
+export const { ThreadDO, ScopeConfigDO, MemoryDO } = karmi.durableObjects;
 export default { fetch: http.fetch, queue: karmi.queueHandler };
 ```
 

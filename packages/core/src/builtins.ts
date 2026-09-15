@@ -3,8 +3,18 @@ import type { FragmentContext } from "./fragment";
 import { keys } from "./keys";
 import type { Skill } from "./skill";
 import { searchTools, SEARCH_LIMIT } from "./loading";
+import {
+  noteLine,
+  notesEnabled,
+  NOTE_MAX_CHARS,
+  profileWriteIssues,
+  RECALL_LIMIT,
+  type MemoryConfig,
+  type MemoryNote,
+  type MemoryWrite,
+} from "./memory";
 import type { ThreadEventData } from "./thread-events";
-import type { Tool, ToolContent, ToolResult } from "./tool";
+import { errorResult, type Tool, type ToolContent, type ToolResult } from "./tool";
 import { searchable, type ToolSet } from "./tools";
 
 // The Framework's built-in Tools. They have the same shape as a Catalogue Tool, but the Harness mints them
@@ -29,6 +39,20 @@ const READ_ONLY = Object.freeze({
   idempotentHint: true,
   openWorldHint: false,
 });
+
+/** The Memory of one User, as the `remember` and `recall` built-ins reach it. */
+export interface MemoryHost {
+  /** The Agent's `memory` block from its Spec. */
+  config: MemoryConfig;
+  /** The agentId of the Agent the Thread runs. */
+  agent: string;
+  /** The Thread's User. Absent on a user-less Thread, where both Tools answer an error. */
+  user: string | undefined;
+  /** Writes to the User's Memory and records the User in the Scope's Memory index. */
+  remember(write: MemoryWrite): Promise<void>;
+  /** Searches the User's Notes. */
+  recall(query: string): Promise<MemoryNote[]>;
+}
 
 /** Every built-in Tool in offer order. `resolveToolSet` drops the ones the Spec gives no use. */
 export function builtInTools(host: BuiltInHost): Tool[] {
@@ -132,4 +156,64 @@ export async function activateSkill(
     skill: carrier === "event" ? { name: skill.name, body: text } : { name: skill.name },
   });
   return text;
+}
+
+const RememberInput = z.object({
+  profile: z.optional(z.record(z.string(), z.unknown())),
+  note: z.optional(z.string().check(z.minLength(1), z.maxLength(NOTE_MAX_CHARS))),
+});
+const RecallInput = z.object({ query: z.string().check(z.minLength(1)) });
+const NO_USER = "This thread has no user, so there is no memory to use.";
+
+/**
+ * The `remember` and `recall` built-ins of an Agent with a `memory` block. `recall` is left out when the
+ * Spec disables Notes. Both answer `isError` on a user-less Thread.
+ */
+export function memoryTools(host: MemoryHost): Tool[] {
+  const tools: Tool[] = [rememberTool(host)];
+  if (notesEnabled(host.config)) tools.push(recallTool(host));
+  return tools;
+}
+
+function rememberTool(host: MemoryHost): Tool<typeof RememberInput, undefined> {
+  const notes = notesEnabled(host.config);
+  const fields = host.config.profile?.properties ?? {};
+  const profileDoc =
+    Object.keys(fields).length > 0
+      ? ` \`profile\` sets fields of the user's profile, and a field set to null is cleared. The fields are ${JSON.stringify(fields)}.`
+      : "";
+  const noteDoc = notes ? " `note` adds one free-form fact to the user's notes." : "";
+  return Object.freeze({
+    kind: "tool",
+    name: "remember",
+    description: `Saves something about the user for every future conversation.${profileDoc}${noteDoc}`,
+    input: RememberInput,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    async execute({ profile, note }: z.output<typeof RememberInput>): Promise<string | ToolResult> {
+      if (host.user === undefined) return errorResult(NO_USER);
+      if (profile === undefined && note === undefined) return errorResult("Give a `profile`, a `note`, or both.");
+      if (note !== undefined && !notes)
+        return errorResult("Notes are disabled for this agent; write to `profile` instead.");
+      const issues = profile ? profileWriteIssues(host.config.profile, profile) : [];
+      if (issues.length > 0) return errorResult(issues.join(" "));
+      await host.remember({ agent: host.agent, ...(profile && { profile }), ...(note !== undefined && { note }) });
+      const done = [profile && "Profile updated", note !== undefined && "Note saved"].filter(Boolean);
+      return `${done.join(". ")}.`;
+    },
+  });
+}
+
+function recallTool(host: MemoryHost): Tool<typeof RecallInput, undefined> {
+  return Object.freeze({
+    kind: "tool",
+    name: "recall",
+    description: `Searches the notes saved about the user by keyword and returns at most ${RECALL_LIMIT} of the best matches.`,
+    input: RecallInput,
+    annotations: READ_ONLY,
+    async execute({ query }: z.output<typeof RecallInput>): Promise<string | ToolResult> {
+      if (host.user === undefined) return errorResult(NO_USER);
+      const notes = await host.recall(query);
+      return notes.length === 0 ? `No notes match "${query}".` : notes.map(noteLine).join("\n");
+    },
+  });
 }

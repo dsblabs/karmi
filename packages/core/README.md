@@ -30,7 +30,7 @@ const karmi = createKarmi({
   },
 });
 
-export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
+export const { ThreadDO, ScopeConfigDO, MemoryDO } = karmi.durableObjects;
 export default { queue: karmi.queueHandler };
 ```
 
@@ -156,7 +156,7 @@ Core reads wall time through `Clock.now()`. `createKarmi({ clock })` accepts an 
 ```ts
 // Export these from the test Worker, alongside its Durable Object classes.
 export const { karmi, scope, provider, clock } = createTestKarmi(catalogue);
-export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
+export const { ThreadDO, ScopeConfigDO, MemoryDO } = karmi.durableObjects;
 
 // In a test, after evictDurableObject(stub):
 await clock.advance("24h"); // Also fires due alarms through cloudflare:test.
@@ -219,6 +219,29 @@ Large Tool sets defer. `context.tools.defer` is `auto` (the default: when the de
 
 `@karmi/anthropic` encodes this natively (`defer_loading: true`, references replayed as `tool_reference` blocks in the `tool_result`, no `cache_control` on deferred definitions); `@karmi/ai-sdk` resends the definitions the transcript has loaded, with each reference rendered as text.
 
+## Memory
+
+Agents remember Users. An Agent Spec with a `memory` block shares one Memory per (Scope, User) with every other Agent in the Scope. It holds a Profile, whose fields are the union of every Agent's `memory.profile` properties, and free-form Notes. A field with a different type in two Agents is a `put` error (`memory.profile.conflict`). Memory lives in its own Durable Object, so bind `KARMI_MEMORY` to `MemoryDO` as the wrangler baseline shows.
+
+```ts
+defineAgent({
+  agentId: "concierge",
+  name: "Concierge",
+  instructions: [{ text: "Help the guest." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  memory: { profile: { properties: { tier: { type: "string", enum: ["silver", "gold"] } } } },
+});
+```
+
+The model sees a Memory Fragment after the Skill index. It shows the Profile and the 20 most recent Notes, and is read once at the start of each Turn. Two built-ins write and search it:
+
+- **`remember { profile?, note? }`** merges Profile fields and appends a Note. An Agent may write only the fields its own schema declares, each checked against that schema, and every other field is kept. Setting a field to `null` clears it.
+- **`recall { query }`** searches Notes with full-text search and returns the 10 best matches. It sees a `remember` from earlier in the same Turn.
+
+`memory.notes: false` drops Notes: `recall` is not offered and `remember` takes only `profile`. Both built-ins are allowed by default, and a Policy rule that names one of them applies. On a user-less Thread the Fragment renders nothing and both Tools answer `isError`. A Delegation child acts for its parent's User, so it reads and writes the same Memory.
+
+`scope.users.memory.get(user)` reads a Memory, and `list()` names every User with stored Memory. `delete(user)` removes the User from that list and deletes their Memory.
+
 ## Offline delivery
 
 Register a Channel's delivery callback in the Catalogue and set its route on an inbound input:
@@ -232,7 +255,7 @@ const receipt = defineDeliverer({
   },
 });
 const karmi = createKarmi({ catalogue: { agents: [agent], deliverers: [receipt] } });
-export const { ThreadDO, ScopeConfigDO } = karmi.durableObjects;
+export const { ThreadDO, ScopeConfigDO, MemoryDO } = karmi.durableObjects;
 export default { queue: karmi.queueHandler };
 
 await karmi

@@ -41,6 +41,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS provider_credentials (name TEXT PRIMARY KEY, version INTEGER NOT NULL, kek TEXT, dek TEXT, ciphertext TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, revoked_at INTEGER);
   CREATE TABLE IF NOT EXISTS mcp_catalog (server_id TEXT NOT NULL, partition TEXT NOT NULL, catalog_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (server_id, partition));
   CREATE TABLE IF NOT EXISTS user_connections (user_id TEXT NOT NULL, name TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (user_id, name));
+  CREATE TABLE IF NOT EXISTS memory_users (user_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
 `;
 
 /** The number of versions kept per Agent. A put drops older ones. */
@@ -660,6 +661,38 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         .map((row) => ({ name: row.name, updatedAt: row.updated_at })),
       ...listGrants(this.sql, mcpHolder("user", undefined, user) ?? "user:"),
     ]);
+  }
+
+  /** The Users with a Memory in this Scope, in id order. */
+  memoryUsersList(scope: ScopeId): Outcome<string[]> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    return ok(
+      this.sql
+        .exec<{ user_id: string }>("SELECT user_id FROM memory_users ORDER BY user_id")
+        .toArray()
+        .map((row) => row.user_id),
+    );
+  }
+
+  /** Adds a User to the Memory index. A Turn calls it before every write to the User's Memory. */
+  memoryUsersAdd(scope: ScopeId, user: string): Outcome<void> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    this.sql.exec(
+      "INSERT OR IGNORE INTO memory_users (user_id, created_at) VALUES (?, ?)",
+      user,
+      this.deployment.clock.now(),
+    );
+    return ok(undefined);
+  }
+
+  /** Removes a User from the Memory index. `scope.users.memory.delete` calls it before clearing the Memory. */
+  memoryUsersRemove(scope: ScopeId, user: string): Outcome<void> {
+    const head = this.enter(scope, false);
+    if (!head.ok) return head;
+    this.sql.exec("DELETE FROM memory_users WHERE user_id = ?", user);
+    return ok(undefined);
   }
 
   userConnectionGet(scope: ScopeId, user: string, name: string): Outcome<unknown> {

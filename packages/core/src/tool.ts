@@ -53,6 +53,11 @@ export interface ToolContext<Settings = undefined> {
   signal: AbortSignal;
 }
 
+/** Builds an error Tool result whose only content is `text`. */
+export function errorResult(text: string): ToolResult {
+  return { content: [{ type: "text", text }], isError: true };
+}
+
 /** One content block of a Tool result. */
 export type ToolContent =
   | { type: "text"; text: string }

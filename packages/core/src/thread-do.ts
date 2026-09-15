@@ -43,7 +43,7 @@ import type { MediaRef } from "./context";
 import { AGENT_SPEC_DEFAULTS } from "./agent-spec";
 import type { AgentSpec, Capabilities, PolicyRule } from "./agent";
 import type { KarmiBindings } from "./bindings";
-import { activateSkill, builtInTools, type BuiltInHost } from "./builtins";
+import { activateSkill, builtInTools, memoryTools, type BuiltInHost, type MemoryHost } from "./builtins";
 import {
   attachmentsOf,
   chooseCut,
@@ -69,9 +69,11 @@ import { sha256Hex } from "./digest";
 import { parseMcpReference } from "./mcp-catalog";
 import { McpRegistry, type McpServerSnapshot } from "./mcp-registry";
 import { McpTurnSource, type ConnectRequest } from "./mcp-source";
-import { fail, ok, remote, type Outcome } from "./outcome";
+import { fail, ok, remote, unwrap, type Outcome } from "./outcome";
 import { isPlatformFailure } from "./platform-failure";
 import { evaluatePrompt } from "./prompt";
+import { MEMORY_FRAGMENT_NOTES, notesEnabled, renderMemory, type MemoryConfig } from "./memory";
+import type { MemoryDurableObject } from "./memory-do";
 import type { ContentBlock, ProviderError, ProviderEvent, ProviderRequest, StopReason, Usage } from "./provider";
 import { prepareMessages, providerReplayKey } from "./replay";
 import { ScheduledDurableObject, type ScheduledJob } from "./scheduler";
@@ -279,6 +281,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private turnAbort = new AbortController();
   /** The running Turn's MCP servers, as catalogues and lazily opened sessions. Dropped when the Turn ends. */
   private mcp: { turn: number; source: McpTurnSource | undefined } | undefined;
+  // The Memory Fragment is rendered once per Turn so the system prompt stays the same across its Steps, which
+  // keeps the Provider's prompt cache valid. A write mid-Turn is visible through `recall` and in the next Turn.
+  private memory: { turn: number; text: string | undefined } | undefined;
   /** The Turn whose snapshot and catalogues are being fetched. An input arriving meanwhile is for the Turn after it. */
   private preparing: number | undefined;
 
@@ -1313,6 +1318,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
               ]
             : []),
           ...(snapshot.scheduling ? schedulingTools(this.schedulingHost(row, snapshot.scheduling, channelRef)) : []),
+          ...(snapshot.spec.memory ? memoryTools(this.memoryHost(row, snapshot.spec.memory)) : []),
         ],
         remembered: this.remembered(),
         ...(mcp && { mcp }),
@@ -1728,6 +1734,44 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return remote<ScopeConfigDurableObject>(this.env.KARMI_SCOPES, keys.config(row.scope_id));
   }
 
+  /** The Memory of this Thread's User as the `remember` and `recall` built-ins reach it. */
+  private memoryHost(row: ThreadRow, config: MemoryConfig): MemoryHost {
+    const user = row.user_id ?? undefined;
+    const stub = user === undefined ? undefined : this.memoryStub(row, user);
+    return {
+      config,
+      agent: row.agent_id,
+      user,
+      remember: async (write) => {
+        if (!stub || user === undefined) return;
+        // The index is written first, so stored Memory is always findable for deletion.
+        await unwrap(this.scopeStub(row).memoryUsersAdd(row.scope_id, user));
+        await unwrap(stub.remember(row.scope_id, user, write));
+      },
+      recall: async (query) => (stub && user !== undefined ? unwrap(stub.recall(row.scope_id, user, query)) : []),
+    };
+  }
+
+  private memoryStub(row: ThreadRow, user: string) {
+    return remote<MemoryDurableObject>(this.env.KARMI_MEMORY, keys.memory(row.scope_id, user));
+  }
+
+  /** The Memory Fragment of this Turn, or undefined on a user-less Thread or without a `memory` block. */
+  private async memoryFragment(row: ThreadRow, spec: AgentSpec): Promise<string | undefined> {
+    if (this.memory?.turn !== row.turn)
+      this.memory = { turn: row.turn, text: await this.loadMemoryFragment(row, spec) };
+    return this.memory.text;
+  }
+
+  private async loadMemoryFragment(row: ThreadRow, spec: AgentSpec): Promise<string | undefined> {
+    if (!spec.memory || row.user_id === null) return undefined;
+    const notes = notesEnabled(spec.memory);
+    const view = await unwrap(
+      this.memoryStub(row, row.user_id).get(row.scope_id, row.user_id, notes ? MEMORY_FRAGMENT_NOTES : 0),
+    );
+    return renderMemory(view, notes);
+  }
+
   private logger(row: ThreadRow): Logger {
     return bindLogger(this.deployment.logger, {
       scope: row.scope_id,
@@ -2132,6 +2176,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const tools = toolDefinitions(available);
     const calls = this.providerToolCounts(row.turn, snapshot.providerTools?.limits);
     const providerTools = offeredProviderTools(snapshot.providerTools, snapshot.policy, calls);
+    const memory = await this.memoryFragment(row, spec);
     const system = await evaluatePrompt(
       spec,
       this.deployment.catalogue,
@@ -2145,6 +2190,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           description: skill.description,
           invokableBy,
         })),
+        ...(memory !== undefined && { memory }),
       },
     );
     const messages = await this.replayMessages(row, events, profile, model);

@@ -20,6 +20,7 @@ import { renderTruncated, truncateOutput } from "./spill";
 import type { ApprovalAnswer, ApprovalSource, PauseReason, ThreadEvent, ThreadEventData } from "./thread-events";
 import {
   DEFAULT_ANNOTATIONS,
+  errorResult,
   type Connection,
   type Tool,
   type ToolAnnotations,
@@ -201,8 +202,8 @@ async function runCall(
   const entry = host.available.get(call.name);
   const annotations = entry?.tool.annotations ?? DEFAULT_ANNOTATIONS;
   const finish = finisher(host, call, started?.input ?? call.input, annotations, signal);
-  if (!entry) return finish(started?.seq, error(`Unknown tool "${call.name}".`));
-  if (!inContext(entry, host.loaded)) return finish(started?.seq, error(notLoaded(entry)));
+  if (!entry) return finish(started?.seq, errorResult(`Unknown tool "${call.name}".`));
+  if (!inContext(entry, host.loaded)) return finish(started?.seq, errorResult(notLoaded(entry)));
 
   // A Job's outcome is the call's result, whatever the Tool's annotations say about re-running it.
   const job = prior.jobs.get(call.id);
@@ -211,13 +212,14 @@ async function runCall(
   // A call parked for a Connection never reached the server: an allow retries it once, anything else refuses it.
   const approval = prior.approvals.get(call.id);
   if (started && approval?.kind === "connect") {
-    if (approval.answer?.decision !== "allow") return finish(started.seq, error(notGranted(call, approval.answer)));
+    if (approval.answer?.decision !== "allow")
+      return finish(started.seq, errorResult(notGranted(call, approval.answer)));
     return execute(host, call, entry, started.input, started.seq, signal, finish, true);
   }
 
   // A re-run may repeat only work that is safe to repeat. Any other started call gets an interrupted result.
   if (started && !(annotations.readOnlyHint || annotations.idempotentHint)) {
-    return finish(started.seq, error(INTERRUPTED_TEXT), { interrupted: { attempt: host.attempt } });
+    return finish(started.seq, errorResult(INTERRUPTED_TEXT), { interrupted: { attempt: host.attempt } });
   }
 
   let input = started?.input ?? call.input;
@@ -269,7 +271,10 @@ function finisher(
 
 async function finishJob(host: ToolStepHost, tool: Tool, seq: number, outcome: JobOutcome, finish: Finish) {
   if (outcome.type !== "job.completed")
-    return finish(seq, error(outcome.type === "job.failed" ? `Job failed: ${outcome.message}` : "Job cancelled."));
+    return finish(
+      seq,
+      errorResult(outcome.type === "job.failed" ? `Job failed: ${outcome.message}` : "Job cancelled."),
+    );
   const spilled = await spill(host, tool, seq, outcome.result);
   return finish(seq, spilled.result, spilled.output ? { output: spilled.output } : {});
 }
@@ -286,7 +291,7 @@ async function admit(
   input: unknown,
   signal: AbortSignal,
 ): Promise<{ ok: true; input: unknown } | { ok: false; result: ToolResult }> {
-  const refuse = (text: string) => ({ ok: false as const, result: error(text) });
+  const refuse = (text: string) => ({ ok: false as const, result: errorResult(text) });
   if (entry.effect === "deny") return refuse(`Tool "${call.name}" is denied by the Permission Policy.`);
   if (answer?.decision === "deny") {
     const why = answer.reason ? `: ${answer.reason}` : answer.source === "timeout" ? ": the approval timed out." : ".";
@@ -314,11 +319,11 @@ async function execute(
   const parsed = z.safeParse(tool.input, input);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`);
-    return finish(seq, error(`Invalid input for "${call.name}": ${issues.join("; ")}`));
+    return finish(seq, errorResult(`Invalid input for "${call.name}": ${issues.join("; ")}`));
   }
   const connection = await resolveConnection(host, tool);
   signal.throwIfAborted();
-  if (!connection.ok) return finish(seq, error(connection.message));
+  if (!connection.ok) return finish(seq, errorResult(connection.message));
 
   const ctx: ToolContext<unknown> = {
     scope: host.scope,
@@ -343,7 +348,7 @@ async function execute(
   try {
     const outcome = normalize(await executeOutcome(host, call, parsed.data, ctx, tool));
     if ("pending" in outcome) {
-      if (host.parentCallId) return finish(seq, error("Scripts cannot wait for Jobs."));
+      if (host.parentCallId) return finish(seq, errorResult("Scripts cannot wait for Jobs."));
       host.append({ type: "job.started", id: call.id, jobId: outcome.pending });
       return "pending";
     }
@@ -351,11 +356,11 @@ async function execute(
   } catch (caught) {
     if (isPlatformFailure(caught)) throw caught;
     if (caught instanceof McpConnectRequired) {
-      if (retry || host.parentCallId) return finish(seq, error(notGranted(call)));
+      if (retry || host.parentCallId) return finish(seq, errorResult(notGranted(call)));
       const started = await host.connect(call, caught.request);
       if (started.ok) return "connect";
-      result = error(started.message);
-    } else result = error(errorMessage(caught));
+      result = errorResult(started.message);
+    } else result = errorResult(errorMessage(caught));
   }
   host.captureResult?.(result);
   const spilled = await spill(host, tool, seq, result);
@@ -367,7 +372,6 @@ const notLoaded = ({ tool, skill }: AvailableTool): string =>
   skill === undefined
     ? `Tool "${tool.name}" is not loaded. Load it with tool_search (select:${tool.name}) before calling it.`
     : `Tool "${tool.name}" belongs to the skill "${skill}", which is not active. Activate it with use_skill first.`;
-const error = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
 const notGranted = (call: ToolCall, answer?: CallApproval["answer"]): string =>
   `Tool "${call.name}": connection not granted${answer?.source === "timeout" ? " (the request timed out)" : answer?.reason ? ` (${answer.reason})` : ""}.`;
 
@@ -501,7 +505,7 @@ async function spill(
 
 async function executeScript(host: ToolStepHost, code: string, ctx: ToolContext<unknown>): Promise<ToolResult> {
   const execution = host.scripts;
-  if (!execution) return error("Scripts are unavailable.");
+  if (!execution) return errorResult("Scripts are unavailable.");
   const available = scriptTools(host.spec, host.available, host.user);
   const startedAt = host.now();
   const result = await execution.sandbox.run({

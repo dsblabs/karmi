@@ -6,6 +6,8 @@ export interface KarmiBindings {
   KARMI_THREADS: DurableObjectNamespace;
   /** The Durable Object namespace that hosts Scope configuration. */
   KARMI_SCOPES: DurableObjectNamespace;
+  /** The Durable Object namespace that hosts per-User Memory. */
+  KARMI_MEMORY: DurableObjectNamespace;
   /** The R2 bucket for media and spilled Tool output. */
   KARMI_MEDIA?: R2Bucket;
   /** The queue that carries Deliverer work. */
@@ -23,6 +25,7 @@ export interface KarmiBindings {
 const BINDING_NAMES = [
   "KARMI_THREADS",
   "KARMI_SCOPES",
+  "KARMI_MEMORY",
   "KARMI_MEDIA",
   "KARMI_QUEUE",
   "KARMI_LOADER",
@@ -30,7 +33,7 @@ const BINDING_NAMES = [
   "KARMI_AI",
   "KARMI_KEYRING",
 ] as const;
-const REQUIRED = ["KARMI_THREADS", "KARMI_SCOPES"] as const;
+const REQUIRED = ["KARMI_THREADS", "KARMI_SCOPES", "KARMI_MEMORY"] as const;
 
 /**
  * A function that maps a Worker's own `env` onto karmi's binding names, for a Worker that cannot use the fixed
