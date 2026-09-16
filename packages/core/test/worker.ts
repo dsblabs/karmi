@@ -1,3 +1,4 @@
+import { interruptedRetriever } from "./knowledge-fixtures";
 import { z } from "zod";
 import {
   defineDeliverer,
@@ -659,12 +660,26 @@ export const serverProvider = fakeProvider(["OK"]);
 
 export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
   {
+    retrievers: [interruptedRetriever],
     deliverers: [
       receipt,
       defineDeliverer({ name: "receipt-parts", deliver: receipt.deliver }),
       defineDeliverer({ name: "receipt-deltas", granularity: "delta", deliver: receipt.deliver }),
     ],
     tools: [
+      defineTool({
+        name: "ingest_documents",
+        description: "Imports a corpus as a durable Job.",
+        input: z.object({ name: z.string() }),
+        async execute({ name }, ctx) {
+          const thread = scope.thread({ agent: "knowledge-importer", threadId: ctx.thread.id });
+          const result = await scope.knowledge(name).ingest(
+            Array.from({ length: 40 }, (_, i) => ({ id: `row${i}`, text: `Record ${i}` })),
+            { jobId: ctx.callId, threadKey: thread.key },
+          );
+          return "pending" in result ? result : `Indexed ${result.indexed} documents.`;
+        },
+      }),
       weather,
       lookup,
       book,
@@ -752,7 +767,7 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
   },
 );
 
-export const { ThreadDO, ScopeConfigDO, MemoryDO } = karmi.durableObjects;
+export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;
 
 export default {
   fetch(request: Request): Response {

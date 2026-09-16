@@ -41,6 +41,7 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS provider_credentials (name TEXT PRIMARY KEY, version INTEGER NOT NULL, kek TEXT, dek TEXT, ciphertext TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, revoked_at INTEGER);
   CREATE TABLE IF NOT EXISTS mcp_catalog (server_id TEXT NOT NULL, partition TEXT NOT NULL, catalog_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (server_id, partition));
   CREATE TABLE IF NOT EXISTS user_connections (user_id TEXT NOT NULL, name TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (user_id, name));
+  CREATE TABLE IF NOT EXISTS knowledge_names (name TEXT PRIMARY KEY);
   CREATE TABLE IF NOT EXISTS memory_users (user_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
 `;
 
@@ -661,6 +662,34 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         .map((row) => ({ name: row.name, updatedAt: row.updated_at })),
       ...listGrants(this.sql, mcpHolder("user", undefined, user) ?? "user:"),
     ]);
+  }
+
+  /** Lists the Knowledge corpora in this Scope. */
+  knowledgeList(scope: ScopeId): Outcome<string[]> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    return ok(
+      this.sql
+        .exec<{ name: string }>("SELECT name FROM knowledge_names ORDER BY name")
+        .toArray()
+        .map((row) => row.name),
+    );
+  }
+
+  /** Registers a corpus before its first durable write. */
+  knowledgeAdd(scope: ScopeId, name: string): Outcome<void> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    this.sql.exec("INSERT OR IGNORE INTO knowledge_names VALUES (?)", name);
+    return ok(undefined);
+  }
+
+  /** Removes an emptied corpus from the Scope index. */
+  knowledgeRemove(scope: ScopeId, name: string): Outcome<void> {
+    const head = this.enter(scope, false);
+    if (!head.ok) return head;
+    this.sql.exec("DELETE FROM knowledge_names WHERE name = ?", name);
+    return ok(undefined);
   }
 
   /** The Users with a Memory in this Scope, in id order. */

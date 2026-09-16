@@ -16,8 +16,10 @@ export type PromptEntry =
 export type ToolReference = string | { name: string; settings?: Record<string, unknown>; alwaysLoad?: boolean };
 /** A Skill reference in a Spec: a name alone, or a name with settings and an `invokableBy` override. */
 export type SkillReference = string | { name: string; settings?: Record<string, unknown>; invokableBy?: SkillInvoker };
-/** A Knowledge reference in a Spec: a name alone, or a name with a Retriever and a `tool` or `inline` mode. */
-export type KnowledgeReference = string | { name: string; retriever?: string; mode?: "tool" | "inline" };
+/** A Knowledge reference in a Spec: a name alone, or a name with a Retriever and a `search` or `inline` mode. */
+export type KnowledgeReference =
+  | string
+  | { name: string; retriever?: string; settings?: Record<string, unknown>; mode?: "search" | "tool" | "inline" };
 
 /**
  * One rule of a Permission Policy. Rules are evaluated in order, the first matching rule decides, and no

@@ -1,3 +1,4 @@
+import { KNOWLEDGE_NAME, KNOWLEDGE_NAME_MESSAGE } from "./names";
 import * as z from "zod/mini";
 import { AGENT_SPEC_DEFAULTS, AgentSpecSchema, type NormalizedAgentSpec } from "./agent-spec";
 import type { AgentSpec, Capabilities, MemoryProfileProperty } from "./agent";
@@ -296,7 +297,16 @@ class ReferenceChecker {
     (this.spec.knowledge ?? []).forEach((ref, i) => {
       const path = `/knowledge/${i}`;
       if (this.rejectDuplicate(seen, ref.name, path)) return;
-      if (ref.retriever !== undefined && !this.catalogue.retrievers.has(ref.retriever)) {
+      if (!KNOWLEDGE_NAME.test(ref.name)) this.issues.error("shape.invalid", `${path}/name`, KNOWLEDGE_NAME_MESSAGE);
+      const retriever = ref.retriever ? this.catalogue.retrievers.get(ref.retriever) : undefined;
+      this.validateAgainstItemSchema(
+        "settings",
+        retriever?.settings,
+        ref.settings,
+        `${path}/settings`,
+        `Knowledge "${ref.name}"`,
+      );
+      if (ref.retriever !== undefined && ref.retriever !== "fts5" && !this.catalogue.retrievers.has(ref.retriever)) {
         this.issues.error("ref.retriever.unknown", `${path}/retriever`, `Unknown Retriever "${ref.retriever}".`, {
           name: ref.retriever,
         });
@@ -386,6 +396,7 @@ class ReferenceChecker {
       "tool_search",
     ]);
     if (this.spec.memory !== undefined) for (const name of ["remember", "recall"]) granted.add(name);
+    for (const ref of this.spec.knowledge ?? []) if (ref.mode !== "inline") granted.add(`search_${ref.name}`);
     if ((this.spec.skills ?? []).length > 0) granted.add("use_skill");
     if (capabilities.scripts) granted.add("run_script");
     if (capabilities.delegation) granted.add("delegate");

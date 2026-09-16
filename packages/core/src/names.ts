@@ -30,7 +30,7 @@ export function assertName(kind: CatalogueKind, name: string): void {
   if (!NAME.test(name)) {
     throw new KarmiError("name.invalid", `${kind} name "${name}" must match [a-z0-9_-]{1,64}.`);
   }
-  if (kind === "tool" && BUILT_IN_TOOL_NAMES.includes(name)) {
+  if (kind === "tool" && (BUILT_IN_TOOL_NAMES.includes(name) || name.startsWith("search_"))) {
     throw new KarmiError("name.reserved", `tool name "${name}" is reserved for a built-in Tool.`);
   }
 }
@@ -59,3 +59,8 @@ export function deepFreeze<T>(value: T): T {
   }
   return value;
 }
+
+/** The name pattern for Knowledge corpora, leaving room for the search Tool prefix. */
+export const KNOWLEDGE_NAME = /^[A-Za-z0-9_-]{1,57}$/;
+/** The explanation used when a Knowledge name is invalid. */
+export const KNOWLEDGE_NAME_MESSAGE = "Knowledge names must match [A-Za-z0-9_-]{1,57}.";

@@ -60,7 +60,7 @@ export interface KarmiOptions<Env = unknown> {
 export interface Karmi {
   /** Mints and verifies presigned media URLs. */
   readonly media: ReturnType<typeof mediaUrls>;
-  /** The three Durable Object classes the Worker re-exports by name. */
+  /** The Durable Object classes the Worker re-exports by name. */
   readonly durableObjects: DurableObjects;
   readonly catalogue: Catalogue;
   /** The queue consumer that runs Deliverers and the UsageHandler. Export it as the Worker's `queue` handler. */
