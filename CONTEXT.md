@@ -60,6 +60,10 @@ _Avoid_: middleware, plugin, interceptor, callback
 The isolation key every Primitive and all secrets/config resolve under, identified by an opaque string the Platform mints and the Framework never interprets. Nothing in one Scope can see another; the Framework offers no cross-Scope operation. A Scope is active, suspended, destroying or destroyed; suspension is reversible, while destruction permanently reserves its identity. The Platform decides what a Scope represents (a tenant, a user, a workspace) and keeps the list of them.
 _Avoid_: tenant, organisation, account, workspace
 
+**Destroy walk**:
+The maintenance job `scope.destroy()` leaves behind. The tombstone is written at once, and the walk then runs on the ScopeConfig alarm in idempotent batches — external credential revocations, Threads (Delegation children included), Memories, Knowledge corpora with their Retriever mirrors, the `{scope}/` R2 prefix, and last the Scope's own tables — until only the tombstone and the operation row are left. `scope.destroyStatus(operationId)` reports the phase, the counts and whatever a Secrets provider karmi does not own was asked to revoke.
+_Avoid_: cleanup job, garbage collection, purge
+
 **Deployment**:
 One installation of the Framework — a Worker with its Catalogue and deployment-wide defaults (providers, ceilings, policy) that every Scope inherits and may only tighten.
 _Avoid_: environment, instance, app

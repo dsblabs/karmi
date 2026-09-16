@@ -41,6 +41,7 @@ export type {
   ScopeState,
   ScopeStatus,
 } from "./scope-config-do";
+export type { DestroyPhase, DestroyProgress, ExternalCleanup } from "./scope-destroy";
 
 /**
  * The handle to one Scope. Every API takes a Scope handle as an argument and nothing reads one from global

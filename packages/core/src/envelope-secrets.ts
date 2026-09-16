@@ -4,6 +4,7 @@ import { keys } from "./keys";
 import { remote, unwrap } from "./outcome";
 import type { ScopeConfigDurableObject, StoredCredential } from "./scope-config-do";
 import {
+  markInternalStore,
   parseCredentialRef,
   sensitive,
   type CredentialInfo,
@@ -28,7 +29,7 @@ export interface EnvelopeSecretsOptions {
 
 /** The default Secrets provider, which stores Scope credentials envelope-encrypted under `KARMI_KEYRING`. */
 export function envelopeSecrets(options: EnvelopeSecretsOptions): SecretsProvider {
-  return new EnvelopeStore(options);
+  return markInternalStore(new EnvelopeStore(options));
 }
 
 /**

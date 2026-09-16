@@ -57,6 +57,22 @@ export interface SecretsProvider {
   list?(scope: ScopeId): Promise<(CredentialInfo & { name: string })[]>;
 }
 
+const internalStores = new WeakSet<SecretsProvider>();
+
+/**
+ * Marks `store` as the one karmi ships, whose credential rows live in the Scope's own Durable Object and go
+ * with the Scope when it is destroyed. It returns `store`.
+ */
+export function markInternalStore<T extends SecretsProvider>(store: T): T {
+  internalStores.add(store);
+  return store;
+}
+
+/** Whether `store` is the Secrets provider karmi ships rather than one the Platform supplied. */
+export function isInternalStore(store: SecretsProvider): boolean {
+  return internalStores.has(store);
+}
+
 /** Node's custom-inspect symbol, which the Workers `console` honours too. */
 export const INSPECT: unique symbol = Symbol.for("nodejs.util.inspect.custom");
 const REDACTED = "[SensitiveValue]";
@@ -149,7 +165,7 @@ export function layerDeploymentCredentials(
   // The methods are delegated one by one because a spread would drop the prototype methods of a
   // class-based store.
   const { put, revoke, rewrap, list } = store;
-  return {
+  const layered: SecretsProvider = {
     resolve: async (ref) => {
       const value = fromDeployment(ref);
       return value ? { ...info, value } : store.resolve(ref);
@@ -160,6 +176,7 @@ export function layerDeploymentCredentials(
     ...(rewrap && { rewrap: (scope) => rewrap.call(store, scope) }),
     ...(list && { list: (scope) => list.call(store, scope) }),
   };
+  return isInternalStore(store) ? markInternalStore(layered) : layered;
 }
 
 /** The values a model call is authenticated with, resolved from a Provider profile just before the call. */
