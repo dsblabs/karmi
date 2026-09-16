@@ -161,6 +161,9 @@ export type {
   AgentSummary,
   AgentVersion,
   DestroyStatus,
+  DestroyPhase,
+  DestroyProgress,
+  ExternalCleanup,
 } from "./scope";
 export type {
   Thread,

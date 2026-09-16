@@ -191,7 +191,11 @@ describe("scope lifecycle", () => {
     const { operationId } = await scope.destroy();
     expect(operationId).toEqual(expect.any(String));
     expect((await scope.status()).state).toBe("destroying");
-    expect(await scope.destroyStatus(operationId)).toEqual({ operationId, state: "destroying" });
+    expect(await scope.destroyStatus(operationId)).toMatchObject({
+      operationId,
+      state: "destroying",
+      progress: { threads: 0, memory: 0, knowledge: 0, objects: 0 },
+    });
     const destroyed = new KarmiError("scope.destroyed", `Scope "${scope.id}" has been destroyed.`);
     await expect(scope.config.get()).rejects.toThrowError(destroyed);
     await expect(scope.agents.get("concierge")).rejects.toThrowError(destroyed);

@@ -1,4 +1,4 @@
-import { ScheduledDurableObject } from "./scheduler";
+import { ScheduledDurableObject, type ScheduledJob } from "./scheduler";
 import type { NormalizedAgentSpec } from "./agent-spec";
 import type { AgentSpec } from "./agent";
 import type { KarmiBindings } from "./bindings";
@@ -18,6 +18,14 @@ import {
 } from "./mcp-oauth";
 import { isHolder, listGrants, OAUTH_SCHEMA, readPending, SqlGrantStore } from "./mcp-oauth-store";
 import { parseScopeConfig, resolveScopeConfig, type McpServerConfig, type ScopeConfigDocument } from "./scope-config";
+import {
+  decodeCursor,
+  destroyStep,
+  startCursor,
+  TOMBSTONE_TABLES,
+  type DestroyProgress,
+  type ExternalCleanup,
+} from "./scope-destroy";
 import { matchesHost, scopedFetch } from "./scoped-fetch";
 import type { CredentialInfo } from "./secrets";
 import { encodeKey, type ThreadIdentity, type ThreadSummary } from "./thread";
@@ -44,6 +52,9 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS knowledge_names (name TEXT PRIMARY KEY);
   CREATE TABLE IF NOT EXISTS memory_users (user_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
 `;
+
+/** The id of the single maintenance job a destroy walk re-arms until the Scope is empty. */
+const DESTROY_JOB = "scope-maintenance";
 
 /** The number of versions kept per Agent. A put drops older ones. */
 export const AGENT_HISTORY_DEPTH = 20;
@@ -91,7 +102,12 @@ export interface ScopeStatus {
 /** The progress of one destroy operation. */
 export interface DestroyStatus {
   operationId: string;
+  /** Whether the maintenance walk is still running or the Scope is empty. */
   state: "destroying" | "destroyed";
+  /** What the walk is deleting now and how much of the Scope it has removed. */
+  progress: DestroyProgress;
+  /** What was asked of a Secrets provider karmi does not own, absent when it owns the Scope's credentials. */
+  externalCleanup?: ExternalCleanup;
 }
 
 /**
@@ -1102,19 +1118,54 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         now,
       );
       this.sql.exec(
-        "INSERT INTO destroy_operations (operation_id, state, started_at, updated_at) VALUES (?, 'destroying', ?, ?)",
+        "INSERT INTO destroy_operations (operation_id, state, started_at, updated_at, cursor_json) VALUES (?, 'destroying', ?, ?, ?)",
         operationId,
         now,
         now,
+        JSON.stringify(startCursor()),
       );
-      this.sql.exec("DELETE FROM provider_credentials");
-      this.sql.exec("DELETE FROM mcp_catalog");
-      this.sql.exec("DELETE FROM mcp_grants");
-      this.sql.exec("DELETE FROM mcp_clients");
-      this.sql.exec("DELETE FROM mcp_oauth_state");
-      this.sql.exec("DELETE FROM user_connections");
+      for (const table of TOMBSTONE_TABLES) this.sql.exec(`DELETE FROM ${table}`);
     });
+    this.scheduleWalk(scope, operationId);
     return ok({ operationId });
+  }
+
+  // The walk runs on this object's alarm, one batch per firing, and re-arms itself until the Scope is empty.
+  private scheduleWalk(scope: ScopeId, operationId: string): void {
+    this.scheduler.set({
+      id: DESTROY_JOB,
+      kind: "scope-maintenance",
+      dueAt: this.deployment.clock.now(),
+      payload: { scope, operationId },
+    });
+  }
+
+  protected override async runJob(job: ScheduledJob): Promise<void> {
+    if (job.kind !== "scope-maintenance") return super.runJob(job);
+    // This object is the only producer of the payload, so its shape is known once the kind is.
+    const { scope, operationId } = job.payload as { scope: ScopeId; operationId: string };
+    const row = this.sql
+      .exec<{ state: DestroyStatus["state"]; cursor_json: string | null }>(
+        "SELECT state, cursor_json FROM destroy_operations WHERE operation_id = ?",
+        operationId,
+      )
+      .toArray()[0];
+    // A late alarm for an operation that has already finished has nothing left to delete.
+    if (!row || row.state === "destroyed") return;
+    const cursor = await destroyStep(
+      { scope, deployment: this.deployment, bindings: this.env, sql: this.sql, attempt: job.attempt },
+      decodeCursor(row.cursor_json),
+    );
+    const done = cursor.progress.phase === "done";
+    this.sql.exec(
+      "UPDATE destroy_operations SET cursor_json = ?, state = ?, updated_at = ? WHERE operation_id = ?",
+      JSON.stringify(cursor),
+      done ? "destroyed" : "destroying",
+      this.deployment.clock.now(),
+      operationId,
+    );
+    if (done) this.setState("destroyed");
+    else this.scheduleWalk(scope, operationId);
   }
 
   /** The state of the destroy operation `operationId`. Throws `destroy.notFound` when there is none. */
@@ -1122,13 +1173,14 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;
     const row = this.sql
-      .exec<{ state: DestroyStatus["state"] }>(
-        "SELECT state FROM destroy_operations WHERE operation_id = ?",
+      .exec<{ state: DestroyStatus["state"]; cursor_json: string | null }>(
+        "SELECT state, cursor_json FROM destroy_operations WHERE operation_id = ?",
         operationId,
       )
       .toArray()[0];
     if (!row)
       return fail(new KarmiError("destroy.notFound", `No destroy operation "${operationId}" in Scope "${scope}".`));
-    return ok({ operationId, state: row.state });
+    const { progress, external } = decodeCursor(row.cursor_json);
+    return ok({ operationId, state: row.state, progress, ...(external && { externalCleanup: external }) });
   }
 }

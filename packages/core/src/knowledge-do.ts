@@ -50,10 +50,12 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
     return remote<ScopeConfigDurableObject>(this.env.KARMI_SCOPES, keys.config(scope));
   }
 
-  private async enter(scope: string, name: string): Promise<Head | undefined> {
+  // `tombstoned` is set by a Scope destroy walk, which runs inside the ScopeConfig Durable Object and has
+  // already tombstoned the Scope, so this object neither asks it for a status nor refuses the call.
+  private async enter(scope: string, name: string, tombstoned = false): Promise<Head | undefined> {
     keys.knowledge(scope, name);
-    const status = await unwrap(this.config(scope).status(scope));
-    if (status.state === "destroying" || status.state === "destroyed")
+    const status = tombstoned ? undefined : await unwrap(this.config(scope).status(scope));
+    if (status && (status.state === "destroying" || status.state === "destroyed"))
       throw new KarmiError("scope.destroyed", `Scope "${scope}" has been destroyed.`);
     const head = this.sql.exec<Head>("SELECT * FROM knowledge_head").toArray()[0];
     if (head && (head.scope !== scope || head.name !== name))
@@ -312,11 +314,16 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
     });
   }
 
-  /** Clears the Retriever mirror before dropping the ledger and Scope index entry. */
-  destroy(scope: string, name: string) {
+  /**
+   * Clears the Retriever mirror before dropping the ledger and the Scope index entry. `during` marks a call
+   * from a Scope destroy walk, which owns the index entry itself and abandons a pending ingest rather than
+   * refusing.
+   */
+  destroy(scope: string, name: string, during?: "scope-destroy") {
+    const destroying = during === "scope-destroy";
     return this.boundary(async () => {
-      const head = await this.enter(scope, name);
-      this.assertIdle(true);
+      const head = await this.enter(scope, name, destroying);
+      if (!destroying) this.assertIdle(true);
       if (head) {
         const options = decodeOptions(head.options);
         const retriever = this.retriever(options.retriever);
@@ -337,7 +344,7 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
         await retriever.destroy?.(context);
       }
       this.store.clear();
-      await unwrap(this.config(scope).knowledgeRemove(scope, name));
+      if (!destroying) await unwrap(this.config(scope).knowledgeRemove(scope, name));
       await this.ctx.storage.deleteAlarm();
     });
   }

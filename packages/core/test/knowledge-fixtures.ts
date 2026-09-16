@@ -39,6 +39,9 @@ export const interruptedRetriever = defineRetriever({
   },
 });
 
+/** Whether the interrupted Retriever still mirrors a corpus, which a destroy must clear. */
+export const mirrored = (scope: string, name: string): boolean => mirrors.has(`${scope}/${name}`);
+
 /** A deterministic embedding provider for semantic retrieval tests. */
 export const semanticEmbedder: import("../src/index").Embedder = {
   model: "test/semantic",
