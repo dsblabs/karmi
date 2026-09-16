@@ -1,7 +1,7 @@
+import { parse as parseJsonc, printParseErrorCode, type ParseError } from "jsonc-parser";
 import * as z from "zod/mini";
 import { AgentSpecSchema, AGENT_SPEC_DEFAULTS, type NormalizedAgentSpec } from "./agent-spec";
 import { KARMI_BINDING_NAMES } from "./bindings";
-import type { CatalogueDescription } from "./catalogue";
 import { COMPATIBILITY_DATE_FLOOR } from "./compat";
 import { KarmiError } from "./errors";
 import { OAUTH_CALLBACK_PATH, preRegistrationForUrl } from "./mcp-auth";
@@ -20,6 +20,7 @@ export type CheckStatus = "pass" | "warn" | "fail" | "skip";
 export interface Finding {
   /** The check's stable name, such as `compatibility` or `bindings`. */
   check: string;
+  /** Whether this finding blocks a deploy, warns, confirms, or records that the check had no input. */
   status: CheckStatus;
   /** One sentence naming what is wrong and what to do about it. */
   message: string;
@@ -61,8 +62,18 @@ const WranglerSchema = z.object({
 /** A wrangler configuration, as far as the doctor checks read it. */
 export type WranglerConfig = z.infer<typeof WranglerSchema>;
 
-/** Reads a parsed `wrangler.jsonc` document. Throws `config.invalid` when a field karmi reads is malformed. */
-export function decodeWranglerConfig(value: unknown): WranglerConfig {
+/**
+ * Reads the text of a `wrangler.jsonc` or `wrangler.json`. Comments and trailing commas are allowed.
+ * Throws `config.invalid` when the text is not JSON or a field karmi reads is malformed.
+ */
+export function decodeWranglerConfig(source: string): WranglerConfig {
+  const errors: ParseError[] = [];
+  const value: unknown = parseJsonc(source, errors, { allowTrailingComma: true });
+  if (errors.length > 0)
+    throw new KarmiError(
+      "config.invalid",
+      `The wrangler config is not JSON: ${errors.map((issue) => printParseErrorCode(issue.error)).join(", ")}.`,
+    );
   const result = z.safeParse(WranglerSchema, value);
   if (result.success) return result.data;
   const issue = firstIssue(result.error);
@@ -72,9 +83,24 @@ export function decodeWranglerConfig(value: unknown): WranglerConfig {
   );
 }
 
+const named = z.array(z.object({ name: z.string() }));
+// Only the parts of `catalogue.describe()` that reference resolution needs. The rest of the document is
+// accepted and dropped.
 const ManifestSchema = z.object({
-  catalogue: z.optional(z.unknown()),
+  /** `karmi.catalogue.describe()`, which Agent Spec references are resolved against. */
+  catalogue: z.optional(
+    z.object({
+      tools: z.optional(named),
+      fragments: z.optional(named),
+      skills: z.optional(z.array(z.object({ name: z.string(), tools: z.optional(z.array(z.string())) }))),
+      retrievers: z.optional(named),
+      hooks: z.optional(named),
+      agents: z.optional(z.array(z.object({ agentId: z.string() }))),
+    }),
+  ),
+  /** The Agent Specs to check, keyed by where each one came from. */
   specs: z.optional(z.record(z.string(), z.unknown())),
+  /** `createKarmi({ defaults })`, which the gateway and MCP checks read. */
   defaults: z.optional(
     z.object({
       providers: z.optional(z.record(z.string(), z.object({ gateway: z.optional(z.unknown()) }))),
@@ -85,31 +111,22 @@ const ManifestSchema = z.object({
       ),
     }),
   ),
+  /** `createKarmi({ oauth }).origin`, so the MCP checklist can print the exact callback URL. */
   origin: z.optional(z.string()),
 });
 
 /**
  * What a Deployment defines in code, for the checks a wrangler config cannot answer. Every field is
- * optional, and a check whose input is absent reports `skip`.
+ * optional, and a check whose input is absent reports `skip` rather than failing.
  */
-export interface DoctorManifest {
-  /** `karmi.catalogue.describe()`, which the Agent Spec references are resolved against. */
-  catalogue?: CatalogueDescription;
-  /** The Agent Specs to check, keyed by where they came from. */
-  specs?: Record<string, unknown>;
-  /** `createKarmi({ defaults })`, which the gateway and MCP checks read. */
-  defaults?: {
-    providers?: Record<string, { gateway?: unknown }>;
-    mcp?: { servers?: Record<string, { url: string; auth?: unknown }> };
-  };
-  /** `createKarmi({ oauth }).origin`, so the MCP checklist can print the exact callback URL. */
-  origin?: string;
-}
+export type DoctorManifest = z.infer<typeof ManifestSchema>;
+/** The Catalogue as a manifest carries it: the names each kind defines. */
+type DoctorCatalogue = NonNullable<DoctorManifest["catalogue"]>;
 
 /** Reads a doctor manifest document. Throws `config.invalid` when it is malformed. */
 export function decodeDoctorManifest(value: unknown): DoctorManifest {
   const result = z.safeParse(ManifestSchema, value);
-  if (result.success) return result.data as DoctorManifest;
+  if (result.success) return result.data;
   const issue = firstIssue(result.error);
   throw new KarmiError(
     "config.invalid",
@@ -123,6 +140,7 @@ export interface DoctorInput {
   config: WranglerConfig;
   /** The source of the Worker entry module named by `main`. Absent skips the Durable Object re-export check. */
   entry?: string;
+  /** What the Deployment defines in code. Absent skips the gateway, MCP and Agent Spec checks. */
   manifest?: DoctorManifest;
   /** Cloudflare API credentials. Absent skips the Vectorize check. */
   cloudflare?: { accountId: string; apiToken: string };
@@ -219,12 +237,12 @@ export function exportedNames(source: string): Set<string> {
  * migrated as a SQLite class.
  */
 export function checkDurableObjects(config: WranglerConfig, entry: string | undefined): Finding[] {
-  const classes = (config.durable_objects?.bindings ?? []).map((binding) => binding.class_name);
-  if (classes.length === 0) return [skip("durable-objects", "The config binds no Durable Object classes.")];
+  const classes = new Set((config.durable_objects?.bindings ?? []).map((binding) => binding.class_name));
+  if (classes.size === 0) return [skip("durable-objects", "The config binds no Durable Object classes.")];
   const findings: Finding[] = [];
   const sqlite = new Set((config.migrations ?? []).flatMap((migration) => migration.new_sqlite_classes ?? []));
   const plain = new Set((config.migrations ?? []).flatMap((migration) => migration.new_classes ?? []));
-  for (const name of new Set(classes)) {
+  for (const name of classes) {
     if (plain.has(name))
       findings.push(fail("durable-objects", `${name} is migrated with new_classes; karmi needs new_sqlite_classes.`));
     else if (!sqlite.has(name))
@@ -236,7 +254,7 @@ export function checkDurableObjects(config: WranglerConfig, entry: string | unde
     );
   else {
     const exported = exportedNames(entry);
-    for (const name of new Set(classes))
+    for (const name of classes)
       if (!exported.has(name))
         findings.push(
           fail("durable-objects", `${config.main} does not export ${name}; re-export it from karmi.durableObjects.`),
@@ -296,8 +314,13 @@ export async function checkVectorize(input: DoctorInput): Promise<Finding[]> {
 export function checkGatewayDefer(manifest: DoctorManifest | undefined): Finding[] {
   const profiles = Object.entries(manifest?.defaults?.providers ?? {}).filter(([, config]) => config.gateway);
   const specs = manifest?.specs;
-  if (!specs || !manifest?.defaults)
-    return [skip("gateway", "No manifest, so gateways and deferral were not compared.")];
+  if (!manifest?.defaults || !specs)
+    return [
+      skip(
+        "gateway",
+        `The manifest carries no ${manifest?.defaults ? "Agent Spec" : "createKarmi defaults"}, so gateways and deferral were not compared.`,
+      ),
+    ];
   if (profiles.length === 0) return [pass("gateway", "No Provider profile runs through a gateway.")];
   const deferring = Object.entries(specs).filter(([, spec]) => defersTools(spec));
   if (deferring.length === 0) return [pass("gateway", "A gateway is configured and no Agent Spec defers its Tools.")];
@@ -374,35 +397,50 @@ export function checkSpecs(manifest: DoctorManifest | undefined): Finding[] {
   return findings;
 }
 
+/** One Catalogue item an Agent Spec names, by the kind of item it is. */
+interface SpecReference {
+  kind: "tool" | "fragment" | "skill" | "retriever" | "hook" | "agent";
+  name: string;
+}
+
 /**
- * The Catalogue items an Agent Spec names that `description` does not define, each as `<kind> "<name>"`.
- * MCP references resolve against a Scope's registry rather than the Catalogue, so they are left alone.
+ * Every Catalogue item an Agent Spec names. MCP references resolve against a Scope's registry rather than
+ * the Catalogue, so they are left out.
  */
-function danglingReferences(spec: NormalizedAgentSpec, description: CatalogueDescription): string[] {
-  const names = (items: readonly { name: string }[]) => new Set(items.map((item) => item.name));
-  const known: Record<string, Set<string>> = {
-    tool: new Set([...names(description.tools), ...BUILT_IN_TOOL_NAMES, ...description.skills.flatMap((s) => s.tools)]),
-    fragment: names(description.fragments),
-    skill: names(description.skills),
-    retriever: new Set([...names(description.retrievers), "fts5"]),
-    hook: names(description.hooks),
-    agent: new Set(description.agents.map((agent) => agent.agentId)),
-  };
-  const referenced: [string, string][] = [
+function specReferences(spec: NormalizedAgentSpec): SpecReference[] {
+  const as =
+    (kind: SpecReference["kind"]) =>
+    (name: string): SpecReference => ({ kind, name });
+  return [
     ...(spec.tools ?? [])
-      .filter((ref) => !ref.name.startsWith("mcp:"))
-      .map((ref): [string, string] => ["tool", ref.name]),
-    ...(spec.skills ?? []).map((ref): [string, string] => ["skill", ref.name]),
-    ...(spec.delegates ?? []).map((id): [string, string] => ["agent", id]),
-    ...Object.values(spec.hooks ?? {}).flatMap((list) => (list ?? []).map((n): [string, string] => ["hook", n])),
-    ...spec.instructions.flatMap((entry) =>
-      "fragment" in entry ? [["fragment", entry.fragment] as [string, string]] : [],
-    ),
-    ...(spec.knowledge ?? []).flatMap((ref) =>
-      ref.retriever === undefined ? [] : [["retriever", ref.retriever] as [string, string]],
-    ),
+      .map((ref) => ref.name)
+      .filter((name) => !name.startsWith("mcp:"))
+      .map(as("tool")),
+    ...(spec.skills ?? []).map((ref) => ref.name).map(as("skill")),
+    ...(spec.delegates ?? []).map(as("agent")),
+    ...Object.values(spec.hooks ?? {}).flatMap((names) => (names ?? []).map(as("hook"))),
+    ...spec.instructions.flatMap((entry) => ("fragment" in entry ? [entry.fragment] : [])).map(as("fragment")),
+    ...(spec.knowledge ?? [])
+      .flatMap((ref) => (ref.retriever === undefined ? [] : [ref.retriever]))
+      .map(as("retriever")),
   ];
-  return referenced.filter(([kind, name]) => !known[kind]?.has(name)).map(([kind, name]) => `${kind} "${name}"`);
+}
+
+/** The references of `spec` that `catalogue` does not define, each as `<kind> "<name>"`. */
+function danglingReferences(spec: NormalizedAgentSpec, catalogue: DoctorCatalogue): string[] {
+  const names = (items: readonly { name: string }[] = []) => new Set(items.map((item) => item.name));
+  const skills = catalogue.skills ?? [];
+  const known: Record<SpecReference["kind"], Set<string>> = {
+    tool: new Set([...names(catalogue.tools), ...BUILT_IN_TOOL_NAMES, ...skills.flatMap((skill) => skill.tools ?? [])]),
+    fragment: names(catalogue.fragments),
+    skill: names(skills),
+    retriever: new Set([...names(catalogue.retrievers), "fts5"]),
+    hook: names(catalogue.hooks),
+    agent: new Set((catalogue.agents ?? []).map((agent) => agent.agentId)),
+  };
+  return specReferences(spec)
+    .filter((ref) => !known[ref.kind].has(ref.name))
+    .map((ref) => `${ref.kind} "${ref.name}"`);
 }
 
 /** Runs every doctor check and returns the findings in check order. */

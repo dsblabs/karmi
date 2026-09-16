@@ -38,5 +38,5 @@ export default {
   queue: (batch: MessageBatch<unknown>, queueEnv: unknown, ctx: ExecutionContext) =>
     batch.queue === KARMI_QUEUE ? karmi.queueHandler(batch, queueEnv, ctx) : handleInbox(karmi, batch),
   scheduled: (event: ScheduledController, _scheduledEnv: unknown, ctx: ExecutionContext) =>
-    ctx.waitUntil(dailyBriefing(karmi, SCOPES, new Date(event.scheduledTime).toISOString().slice(0, 10))),
+    ctx.waitUntil(dailyBriefing(karmi, SCOPES, event.scheduledTime)),
 };

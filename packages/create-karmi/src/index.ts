@@ -32,7 +32,9 @@ export interface Scaffolded {
   directory: string;
   /** Every file written, relative to `directory`, in the order they were written. */
   files: string[];
+  /** The name the project was written under. */
   name: string;
+  /** The `@karmi/*` version the project depends on. */
   version: string;
 }
 
@@ -41,8 +43,9 @@ export async function ownVersion(): Promise<string> {
   const manifest: unknown = JSON.parse(
     await readFile(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
   );
-  const version =
-    typeof manifest === "object" && manifest !== null ? (manifest as { version?: unknown }).version : undefined;
+  if (typeof manifest !== "object" || manifest === null || !("version" in manifest))
+    throw new Error("create-karmi has no version of its own.");
+  const { version } = manifest;
   if (typeof version !== "string") throw new Error("create-karmi has no version of its own.");
   return version;
 }
@@ -62,10 +65,11 @@ export async function scaffold(options: ScaffoldOptions): Promise<Scaffolded> {
   const from = options.templateDir ?? fileURLToPath(new URL("../template", import.meta.url));
   const files: string[] = [];
   for (const relative of await templateFiles(from)) {
-    const target = join(directory, rename(relative));
+    const written = rename(relative);
+    const target = join(directory, written);
     await mkdir(join(target, ".."), { recursive: true });
     await writeFile(target, personalize(await readFile(join(from, relative), "utf8"), name, version));
-    files.push(rename(relative));
+    files.push(written);
   }
   return { directory, files, name, version };
 }

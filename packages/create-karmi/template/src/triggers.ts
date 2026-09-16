@@ -5,10 +5,15 @@ import type { Karmi } from "@karmi/core";
 
 /** A message on your own Queue: which Thread to drive and what to say to it. */
 export interface InboxMessage {
+  /** The Scope the Thread lives in. */
   scope: string;
+  /** The Agent that answers. */
   agent: string;
+  /** The Thread to add the Turn to. A new id starts a new Thread. */
   threadId: string;
+  /** What to say to the Agent. */
   text: string;
+  /** The User the Thread belongs to. Absent drives a user-less Thread. */
   user?: string;
 }
 
@@ -24,10 +29,11 @@ export function decodeInboxMessage(body: unknown): InboxMessage {
 const say = (text: string) => ({ kind: "message" as const, parts: [{ type: "text" as const, text }] });
 
 /**
- * Starts one briefing Turn per Scope. The Thread id is the day, so a re-run of the same day's cron adds a
- * Turn to the same Thread instead of starting another one.
+ * Starts one briefing Turn per Scope, for the day `at` falls on. The Thread id is that day, so a re-run of
+ * the same day's cron adds a Turn to the same Thread instead of starting another one.
  */
-export async function dailyBriefing(karmi: Karmi, scopes: readonly string[], day: string): Promise<void> {
+export async function dailyBriefing(karmi: Karmi, scopes: readonly string[], at: number): Promise<void> {
+  const day = new Date(at).toISOString().slice(0, 10);
   for (const id of scopes) {
     const thread = karmi.scope(id).thread({ agent: "concierge", threadId: `briefing-${day}` });
     await thread.send(say("Summarise today's arrivals."));

@@ -17,6 +17,15 @@ const USAGE = `karmi doctor [options]
 CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN enable the Vectorize check.
 Exits 1 when any check fails; warnings and skipped checks exit 0.`;
 
+/** Reads a file as text. Throws with the path in the message. */
+async function readText(path) {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    throw new Error(`Could not read ${path}: ${error.message}`);
+  }
+}
+
 /** Parses a JSON with Comments file, or returns undefined when `optional` and the file is absent. */
 async function readJsonc(path, optional = false) {
   let text;
@@ -34,7 +43,7 @@ async function readJsonc(path, optional = false) {
 }
 
 async function doctor(values) {
-  const config = decodeWranglerConfig(await readJsonc(values.config));
+  const config = decodeWranglerConfig(await readText(values.config));
   const entry = config.main
     ? await readFile(resolve(dirname(values.config), config.main), "utf8").catch(() => undefined)
     : undefined;
@@ -73,8 +82,8 @@ try {
       help: { type: "boolean" },
     },
   });
-  if (values.help || positionals.length === 0) console.log(USAGE);
-  else if (positionals.length !== 1 || positionals[0] !== "doctor") throw new Error(`Unknown command. \n\n${USAGE}`);
+  if (values.help) console.log(USAGE);
+  else if (positionals.length !== 1 || positionals[0] !== "doctor") throw new Error(USAGE);
   else if (!Number.isInteger(Number(values.dims)) || Number(values.dims) < 1)
     throw new Error("--dims must be a positive integer.");
   else if (!["cosine", "euclidean", "dot-product"].includes(values.metric))

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { parse } from "jsonc-parser";
 import baselineSource from "../wrangler.baseline.jsonc?raw";
 import {
   checkBindings,
@@ -19,11 +18,9 @@ import {
   type Finding,
   type WranglerConfig,
 } from "../src/doctor";
-import type { CatalogueDescription } from "../src/catalogue";
 import { KarmiError } from "../src/errors";
-import { DEFAULT_ANNOTATIONS } from "../src/tool";
 
-const baseline = decodeWranglerConfig(parse(baselineSource, [], { allowTrailingComma: true }));
+const baseline = decodeWranglerConfig(baselineSource);
 const entry = "export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;";
 
 const statuses = (findings: Finding[]) => findings.map((finding) => finding.status);
@@ -37,9 +34,9 @@ const spec = {
   model: { id: "anthropic/claude-sonnet-5" },
   tools: ["weather"],
 };
-const description: CatalogueDescription = {
+const description = {
   deliverers: [],
-  tools: [{ name: "weather", description: "Weather", annotations: DEFAULT_ANNOTATIONS, input: {} }],
+  tools: [{ name: "weather", description: "Weather", annotations: {}, input: {} }],
   fragments: [{ name: "guest" }],
   skills: [{ name: "research", description: "Research", tools: ["search"], invokableBy: "model" }],
   retrievers: [],
@@ -54,8 +51,9 @@ describe("the wrangler baseline", () => {
     expect(statuses(findings)).not.toContain("warn");
   });
 
-  it("refuses a config whose fields karmi reads are malformed", () => {
-    expect(() => decodeWranglerConfig({ migrations: [{ tag: 7 }] })).toThrowError(KarmiError);
+  it("refuses a config that is not JSON, and one whose fields karmi reads are malformed", () => {
+    expect(() => decodeWranglerConfig("{ oops")).toThrowError(KarmiError);
+    expect(() => decodeWranglerConfig('{ "migrations": [{ "tag": 7 }] }')).toThrowError(KarmiError);
   });
 });
 
@@ -171,8 +169,9 @@ describe("the gateway check", () => {
   const gateway = { kind: "cloudflare", accountId: "a", gatewayId: "g" };
   const defaults = { providers: { default: { gateway } } };
 
-  it("skips without a manifest", () => {
-    expect(statuses(checkGatewayDefer(undefined))).toEqual(["skip"]);
+  it("skips without the inputs it needs, and says which one is missing", () => {
+    expect(messages(checkGatewayDefer(undefined))).toContain("createKarmi defaults");
+    expect(messages(checkGatewayDefer({ defaults }))).toContain("no Agent Spec");
   });
 
   it("warns when a gateway meets an Agent that defers its Tools", () => {
@@ -266,6 +265,12 @@ describe("the Agent Spec check", () => {
 describe("the report", () => {
   it("refuses a malformed manifest", () => {
     expect(() => decodeDoctorManifest({ specs: [] })).toThrowError(KarmiError);
+    expect(() => decodeDoctorManifest({ catalogue: { tools: "all" } })).toThrowError(KarmiError);
+  });
+
+  it("reads a Catalogue description that defines nothing", () => {
+    const manifest = decodeDoctorManifest({ catalogue: {}, specs: { "a.json": spec } });
+    expect(messages(checkSpecs(manifest))).toContain('tool "weather"');
   });
 
   it("marks each line with its status", () => {

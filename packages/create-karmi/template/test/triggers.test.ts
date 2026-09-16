@@ -42,9 +42,9 @@ describe("the Queue trigger", () => {
 });
 
 describe("the cron trigger", () => {
-  it("starts one briefing Turn per Scope", async () => {
+  it("starts one briefing Turn per Scope, on a Thread named after the day", async () => {
     provider.script(["Two arrivals."]);
-    await dailyBriefing(karmi, ["test"], "2026-09-16");
+    await dailyBriefing(karmi, ["test"], Date.parse("2026-09-16T09:00:00Z"));
     const thread = scope.thread({ agent: "concierge", threadId: "briefing-2026-09-16" });
     await expect.poll(async () => (await thread.status()).state).toBe("idle");
   });

@@ -144,17 +144,30 @@ cannot answer. Write it as JSON and pass it with `--manifest`, or leave it at
 ```json
 {
   "origin": "https://agents.example.com",
-  "defaults": { "providers": { "default": { "adapter": "anthropic" } } },
-  "catalogue": { "tools": [{ "name": "weather" }], "skills": [], "fragments": [], "hooks": [], "retrievers": [], "agents": [], "deliverers": [] },
+  "defaults": { "providers": { "default": { "adapter": "anthropic", "gateway": { "kind": "cloudflare" } } } },
+  "catalogue": { "tools": [{ "name": "weather" }] },
   "specs": { "agents/concierge.json": { "agentId": "concierge", "name": "Concierge", "instructions": [], "model": { "id": "anthropic/claude-sonnet-5" } } }
 }
 ```
 
 `defaults` is `createKarmi({ defaults })` and `catalogue` is `karmi.catalogue.describe()`,
-both as JSON. A check whose input is absent reports `--` and never fails the run.
+both as JSON; only the names each kind defines are read. A check whose input is
+absent reports `--` and never fails the run.
 
-Every check is also a function: `runChecks`, `formatFindings` and `hasFailure` are
-exported, so a Platform can run the same checks from its own tooling.
+Every check is also a function. `decodeWranglerConfig`, `decodeDoctorManifest`,
+`runChecks`, `formatFindings` and `hasFailure` are exported, so the three
+manifest-driven checks can run in a test instead, where the real Catalogue and
+Agent Specs are already in memory and nothing has to be written down twice:
+
+```ts
+const findings = await runChecks({
+  config: decodeWranglerConfig(wranglerJsonc),
+  manifest: decodeDoctorManifest({ catalogue: karmi.catalogue.describe(), specs: { concierge: spec } }),
+});
+expect(findings.filter((finding) => finding.status === "fail")).toEqual([]);
+```
+
+The scaffolded template does exactly this, so every check runs on every commit.
 
 ## Testing
 

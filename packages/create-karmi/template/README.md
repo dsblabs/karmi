@@ -41,7 +41,7 @@ pnpm typecheck && pnpm test
 3. Deploy, then give the `demo` Scope an Anthropic key so its Agents can run:
 
    ```sh
-   pnpm deploy
+   pnpm run deploy
    ```
 
    ```ts
