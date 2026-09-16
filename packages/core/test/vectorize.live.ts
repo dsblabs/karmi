@@ -25,10 +25,24 @@ it("isolates namespaces, filters documents and deletes a live mirror from its le
         .poll(() => store.query(other, query, options), { timeout: 90000, interval: 1000 })
         .toMatchObject([{ id: "same" }]);
       expect(await store.query(ns, query, { ...options, doc: ["b"] })).toEqual([]);
+      const remote = await binding.query(query, { namespace: ns, filter: { knowledge: "faq" }, topK: 10 });
+      const remoteOther = await binding.query(query, { namespace: other, filter: { knowledge: "faq" }, topK: 10 });
+      const deletedIds = remote.matches.map((hit) => hit.id);
+      const retainedIds = remoteOther.matches.map((hit) => hit.id);
+      expect(deletedIds).toHaveLength(1);
+      expect(retainedIds).toHaveLength(1);
+      expect(deletedIds[0]).not.toBe(retainedIds[0]);
       await store.deleteByIds(ns, ["same"]);
+      await expect.poll(() => binding.getByIds(deletedIds), { timeout: 90000, interval: 1000 }).toEqual([]);
+      expect(await binding.getByIds(retainedIds)).toHaveLength(1);
       expect(await store.query(ns, query, options)).toEqual([]);
       expect(await store.query(other, query, options)).toHaveLength(1);
+      const otherCorpus = await binding.query(query, { namespace: ns, filter: { knowledge: "other" }, topK: 10 });
+      expect(otherCorpus.matches).toHaveLength(1);
       await store.deleteAll(ns, "other");
+      await expect
+        .poll(() => binding.getByIds(otherCorpus.matches.map((hit) => hit.id)), { timeout: 90000, interval: 1000 })
+        .toEqual([]);
       expect(await store.query(ns, query, { ...options, knowledge: "other" })).toEqual([]);
     } finally {
       await store.deleteAll(ns, "faq");

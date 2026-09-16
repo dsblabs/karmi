@@ -1,8 +1,9 @@
+import { fuseRanks } from "./vector-ranking";
 import type { KnowledgeChunk } from "./knowledge";
 import * as z from "zod/mini";
 import { KarmiError } from "./errors";
-import { workersAiEmbedder } from "./embedder";
-import { defineRetriever, type Passage, type RetrieverContext } from "./retriever";
+import { defaultEmbeddingIndex, workersAiEmbedder } from "./embedder";
+import { defineRetriever, type RetrieverContext } from "./retriever";
 import { VectorLedger } from "./vector-ledger";
 import {
   embeddingIndexSchema,
@@ -42,11 +43,7 @@ export function defineVectorRetriever(options: VectorRetrieverOptions) {
     embeddingIndexSchema,
     options.embedder
       ? { model: options.embedder.model, dims: options.embedder.dims, metric: options.embedder.metric }
-      : {
-          model: "@cf/baai/bge-m3",
-          dims: 1024,
-          metric: "cosine",
-        },
+      : defaultEmbeddingIndex,
   );
   return defineRetriever({
     name: options.name,
@@ -65,7 +62,7 @@ export function defineVectorRetriever(options: VectorRetrieverOptions) {
       });
       const passages = ledger.passages(hits);
       if (ctx.settings.mode === "hybrid")
-        return fuse(ctx.search(query, ctx.settings.topK * 3), passages, rankConstant).slice(0, ctx.settings.topK);
+        return fuseRanks(ctx.search(query, ctx.settings.topK * 3), passages, rankConstant).slice(0, ctx.settings.topK);
       return passages.map((hit) => ({ ...hit, source: "vector" as const }));
     },
     async delete(docs, ctx) {
@@ -90,20 +87,6 @@ export function defineVectorRetriever(options: VectorRetrieverOptions) {
       for (const batch of ledger.batches()) await store.upsert(ctx.knowledge.scope, batch);
     },
   });
-}
-
-function fuse(lexical: Passage[], vectors: Passage[], constant: number): Passage[] {
-  const hits = new Map<string, Passage>();
-  for (const list of [lexical, vectors]) {
-    list.forEach((hit, rank) => {
-      const key = JSON.stringify([hit.docId, hit.seq]);
-      const score = (hits.get(key)?.score ?? 0) + 1 / (constant + rank + 1);
-      hits.set(key, { ...hit, score, source: "hybrid" });
-    });
-  }
-  return [...hits.values()].sort(
-    (a, b) => b.score - a.score || a.docId.localeCompare(b.docId) || (a.seq ?? 0) - (b.seq ?? 0),
-  );
 }
 
 function resources(options: VectorRetrieverOptions, embedding: EmbeddingIndex, ctx: RetrieverContext<Settings>) {

@@ -444,9 +444,12 @@ import { defineVectorRetriever, VectorizeStore } from "@karmi/core";
 
 const search = defineVectorRetriever({
   name: "search",
-  store: (ctx) => new VectorizeStore(env.KNOWLEDGE_VECTORS_BGE_M3, ctx.storage),
+  store: (ctx) => new VectorizeStore(env.KNOWLEDGE_VECTORS_BGE_M3, ctx.storage, ctx.embedding?.metric),
 });
 ```
+
+The adapter metric defaults to cosine; pass the Knowledge metric when using a
+custom embedding model. Scores use the same larger-is-better convention as SQLite.
 
 Create the index and both string metadata indexes **before ingesting vectors**:
 

@@ -1,3 +1,4 @@
+import { similarity } from "./vector-ranking";
 import type { ScopeId } from "./context";
 import { KarmiError } from "./errors";
 import {
@@ -76,21 +77,4 @@ export class SqliteBruteForceStore implements VectorStore {
   async deleteAll(ns: ScopeId, knowledge: string): Promise<void> {
     this.sql.exec("DELETE FROM vectors WHERE ns = ? AND knowledge = ?", ns, knowledge);
   }
-}
-function similarity(a: Float32Array, b: Float32Array, metric: EmbeddingIndex["metric"]): number {
-  let dot = 0,
-    aa = 0,
-    bb = 0,
-    distance = 0;
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i] ?? 0,
-      y = b[i] ?? 0;
-    dot += x * y;
-    aa += x * x;
-    bb += y * y;
-    distance += (x - y) ** 2;
-  }
-  if (metric === "euclidean") return -Math.sqrt(distance);
-  if (metric === "dot-product") return dot;
-  return aa && bb ? dot / Math.sqrt(aa * bb) : 0;
 }

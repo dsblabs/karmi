@@ -6,5 +6,5 @@ if (process.env.CI || process.env.KARMI_VECTORIZE_LIVE !== "1")
 
 export default defineConfig({
   plugins: [cloudflareTest({ wrangler: { configPath: "./test/wrangler.vectorize.jsonc" }, remoteBindings: true })],
-  test: { include: ["test/vectorize.live.ts"], retry: 0, testTimeout: 120000 },
+  test: { include: ["test/vectorize.live.ts"], retry: 0, testTimeout: 300000 },
 });
