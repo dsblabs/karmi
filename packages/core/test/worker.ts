@@ -1,4 +1,5 @@
-import { interruptedRetriever } from "./knowledge-fixtures";
+import { defineVectorRetriever } from "../src/index";
+import { sqliteMirror, semanticEmbedder, interruptedRetriever } from "./knowledge-fixtures";
 import { z } from "zod";
 import {
   defineDeliverer,
@@ -660,7 +661,11 @@ export const serverProvider = fakeProvider(["OK"]);
 
 export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
   {
-    retrievers: [interruptedRetriever],
+    retrievers: [
+      interruptedRetriever,
+      defineVectorRetriever({ name: "semantic", embedder: semanticEmbedder }),
+      defineVectorRetriever({ name: "mirrored", embedder: semanticEmbedder, store: sqliteMirror }),
+    ],
     deliverers: [
       receipt,
       defineDeliverer({ name: "receipt-parts", deliver: receipt.deliver }),

@@ -10,7 +10,8 @@
     "wrangler.baseline.jsonc",
     "LICENSE",
     "src/vendor/codemode/NOTICE",
-    "src/vendor/codemode/LICENSE"
+    "src/vendor/codemode/LICENSE",
+    "bin"
   ],
   "exports": {
     ".": {
@@ -27,7 +28,9 @@
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json -f -fe .js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:vector-bench": "vitest run --config vitest.vector-bench.config.mts",
+    "test:vectorize-live": "vitest run --config vitest.vectorize-live.config.mts"
   },
   "peerDependencies": {
     "zod": "^4.0.0"
@@ -47,6 +50,10 @@
     "@modelcontextprotocol/core": "2.0.0",
     "aws4fetch": "^1.0.20",
     "file-type": "^22.1.0",
+    "jsonc-parser": "^3.3.1",
     "ulid": "^3.0.2"
+  },
+  "bin": {
+    "karmi": "./bin/karmi.mjs"
   }
 }

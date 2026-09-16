@@ -226,3 +226,24 @@ export {
   type KnowledgeChunk,
 } from "./knowledge";
 export { fts5Retriever, type RetrieverCtx } from "./retriever";
+
+export {
+  defineVectorRetriever,
+  vectorRetriever,
+  hybridRetriever,
+  type VectorRetrieverOptions,
+} from "./vector-retriever";
+export { SqliteBruteForceStore } from "./sqlite-vector-store";
+export { workersAiEmbedder } from "./embedder";
+export {
+  type Embedder,
+  type EmbeddingIndex,
+  type VectorStore,
+  type VectorRow,
+  type VectorQuery,
+  type VectorHit,
+} from "./vector-store";
+
+export { VectorizeStore } from "./vectorize-store";
+
+export { checkVectorizeIndex } from "./vector-doctor";

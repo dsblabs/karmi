@@ -79,12 +79,16 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
   }
 
   private context(head: Head, retriever: Retriever, settings?: Record<string, unknown>): RetrieverContext<unknown> {
+    const embedding = decodeOptions(head.options).index?.embedding;
     return {
       knowledge: { scope: head.scope, name: head.name },
       settings: retriever.settings ? z.parse(retriever.settings, settings ?? {}) : undefined,
       logger: bindLogger(this.deployment.logger, { scope: head.scope }),
       signal: AbortSignal.timeout(25000),
-      search: (query) => this.store.search(query),
+      storage: this.sql,
+      ...(embedding && { embedding }),
+      ...(this.env.KARMI_AI && { ai: this.env.KARMI_AI }),
+      search: (query, topK) => this.store.search(query, topK),
       inline: () => this.store.inline(),
     };
   }
@@ -96,9 +100,13 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
       const docs = z.parse(knowledgeDocumentsSchema, input);
       const options = z.parse(knowledgeIngestSchema, raw);
       const saved = head ? decodeOptions(head.options) : options;
-      const index = saved.index ?? z.parse(knowledgeIndexSchema, {});
+      const embedding = this.retriever(saved.retriever).embedding;
+      const index = z.parse(knowledgeIndexSchema, { ...saved.index, ...(!head && embedding && { embedding }) });
       if (
-        (options.index && JSON.stringify(options.index) !== JSON.stringify(index)) ||
+        (options.index &&
+          JSON.stringify(
+            z.parse(knowledgeIndexSchema, { ...options.index, embedding: options.index.embedding ?? index.embedding }),
+          ) !== JSON.stringify(index)) ||
         (options.retriever !== undefined && options.retriever !== (saved.retriever ?? "fts5")) ||
         (options.settings !== undefined && JSON.stringify(options.settings) !== JSON.stringify(saved.settings))
       )
@@ -183,8 +191,8 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
       const doc = z.parse(knowledgeDocumentsSchema, [JSON.parse(row.document)])[0];
       if (!doc) continue;
       const chunks = chunkDocument(doc, index);
-      this.store.replace(doc, chunks);
       await retriever.delete?.([doc.id], context);
+      this.store.replace(doc, chunks);
       await retriever.index?.(chunks, context);
       this.ctx.storage.transactionSync(() => {
         this.sql.exec("UPDATE ingest_jobs SET completed = ? WHERE id = ?", row.seq + 1, id);
@@ -267,6 +275,18 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
         z.parse(z.string(), query),
         this.context(head, retriever, options.settings ?? saved.settings),
       );
+    });
+  }
+
+  /** Rebuilds the external mirror from embeddings retained in the ledger. */
+  rebuild(scope: string, name: string) {
+    return this.boundary(async () => {
+      const head = await this.enter(scope, name);
+      if (!head) return;
+      this.assertIdle();
+      const options = decodeOptions(head.options);
+      const retriever = this.retriever(options.retriever);
+      await retriever.rebuild?.(this.context(head, retriever, options.settings));
     });
   }
 
