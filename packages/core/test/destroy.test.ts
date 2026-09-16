@@ -95,6 +95,10 @@ it("empties every store in resumable batches, reports progress and leaves a tomb
   const parent = scope.thread({ agent: "destroy-parent", user: "alice", threadId: "destroy-parent-thread" });
   await parent.send(message("Delegate this"));
   await expect.poll(async () => (await parent.events()).some((e) => e.type === "turn.completed")).toBe(true);
+  // A Turn parked on an Approval: the walk must delete it rather than wait for an answer.
+  provider.script([[reply.toolCall("book", { room: 7 }, "c2")], "Booked"]);
+  const parked = scope.thread({ agent: "approver", user: "alice", threadId: "destroy-parked" });
+  expect(await parked.send(message("Book 7"))).toContainEvent({ type: "turn.paused", reason: "approval" });
   const ref = await remembering.uploads.put(pdf);
   await env.KARMI_MEDIA.put("test/threads/destroy-memory/tool-output/1", "spill");
   // An object no live Thread owns, which only the prefix sweep can remove.
@@ -115,14 +119,14 @@ it("empties every store in resumable batches, reports progress and leaves a tomb
   await clock.advance(0);
   await expect.poll(async () => (await scope.destroyStatus(operationId)).state).toBe("destroyed");
   const done = await scope.destroyStatus(operationId);
-  expect(done.progress).toMatchObject({ phase: "done", memory: 1, knowledge: 1 });
+  expect(done.progress).toMatchObject({ phase: "done", memory: 1, knowledge: 1, skipped: 0 });
   // The Test kit's SecretsProvider is not karmi's own store, so the walk asks it to revoke what it holds.
   expect(done.externalCleanup).toEqual({ secrets: "revoked", credentials: ["tenant-key"] });
   expect(await secrets.describe({ scope: "test", ref: "scope:tenant-key" })).toMatchObject({
     revokedAt: expect.any(Number),
   });
-  // The suspended Turn's Thread, the Memory Thread, the Delegation parent and its child.
-  expect(done.progress.threads).toBe(4);
+  // The suspended Turn's Thread, the Memory Thread, the parked Thread, the Delegation parent and its child.
+  expect(done.progress.threads).toBe(5);
   expect(done.progress.objects).toBeGreaterThanOrEqual(1);
 
   expect(await env.KARMI_MEDIA.get(ref.key)).toBeNull();
@@ -150,6 +154,7 @@ it("empties every store in resumable batches, reports progress and leaves a tomb
   await expect(scope.config.set({})).rejects.toMatchObject(destroyed);
   await expect(scope.users.memory.list()).rejects.toMatchObject(destroyed);
   await expect(remembering.status()).rejects.toMatchObject({ code: "thread.deleted" });
+  await expect(parked.status()).rejects.toMatchObject({ code: "thread.deleted" });
   const refused = await scope.thread({ agent: "memo", user: "alice", threadId: "after" }).send(message("Hi"));
   expect(refused).toContainEvent({ type: "turn.failed", reason: "scope.destroyed" });
   await expect(scope.destroy()).resolves.toEqual({ operationId });

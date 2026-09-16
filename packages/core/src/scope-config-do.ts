@@ -18,7 +18,14 @@ import {
 } from "./mcp-oauth";
 import { isHolder, listGrants, OAUTH_SCHEMA, readPending, SqlGrantStore } from "./mcp-oauth-store";
 import { parseScopeConfig, resolveScopeConfig, type McpServerConfig, type ScopeConfigDocument } from "./scope-config";
-import { decodeCursor, destroyStep, startCursor, type DestroyProgress, type ExternalCleanup } from "./scope-destroy";
+import {
+  decodeCursor,
+  destroyStep,
+  startCursor,
+  TOMBSTONE_TABLES,
+  type DestroyProgress,
+  type ExternalCleanup,
+} from "./scope-destroy";
 import { matchesHost, scopedFetch } from "./scoped-fetch";
 import type { CredentialInfo } from "./secrets";
 import { encodeKey, type ThreadIdentity, type ThreadSummary } from "./thread";
@@ -48,11 +55,6 @@ const SCHEMA = `
 
 /** The id of the single maintenance job a destroy walk re-arms until the Scope is empty. */
 const DESTROY_JOB = "scope-maintenance";
-
-/** The payload of the maintenance job: which Scope the walk empties, under which operation. */
-function decodeMaintenance(payload: unknown): { scope: ScopeId; operationId: string } {
-  return payload as { scope: ScopeId; operationId: string };
-}
 
 /** The number of versions kept per Agent. A put drops older ones. */
 export const AGENT_HISTORY_DEPTH = 20;
@@ -1122,12 +1124,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         now,
         JSON.stringify(startCursor()),
       );
-      this.sql.exec("DELETE FROM provider_credentials");
-      this.sql.exec("DELETE FROM mcp_catalog");
-      this.sql.exec("DELETE FROM mcp_grants");
-      this.sql.exec("DELETE FROM mcp_clients");
-      this.sql.exec("DELETE FROM mcp_oauth_state");
-      this.sql.exec("DELETE FROM user_connections");
+      for (const table of TOMBSTONE_TABLES) this.sql.exec(`DELETE FROM ${table}`);
     });
     this.scheduleWalk(scope, operationId);
     return ok({ operationId });
@@ -1145,7 +1142,8 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
 
   protected override async runJob(job: ScheduledJob): Promise<void> {
     if (job.kind !== "scope-maintenance") return super.runJob(job);
-    const { scope, operationId } = decodeMaintenance(job.payload);
+    // This object is the only producer of the payload, so its shape is known once the kind is.
+    const { scope, operationId } = job.payload as { scope: ScopeId; operationId: string };
     const row = this.sql
       .exec<{ state: DestroyStatus["state"]; cursor_json: string | null }>(
         "SELECT state, cursor_json FROM destroy_operations WHERE operation_id = ?",

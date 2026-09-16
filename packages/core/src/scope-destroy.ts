@@ -21,6 +21,31 @@ const MEDIA_BATCH = 100;
 /** How many times a batch may fail before the walk gives up on the item it is stuck on. */
 const BATCH_ATTEMPTS = 5;
 
+/**
+ * The tables the tombstone transaction empties before the walk starts, so that nothing can open a
+ * credential or an MCP grant of a destroying Scope.
+ */
+export const TOMBSTONE_TABLES = [
+  "provider_credentials",
+  "mcp_catalog",
+  "mcp_grants",
+  "mcp_clients",
+  "mcp_oauth_state",
+  "user_connections",
+] as const;
+
+/** The tables the last phase empties, once every store outside the Scope's own object is empty. */
+const REMAINING_TABLES = [
+  "scope_revisions",
+  "agent_specs",
+  "agent_heads",
+  "connections",
+  "threads",
+  "thread_parents",
+  "knowledge_names",
+  "memory_users",
+] as const;
+
 /** The stages of the walk, in the order it runs them. */
 const PHASES = ["secrets", "threads", "memory", "knowledge", "media", "config", "done"] as const;
 
@@ -29,6 +54,7 @@ export type DestroyPhase = (typeof PHASES)[number];
 
 /** How far a destroy walk has got. Every count is what it has deleted so far. */
 export interface DestroyProgress {
+  /** The stage the walk is in. */
   phase: DestroyPhase;
   /** The Threads deleted, Delegation children included. */
   threads: number;
@@ -38,6 +64,8 @@ export interface DestroyProgress {
   knowledge: number;
   /** The R2 objects deleted under the Scope's prefix. */
   objects: number;
+  /** The items the walk gave up on. Anything counted here is still held by the store that refused. */
+  skipped: number;
 }
 
 /**
@@ -71,7 +99,7 @@ export interface DestroyWalk {
 
 /** The cursor a destroy operation starts from. */
 export function startCursor(): DestroyCursor {
-  return { progress: { phase: "secrets", threads: 0, memory: 0, knowledge: 0, objects: 0 } };
+  return { progress: { phase: "secrets", threads: 0, memory: 0, knowledge: 0, objects: 0, skipped: 0 } };
 }
 
 /**
@@ -114,12 +142,14 @@ function advance(cursor: DestroyCursor, emptied: boolean, counts: Partial<Destro
 }
 
 /**
- * Runs one deletion. The alarm retries a batch that throws, so an item that never succeeds would stall the
- * walk; after `BATCH_ATTEMPTS` failures it is logged and left behind.
+ * Deletes what `item` names and reports whether it is gone. The alarm retries a batch that throws, so an
+ * item that never succeeds would stall the walk; after `BATCH_ATTEMPTS` failures it is logged, counted as
+ * skipped and left where it is.
  */
-async function tolerate(walk: DestroyWalk, item: string, action: () => Promise<void>): Promise<void> {
+async function deleteItem(walk: DestroyWalk, item: string, action: () => Promise<void>): Promise<boolean> {
   try {
     await action();
+    return true;
   } catch (error) {
     if (walk.attempt < BATCH_ATTEMPTS) throw error;
     walk.deployment.logger.error("Scope destroy skipped an item it could not delete", {
@@ -127,7 +157,40 @@ async function tolerate(walk: DestroyWalk, item: string, action: () => Promise<v
       item,
       error: errorMessage(error),
     });
+    return false;
   }
+}
+
+/**
+ * Deletes every row of one batch and forgets it from the index either way, since a row the walk has given up
+ * on must not be read again. It returns how many were deleted and how many were skipped.
+ */
+async function deleteBatch<Row>(
+  walk: DestroyWalk,
+  rows: Row[],
+  item: (row: Row) => string,
+  remove: (row: Row) => Promise<void>,
+  forget: (row: Row) => void,
+): Promise<{ deleted: number; skipped: number }> {
+  let deleted = 0;
+  for (const row of rows) {
+    if (await deleteItem(walk, item(row), () => remove(row))) deleted++;
+    forget(row);
+  }
+  return { deleted, skipped: rows.length - deleted };
+}
+
+/** The cursor after a batch of indexed objects, with its counts folded into the progress. */
+function counted(
+  cursor: DestroyCursor,
+  rows: number,
+  batch: { deleted: number; skipped: number },
+  count: "threads" | "memory" | "knowledge",
+): DestroyCursor {
+  return advance(cursor, rows < OBJECT_BATCH, {
+    [count]: cursor.progress[count] + batch.deleted,
+    skipped: cursor.progress.skipped + batch.skipped,
+  });
 }
 
 async function revokeExternal(walk: DestroyWalk): Promise<ExternalCleanup | undefined> {
@@ -135,14 +198,20 @@ async function revokeExternal(walk: DestroyWalk): Promise<ExternalCleanup | unde
   // karmi's own store keeps its rows in this Durable Object, and the tombstone transaction wiped them.
   if (isInternalStore(secrets)) return undefined;
   const { list, revoke } = secrets;
+  // A store without `revoke` cannot drop a credential, and one without `list` cannot say which credentials
+  // to name. Either way the Platform is left to remove them.
   if (!list || !revoke) return { secrets: "unsupported", credentials: [] };
   const credentials = (await list.call(secrets, walk.scope)).map((entry) => entry.name);
+  const skipped = [];
   for (const name of credentials)
     // The store is asked by reference, exactly as `scope.credentials.revoke` asks it.
-    await tolerate(walk, `credential ${name}`, () =>
-      revoke.call(secrets, { scope: walk.scope, ref: credentialRef("scope", name) }),
-    );
-  return { secrets: "revoked", credentials };
+    if (
+      !(await deleteItem(walk, `credential ${name}`, () =>
+        revoke.call(secrets, { scope: walk.scope, ref: credentialRef("scope", name) }),
+      ))
+    )
+      skipped.push(name);
+  return skipped.length > 0 ? { secrets: "unsupported", credentials: skipped } : { secrets: "revoked", credentials };
 }
 
 async function deleteThreads(walk: DestroyWalk, cursor: DestroyCursor): Promise<DestroyCursor> {
@@ -152,8 +221,11 @@ async function deleteThreads(walk: DestroyWalk, cursor: DestroyCursor): Promise<
       OBJECT_BATCH,
     )
     .toArray();
-  for (const row of rows) {
-    await tolerate(walk, `thread ${row.thread_id}`, async () => {
+  const batch = await deleteBatch(
+    walk,
+    rows,
+    (row) => `thread ${row.thread_id}`,
+    async (row) => {
       const stub = remote<ThreadDurableObject>(walk.bindings.KARMI_THREADS, keys.thread(walk.scope, row.thread_id));
       const deleted = await stub.delete({
         scope: walk.scope,
@@ -164,41 +236,50 @@ async function deleteThreads(walk: DestroyWalk, cursor: DestroyCursor): Promise<
       });
       // An indexed Thread whose object never took a Turn has nothing to delete.
       if (!deleted.ok && deleted.code !== "thread.notFound") throw new KarmiError(deleted.code, deleted.message);
-    });
-    walk.sql.exec("DELETE FROM threads WHERE thread_id = ?", row.thread_id);
-    walk.sql.exec("DELETE FROM thread_parents WHERE thread_id = ?", row.thread_id);
-  }
-  return advance(cursor, rows.length < OBJECT_BATCH, { threads: cursor.progress.threads + rows.length });
+    },
+    (row) => {
+      walk.sql.exec("DELETE FROM threads WHERE thread_id = ?", row.thread_id);
+      walk.sql.exec("DELETE FROM thread_parents WHERE thread_id = ?", row.thread_id);
+    },
+  );
+  return counted(cursor, rows.length, batch, "threads");
 }
 
 async function deleteMemory(walk: DestroyWalk, cursor: DestroyCursor): Promise<DestroyCursor> {
   const rows = walk.sql
     .exec<{ user_id: string }>("SELECT user_id FROM memory_users ORDER BY user_id LIMIT ?", OBJECT_BATCH)
     .toArray();
-  for (const row of rows) {
-    await tolerate(walk, `memory ${row.user_id}`, async () => {
+  const batch = await deleteBatch(
+    walk,
+    rows,
+    (row) => `memory ${row.user_id}`,
+    async (row) => {
       const stub = remote<MemoryDurableObject>(walk.bindings.KARMI_MEMORY, keys.memory(walk.scope, row.user_id));
       await unwrap(stub.clear(walk.scope, row.user_id));
-    });
-    walk.sql.exec("DELETE FROM memory_users WHERE user_id = ?", row.user_id);
-  }
-  return advance(cursor, rows.length < OBJECT_BATCH, { memory: cursor.progress.memory + rows.length });
+    },
+    (row) => void walk.sql.exec("DELETE FROM memory_users WHERE user_id = ?", row.user_id),
+  );
+  return counted(cursor, rows.length, batch, "memory");
 }
 
 async function deleteKnowledge(walk: DestroyWalk, cursor: DestroyCursor): Promise<DestroyCursor> {
   const rows = walk.sql
     .exec<{ name: string }>("SELECT name FROM knowledge_names ORDER BY name LIMIT ?", OBJECT_BATCH)
     .toArray();
+  // Without the binding no corpus can ever have been written, so the index rows are all that is left.
   const namespace = walk.bindings.KARMI_KNOWLEDGE;
-  for (const row of rows) {
-    if (namespace)
-      await tolerate(walk, `knowledge ${row.name}`, async () => {
-        const stub = remote<KnowledgeDurableObject>(namespace, keys.knowledge(walk.scope, row.name));
-        await unwrap(stub.destroy(walk.scope, row.name, "scope-destroy"));
-      });
-    walk.sql.exec("DELETE FROM knowledge_names WHERE name = ?", row.name);
-  }
-  return advance(cursor, rows.length < OBJECT_BATCH, { knowledge: cursor.progress.knowledge + rows.length });
+  const batch = await deleteBatch(
+    walk,
+    rows,
+    (row) => `knowledge ${row.name}`,
+    async (row) => {
+      if (!namespace) return;
+      const stub = remote<KnowledgeDurableObject>(namespace, keys.knowledge(walk.scope, row.name));
+      await unwrap(stub.destroy(walk.scope, row.name, "scope-destroy"));
+    },
+    (row) => void walk.sql.exec("DELETE FROM knowledge_names WHERE name = ?", row.name),
+  );
+  return counted(cursor, rows.length, batch, "knowledge");
 }
 
 async function deleteMedia(walk: DestroyWalk, cursor: DestroyCursor): Promise<DestroyCursor> {
@@ -214,22 +295,6 @@ async function deleteMedia(walk: DestroyWalk, cursor: DestroyCursor): Promise<De
  * ScopeId can never be used again.
  */
 function deleteConfig(walk: DestroyWalk, cursor: DestroyCursor): DestroyCursor {
-  for (const table of [
-    "scope_revisions",
-    "agent_specs",
-    "agent_heads",
-    "connections",
-    "user_connections",
-    "threads",
-    "thread_parents",
-    "knowledge_names",
-    "memory_users",
-    "provider_credentials",
-    "mcp_catalog",
-    "mcp_grants",
-    "mcp_clients",
-    "mcp_oauth_state",
-  ])
-    walk.sql.exec(`DELETE FROM ${table}`);
+  for (const table of REMAINING_TABLES) walk.sql.exec(`DELETE FROM ${table}`);
   return advance(cursor, true, {});
 }
