@@ -1,6 +1,6 @@
 import type { ScopeId } from "./context";
 import { KarmiError } from "./errors";
-import { assertIdentifier } from "./names";
+import { assertIdentifier, KNOWLEDGE_NAME, KNOWLEDGE_NAME_MESSAGE } from "./names";
 
 /**
  * The functions that mint every storage name (ADR-0001). Every Durable Object name is
@@ -33,6 +33,10 @@ export const keys = {
   },
   config(scope: ScopeId): string {
     return `${assertScope(scope)}/config`;
+  },
+  knowledge(scope: ScopeId, name: string): string {
+    if (!KNOWLEDGE_NAME.test(name)) throw new KarmiError("knowledge.invalid", KNOWLEDGE_NAME_MESSAGE);
+    return `${assertScope(scope)}/knowledge/${name}`;
   },
   memory(scope: ScopeId, user: string): string {
     assertIdentifier("user.id.invalid", "user", user);

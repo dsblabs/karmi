@@ -23,6 +23,8 @@ export interface PromptSections {
   skills?: readonly { name: string; description: string; invokableBy: SkillInvoker }[];
   /** The rendered Memory Fragment. Absent on a user-less Thread or for an Agent without `memory`. */
   memory?: string;
+  /** The bounded inline Knowledge Fragments. */
+  knowledge?: string;
 }
 
 /** Renders the Prompt for one Turn, or undefined when nothing renders. */
@@ -61,6 +63,7 @@ export async function evaluatePrompt(
   const skills = skillIndex(sections.skills ?? []);
   if (skills) out.push(skills);
   if (sections.memory) out.push(sections.memory);
+  if (sections.knowledge) out.push(sections.knowledge);
   return out.length > 0 ? out.join("\n\n") : undefined;
 }
 

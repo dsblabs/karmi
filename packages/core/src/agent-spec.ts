@@ -38,7 +38,8 @@ const ToolReferenceSchema = reference({ settings, alwaysLoad: z.optional(z.boole
 const SkillReferenceSchema = reference({ settings, invokableBy: z.optional(z.enum(SKILL_INVOKERS)) });
 const KnowledgeReferenceSchema = reference({
   retriever: z.optional(name),
-  mode: z.optional(z.enum(["tool", "inline"])),
+  settings,
+  mode: z.optional(z.enum(["search", "tool", "inline"])),
 });
 
 const ModelSchema = z.strictObject({

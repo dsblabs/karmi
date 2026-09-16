@@ -1,3 +1,4 @@
+import { knowledgeTools, knowledgeFragments } from "./knowledge-tools";
 import { providerOutput, restoreProviderTool } from "./provider-output";
 import { offeredProviderTools, resolveProviderTools } from "./provider-tools";
 import { isMediaRef } from "./context";
@@ -284,6 +285,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   // The Memory Fragment is rendered once per Turn so the system prompt stays the same across its Steps, which
   // keeps the Provider's prompt cache valid. A write mid-Turn is visible through `recall` and in the next Turn.
   private memory: { turn: number; text: string | undefined } | undefined;
+  private knowledge: { turn: number; text: string } | undefined;
   /** The Turn whose snapshot and catalogues are being fetched. An input arriving meanwhile is for the Turn after it. */
   private preparing: number | undefined;
 
@@ -1240,7 +1242,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       }
       // Anything else is a bug, not an eviction, so the Turn ends as failed instead of waiting for the
       // watchdog to re-run it.
-      await this.finish(this.row(), failure("internal", errorMessage(caught)));
+      await this.finish(
+        this.row(),
+        failure(caught instanceof KarmiError ? caught.code : "internal", errorMessage(caught)),
+      );
     }
   }
 
@@ -1252,6 +1257,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       if (this.row().cancelled) return this.cancelTurn(this.row());
       if (!boundary.ok) return this.finish(this.row(), boundary.failure);
       const { snapshot } = boundary;
+      if (this.knowledge?.turn !== row.turn)
+        this.knowledge = { turn: row.turn, text: await knowledgeFragments(this.env, row.scope_id, snapshot.spec) };
       if (row.step === 0) {
         if ((await this.beforeTurn(row, snapshot)) === "stop") return;
         if ((await this.activateCommand(row, snapshot, await available(snapshot), channelRef)) === "stop") return;
@@ -1307,6 +1314,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         policy: snapshot.policy,
         builtIns: [
           ...builtInTools(host),
+          ...knowledgeTools(this.env, row.scope_id, snapshot.spec),
           ...(snapshot.scripts && this.env.KARMI_LOADER
             ? [scriptTool(snapshot.spec, () => current().available, row.user_id ?? undefined)]
             : []),
@@ -2177,6 +2185,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const calls = this.providerToolCounts(row.turn, snapshot.providerTools?.limits);
     const providerTools = offeredProviderTools(snapshot.providerTools, snapshot.policy, calls);
     const memory = await this.memoryFragment(row, spec);
+    const knowledge = this.knowledge?.text ?? "";
     const system = await evaluatePrompt(
       spec,
       this.deployment.catalogue,
@@ -2191,6 +2200,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           invokableBy,
         })),
         ...(memory !== undefined && { memory }),
+        knowledge,
       },
     );
     const messages = await this.replayMessages(row, events, profile, model);

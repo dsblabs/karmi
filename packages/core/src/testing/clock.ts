@@ -24,7 +24,8 @@ export function testClock(bindings: KarmiBindings): TestClock {
       let ran: boolean;
       do {
         ran = false;
-        for (const namespace of [bindings.KARMI_SCOPES, bindings.KARMI_THREADS]) {
+        for (const namespace of [bindings.KARMI_SCOPES, bindings.KARMI_THREADS, bindings.KARMI_KNOWLEDGE]) {
+          if (!namespace) continue;
           for (const id of await listDurableObjectIds(namespace)) {
             const stub = namespace.get(id);
             const at = await runInDurableObject(stub, (_, state) => state.storage.getAlarm());

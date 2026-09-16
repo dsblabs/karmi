@@ -3,6 +3,7 @@ import type { KarmiBindings } from "./bindings";
 import type { ScopeId } from "./context";
 import type { Deployment } from "./deployment";
 import { KarmiError } from "./errors";
+import { openKnowledge, type Knowledge } from "./knowledge";
 import { keys } from "./keys";
 import type { McpHolderRef } from "./mcp-auth";
 import { McpRegistry, type McpSnapshot, type McpSnapshotInput } from "./mcp-registry";
@@ -47,6 +48,12 @@ export type {
  */
 export interface Scope {
   readonly id: ScopeId;
+  /** Opens a named Knowledge corpus in this Scope. */
+  readonly knowledge: {
+    (name: string): Knowledge;
+    /** Lists the names of ingested Knowledge corpora. */
+    list(): Promise<string[]>;
+  };
   /** The Scope's own config document, layered over the Deployment defaults. */
   readonly config: {
     /** The current document and its revision. */
@@ -185,6 +192,9 @@ export function openScope(deployment: Deployment, bindings: KarmiBindings, id: S
   const resolved = async () => resolveScopeConfig(deployment.defaults, (await call(stub.configGet(id))).document);
   return {
     id,
+    knowledge: Object.assign((name: string) => openKnowledge(bindings, id, name), {
+      list: () => call(stub.knowledgeList(id)),
+    }),
     config: {
       get: () => call(stub.configGet(id)),
       set: (document, options) => call(stub.configSet(id, document, options?.ifRevision)),

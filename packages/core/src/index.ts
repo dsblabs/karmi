@@ -214,3 +214,15 @@ export type { ToolOutputResult } from "./tool";
 
 export type { Sandbox, SandboxRequest, SandboxResult, ScriptLimits, ScriptToolCall } from "./sandbox";
 export { CloudflareIsolateSandbox } from "./isolate-sandbox";
+
+export {
+  knowledgeIndexSchema,
+  KNOWLEDGE_INLINE_LIMIT,
+  KNOWLEDGE_BULK_THRESHOLD,
+  type Knowledge,
+  type KnowledgeIndex,
+  type KnowledgeIngestOptions,
+  type KnowledgeJob,
+  type KnowledgeChunk,
+} from "./knowledge";
+export { fts5Retriever, type RetrieverCtx } from "./retriever";

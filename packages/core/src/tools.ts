@@ -120,12 +120,17 @@ export function resolveToolSet({
   const modelSkills = skills.some((entry) => entry.invokableBy !== "user");
   for (const tool of builtIns) {
     if (tool.name === "use_skill" && !modelSkills) continue;
-    const effect = (POLICED_BUILT_INS.has(tool.name) && explicitEffect(policy, tool, remembered)) || "allow";
+    const effect = builtInEffect(tool, policy, remembered);
     available.set(tool.name, { tool, settings: undefined, effect, deferred: false });
   }
   const config = { ...AGENT_SPEC_DEFAULTS.context.tools, ...spec.context?.tools };
   if (deferAll(config, deferrable.map(definition), window)) for (const entry of deferrable) entry.deferred = true;
   return { available, skills, loaded };
+}
+
+function builtInEffect(tool: Tool, policy: readonly PolicyRule[], remembered?: ReadonlySet<string>): PolicyEffect {
+  const policed = POLICED_BUILT_INS.has(tool.name) || tool.name.startsWith("search_");
+  return (policed && explicitEffect(policy, tool, remembered)) || "allow";
 }
 
 // The settings were validated at put. They are parsed again so the Tool sees its schema's defaults and transforms.

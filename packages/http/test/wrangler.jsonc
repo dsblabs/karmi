@@ -8,12 +8,14 @@
     "bindings": [
       { "name": "KARMI_THREADS", "class_name": "ThreadDO" },
       { "name": "KARMI_SCOPES", "class_name": "ScopeConfigDO" },
-      { "name": "KARMI_MEMORY", "class_name": "MemoryDO" }
+      { "name": "KARMI_MEMORY", "class_name": "MemoryDO" },
+      { "name": "KARMI_KNOWLEDGE", "class_name": "KnowledgeDO" }
     ]
   },
   "migrations": [
     { "tag": "karmi-v1", "new_sqlite_classes": ["ThreadDO", "ScopeConfigDO"] },
-    { "tag": "karmi-v2", "new_sqlite_classes": ["MemoryDO"] }
+    { "tag": "karmi-v2", "new_sqlite_classes": ["MemoryDO"] },
+    { "tag": "karmi-v3", "new_sqlite_classes": ["KnowledgeDO"] }
   ],
   "r2_buckets": [{ "binding": "KARMI_MEDIA", "bucket_name": "karmi-http-test-media" }],
   "queues": {

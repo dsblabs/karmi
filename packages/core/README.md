@@ -30,7 +30,7 @@ const karmi = createKarmi({
   },
 });
 
-export const { ThreadDO, ScopeConfigDO, MemoryDO } = karmi.durableObjects;
+export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;
 export default { queue: karmi.queueHandler };
 ```
 
@@ -156,7 +156,7 @@ Core reads wall time through `Clock.now()`. `createKarmi({ clock })` accepts an 
 ```ts
 // Export these from the test Worker, alongside its Durable Object classes.
 export const { karmi, scope, provider, clock } = createTestKarmi(catalogue);
-export const { ThreadDO, ScopeConfigDO, MemoryDO } = karmi.durableObjects;
+export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;
 
 // In a test, after evictDurableObject(stub):
 await clock.advance("24h"); // Also fires due alarms through cloudflare:test.
@@ -255,7 +255,7 @@ const receipt = defineDeliverer({
   },
 });
 const karmi = createKarmi({ catalogue: { agents: [agent], deliverers: [receipt] } });
-export const { ThreadDO, ScopeConfigDO, MemoryDO } = karmi.durableObjects;
+export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;
 export default { queue: karmi.queueHandler };
 
 await karmi
@@ -355,3 +355,50 @@ an OpenAI Responses model; the adapter rejects a mismatched factory at request
 build because the factory is arbitrary application code.
 `before-tool` does not run; `after-tool` observes the result and cannot change it.
 The Prompt names the Provider Tools enabled for the current Step.
+
+### Knowledge
+
+Bind `KARMI_KNOWLEDGE` to `KnowledgeDO` and add the `karmi-v3` SQLite migration from the
+published Wrangler baseline. A corpus belongs to one Scope and is shared by its Agents:
+
+```ts
+const faq = scope.knowledge("faq");
+await faq.ingest([{ id: "refunds", text: "Refunds are available within 30 days." }]);
+await scope.agents.put({
+  agentId: "support",
+  name: "Support",
+  instructions: [{ text: "Answer from the company FAQ." }],
+  model: { id: "anthropic/claude-sonnet-4-5" },
+  knowledge: [{ name: "faq", mode: "search" }],
+});
+```
+
+Search mode adds the read-only `search_faq` Tool. It is always loaded and respects explicit
+Permission Policy rules. `mode: "tool"` remains an alias for search. `mode: "inline"` puts the
+whole corpus in the prompt and fails the Turn if its text exceeds 32,000 Unicode code points,
+including separators. Inline text preserves documents without overlapping chunk duplicates.
+Knowledge names use 1–57 letters, digits, underscores or hyphens.
+
+`faq.search(query)` returns at most ten FTS5 BM25 passages by default, each with `docId`, `seq`,
+`text`, `score` (higher is better), and metadata. `faq.delete(ids)` removes documents, `faq.destroy()`
+clears the corpus and its Retriever mirror, and `scope.knowledge.list()` lists ingested corpora.
+Reingesting a document replaces all of its old chunks. The first ingest fixes `index` options
+(`chunkSize: 2000`, `overlap: 200`, in Unicode code points) and the indexing Retriever and settings.
+Destroy the corpus before changing these options.
+
+Ingests above 64,000 UTF-16 code units or 32 documents return `{ pending: jobId }`. The DO alarm
+processes batches and checkpoints each document. Read progress with `faq.jobs.get(jobId)`.
+Supply a stable `jobId` to make retries of a submitted request return the same Job; reusing that
+id for different input fails. Other writes reject with `knowledge.busy` until the pending ingest finishes.
+Destroy also waits for any pending Thread completion callback. Searches can
+see the documents already committed. Pass `threadKey: thread.key` when a Tool returns the
+pending result so the Job reports completion through `thread.jobs`. Small ingests return
+`{ indexed: count }` directly.
+
+A Catalogue `defineRetriever` can supply `index`, `search`, `delete`, and `destroy`. Ingest passes
+Framework-produced chunks, identified by `(id, seq)`. Every operation receives `RetrieverCtx`
+with its Scope and corpus name, parsed settings, logger, abort signal, and access to the local
+FTS5 search and bounded inline corpus. Index, delete and destroy callbacks must be idempotent:
+recovery can repeat an external operation before its local checkpoint is committed. Select the
+indexing Retriever through ingest options; a Spec may select a search Retriever by name and
+provide validated settings. The default `fts5Retriever` needs no external service.

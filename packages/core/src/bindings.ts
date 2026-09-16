@@ -8,6 +8,8 @@ export interface KarmiBindings {
   KARMI_SCOPES: DurableObjectNamespace;
   /** The Durable Object namespace that hosts per-User Memory. */
   KARMI_MEMORY: DurableObjectNamespace;
+  /** The Durable Object namespace that hosts Knowledge corpora. */
+  KARMI_KNOWLEDGE?: DurableObjectNamespace;
   /** The R2 bucket for media and spilled Tool output. */
   KARMI_MEDIA?: R2Bucket;
   /** The queue that carries Deliverer work. */
@@ -26,6 +28,7 @@ const BINDING_NAMES = [
   "KARMI_THREADS",
   "KARMI_SCOPES",
   "KARMI_MEMORY",
+  "KARMI_KNOWLEDGE",
   "KARMI_MEDIA",
   "KARMI_QUEUE",
   "KARMI_LOADER",
