@@ -1,3 +1,4 @@
+import { embeddingIndexSchema } from "./vector-store";
 import * as z from "zod/mini";
 import type { KarmiBindings } from "./bindings";
 import { KarmiError } from "./errors";
@@ -10,6 +11,8 @@ import type { ToolPending } from "./tool";
 /** The immutable chunking configuration, measured in Unicode code points. */
 export const knowledgeIndexSchema = z
   .strictObject({
+    /** The embedding configuration, filled from the indexing Retriever at first ingest. */
+    embedding: z.optional(embeddingIndexSchema),
     /** The largest chunk, in Unicode code points; defaults to 2000. */
     chunkSize: z._default(z.int().check(z.gte(1), z.lte(16000)), 2000),
     /** The shared suffix and prefix of adjacent chunks; defaults to 200. */
@@ -54,6 +57,8 @@ export interface Knowledge {
   ingest(docs: KnowledgeDocument[], options?: KnowledgeIngestOptions): Promise<{ indexed: number } | ToolPending>;
   /** Searches using FTS5 by default, or a Catalogue Retriever. */
   search(query: string, options?: { retriever?: string; settings?: Record<string, unknown> }): Promise<Passage[]>;
+  /** Restores the vector mirror from saved embeddings without calling the model. */
+  rebuild(): Promise<void>;
   /** Reads the whole corpus, failing when it exceeds the inline limit. */
   inline(): Promise<string>;
   /** Deletes documents by id; repeating a deletion is safe. */
@@ -72,6 +77,7 @@ export function openKnowledge(bindings: KarmiBindings, scope: string, name: stri
   return {
     ingest: (docs, options = {}) => unwrap(stub.ingest(scope, name, docs, options)),
     search: (query, options = {}) => unwrap(stub.search(scope, name, query, options)),
+    rebuild: () => unwrap(stub.rebuild(scope, name)),
     inline: () => unwrap(stub.inline(scope, name)),
     delete: (ids) => unwrap(stub.remove(scope, name, ids)),
     destroy: () => unwrap(stub.destroy(scope, name)),
@@ -92,4 +98,10 @@ export function chunkDocument(doc: KnowledgeDocument, index: KnowledgeIndex): Kn
 /** One Framework-produced chunk, identified by its document id and zero-based sequence. */
 export interface KnowledgeChunk extends KnowledgeDocument {
   seq: number;
+}
+
+const metadataSchema = z.record(z.string(), z.json());
+/** Decodes document metadata read from the Knowledge ledger. */
+export function decodeKnowledgeMetadata(json: string): z.output<typeof metadataSchema> {
+  return z.parse(metadataSchema, JSON.parse(json));
 }

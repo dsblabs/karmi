@@ -1,6 +1,5 @@
-import * as z from "zod/mini";
 import { KarmiError } from "./errors";
-import { KNOWLEDGE_INLINE_LIMIT, type KnowledgeChunk } from "./knowledge";
+import { decodeKnowledgeMetadata, KNOWLEDGE_INLINE_LIMIT, type KnowledgeChunk } from "./knowledge";
 import { ftsQuery } from "./memory";
 import type { KnowledgeDocument, Passage } from "./retriever";
 
@@ -31,7 +30,6 @@ const SCHEMA = `
     job TEXT NOT NULL, seq INTEGER NOT NULL, document TEXT NOT NULL, PRIMARY KEY(job, seq)
   );
 `;
-const metadataSchema = z.record(z.string(), z.json());
 type ChunkRow = { doc: string; seq: number; text: string; meta: string; score: number };
 
 /** Owns the corpus ledger and its transactionally maintained FTS5 index. */
@@ -67,15 +65,16 @@ export class KnowledgeStore {
     }
   }
 
-  search(query: string): Passage[] {
+  search(query: string, topK = 10): Passage[] {
     const match = ftsQuery(query);
     if (!match) return [];
     return this.sql
       .exec<ChunkRow>(
         `SELECT c.doc, c.seq, c.text, c.meta, -bm25(chunks_fts) AS score
       FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid
-      WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts), c.doc, c.seq LIMIT 10`,
+      WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts), c.doc, c.seq LIMIT ?`,
         match,
+        topK,
       )
       .toArray()
       .map(passage);
@@ -114,6 +113,6 @@ function passage(row: ChunkRow): Passage {
     seq: row.seq,
     text: row.text,
     score: row.score,
-    metadata: z.parse(metadataSchema, JSON.parse(row.meta)),
+    metadata: decodeKnowledgeMetadata(row.meta),
   };
 }

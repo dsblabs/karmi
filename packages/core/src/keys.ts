@@ -1,3 +1,4 @@
+import { sha256Hex } from "./digest";
 import type { ScopeId } from "./context";
 import { KarmiError } from "./errors";
 import { assertIdentifier, KNOWLEDGE_NAME, KNOWLEDGE_NAME_MESSAGE } from "./names";
@@ -37,6 +38,12 @@ export const keys = {
   knowledge(scope: ScopeId, name: string): string {
     if (!KNOWLEDGE_NAME.test(name)) throw new KarmiError("knowledge.invalid", KNOWLEDGE_NAME_MESSAGE);
     return `${assertScope(scope)}/knowledge/${name}`;
+  },
+  async vector(scope: ScopeId, knowledge: string, doc: string, seq: number): Promise<string> {
+    return (await sha256Hex(JSON.stringify([assertScope(scope), knowledge, doc, seq]))).slice(0, 32);
+  },
+  async vectorMirror(scope: ScopeId, id: string): Promise<string> {
+    return (await sha256Hex(JSON.stringify([assertScope(scope), id]))).slice(0, 32);
   },
   memory(scope: ScopeId, user: string): string {
     assertIdentifier("user.id.invalid", "user", user);

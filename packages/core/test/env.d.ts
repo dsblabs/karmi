@@ -1,5 +1,6 @@
 declare namespace Cloudflare {
   interface Env {
+    KARMI_LIVE_VECTORS?: Vectorize;
     KARMI_THREADS: DurableObjectNamespace;
     KARMI_SCOPES: DurableObjectNamespace;
     KARMI_MEMORY: DurableObjectNamespace;

@@ -17,7 +17,7 @@ export interface KarmiBindings {
   /** The Worker loader that runs Scripts in isolates. */
   KARMI_LOADER?: WorkerLoader;
   /** The Vectorize index behind the built-in Vector store. */
-  KARMI_VECTORIZE?: VectorizeIndex;
+  KARMI_VECTORIZE?: Vectorize;
   /** The Workers AI binding. */
   KARMI_AI?: Ai;
   /** The envelope store's key ring, supplied as a Worker secret. See `envelopeSecrets`. */

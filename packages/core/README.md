@@ -402,3 +402,89 @@ FTS5 search and bounded inline corpus. Index, delete and destroy callbacks must 
 recovery can repeat an external operation before its local checkpoint is committed. Select the
 indexing Retriever through ingest options; a Spec may select a search Retriever by name and
 provide validated settings. The default `fts5Retriever` needs no external service.
+
+## Vector and hybrid Knowledge retrieval
+
+Register a vector Retriever in the Catalogue. SQLite is the default vector store;
+Workers AI supplies `@cf/baai/bge-m3` embeddings through `KARMI_AI` unless you pass
+an `Embedder` implementation backed by your own provider.
+
+```ts
+import { createKarmi, vectorRetriever, hybridRetriever } from "@karmi/core";
+
+const karmi = createKarmi({ catalogue: { retrievers: [vectorRetriever, hybridRetriever] } });
+const knowledge = karmi.scope("acme").knowledge("handbook");
+await knowledge.ingest([{ id: "refunds", text: "Refunds are available within thirty days." }], {
+  retriever: "vector",
+});
+const hits = await knowledge.search("return a purchase", {
+  settings: { mode: "hybrid", topK: 10 },
+});
+```
+
+The first ingest fixes the embedding model, dimensions, metric, chunking and
+indexing Retriever. A changed embedding configuration is rejected; create a new
+Knowledge corpus to use a different model. Search can override `mode` and `topK`.
+Hybrid mode combines BM25 and vector ranks by reciprocal-rank fusion with a
+constant of 60. `defineVectorRetriever({ name, rankConstant })` changes that
+constant. Memory recall continues to use FTS5.
+
+`defineVectorRetriever({ name, embedder, maxChunks })` accepts custom embeddings
+and a SQLite page size. The default `maxChunks: 1000` comes from the
+[workerd measurements](../../docs/research/vector-workerd-timings.md). Larger
+corpora are scanned in pages, with at most 100 ranked results retained.
+
+For Vectorize, bind one index per Deployment and embedding model. Use the same
+binding for every Scope; the adapter supplies the Scope namespace and hashes
+remote IDs so identical IDs in different Scopes cannot overwrite each other.
+
+```ts
+import { env } from "cloudflare:workers";
+import { defineVectorRetriever, VectorizeStore } from "@karmi/core";
+
+const search = defineVectorRetriever({
+  name: "search",
+  store: (ctx) => new VectorizeStore(env.KNOWLEDGE_VECTORS_BGE_M3, ctx.storage),
+});
+```
+
+Create the index and both string metadata indexes **before ingesting vectors**:
+
+```sh
+pnpm exec wrangler vectorize create karmi-bge-m3 --dimensions=1024 --metric=cosine
+pnpm exec wrangler vectorize create-metadata-index karmi-bge-m3 --property-name=knowledge --type=string
+pnpm exec wrangler vectorize create-metadata-index karmi-bge-m3 --property-name=doc --type=string
+```
+
+Bind that index in `wrangler.jsonc`, then check the actual bound index:
+
+```sh
+# Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN in the environment.
+pnpm exec karmi doctor --config wrangler.jsonc --binding KNOWLEDGE_VECTORS_BGE_M3 --dims 1024 --metric cosine
+```
+
+This doctor command checks dimensions, metric and metadata indexes through the
+management API. Supply the dimensions and metric of the Knowledge embedding
+configuration when using a custom model. It reads JSON or JSONC configuration;
+pass a configuration with the intended environment's bindings at the top level.
+It does not provision or alter the index.
+
+Embeddings and the id ledger are stored in the Knowledge Durable Object before
+external writes. `knowledge.rebuild()` restores the mirror from those saved
+vectors without embedding again. Document replacement and deletion use the
+ledger's IDs; `destroy()` deletes those IDs in batches, clears any remaining
+adapter entries for that Knowledge, then clears the corpus. Other corpora in
+the Scope remain intact. Vectorize mutations are asynchronous, so search may
+lag an acknowledged write; see the [Vectorize API documentation](https://developers.cloudflare.com/vectorize/reference/client-api/).
+
+The normal test configuration disables remote bindings. The separate live suite
+uses only a disposable `karmi-test-vectors` index with two dimensions, cosine
+metric, and the same two metadata indexes. After provisioning it and authenticating
+Wrangler, run:
+
+```sh
+KARMI_VECTORIZE_LIVE=1 pnpm --filter @karmi/core test:vectorize-live
+```
+
+The live configuration refuses to run in CI. It is never included in the ordinary
+test suite. The local tests use deterministic embeddings and SQLite only.
