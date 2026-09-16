@@ -16,7 +16,7 @@ export function eventStream(events: AsyncIterable<ThreadEvent>, signal: AbortSig
   let ended = false;
   const stop = () => {
     ended = true;
-    clearInterval(keepAlive);
+    if (keepAlive !== undefined) clearInterval(keepAlive);
     void iterator.return?.();
   };
   const body = new ReadableStream<Uint8Array>({

@@ -1,0 +1,24 @@
+{
+  "name": "karmi-template",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "doctor": "karmi doctor",
+    "test": "karmi doctor && vitest run",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@karmi/anthropic": "workspace:*",
+    "@karmi/core": "workspace:*",
+    "@karmi/http": "workspace:*",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.4",
+    "@cloudflare/workers-types": "^5.20260904.1",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.129.0"
+  }
+}

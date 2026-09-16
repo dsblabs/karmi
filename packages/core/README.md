@@ -109,6 +109,53 @@ At Turn start the Thread takes the servers' catalogues (cached per Scope, refres
 
 In tests, `fakeMcpServer({ name, tools, era? })` is a real in-process server reached through the same `scopedFetch`: `createTestKarmi(catalogue, { mcpServers: [github] })`, then register `github.url` in the Scope config. `github.calls` records every request it saw and `github.tools` can be replaced to change its catalogue.
 
+## `karmi doctor`
+
+`karmi doctor` checks a project before `wrangler deploy` does. It exits 1 when any
+check fails; warnings and skipped checks exit 0.
+
+```sh
+pnpm exec karmi doctor
+```
+
+```
+ok   compatibility: compatibility_date 2026-08-04 is at or above 2026-08-04.
+ok   bindings: Every karmi binding is declared under its fixed name.
+ok   durable-objects: Every bound Durable Object class is exported and migrated as SQLite.
+--   capabilities: No KARMI_LOADER binding: an Agent granting capabilities.scripts { tier: "isolate" } fails.
+warn mcp: Set createKarmi({ oauth: { origin } }); no OAuth server can be used without it.
+```
+
+| Check             | What it reads                | What it finds                                                                       |
+| ----------------- | ---------------------------- | ----------------------------------------------------------------------------------- |
+| `compatibility`   | `wrangler.jsonc`             | A `compatibility_date` below karmi's floor, and a missing `global_fetch_strictly_public`. |
+| `bindings`        | `wrangler.jsonc`             | A missing `KARMI_*` binding, a misspelt one, a Queue with no consumer, no media bucket. |
+| `durable-objects` | `wrangler.jsonc` and `main`  | A Durable Object class the entry does not re-export, or that is not a SQLite class.  |
+| `capabilities`    | `wrangler.jsonc`             | Whether the isolate and container Script tiers are reachable at all.                |
+| `vectorize`       | The Vectorize management API | An index whose dimensions, metric or metadata indexes do not match.                 |
+| `gateway`         | The manifest                 | A Provider profile behind an AI Gateway while an Agent defers its Tools.             |
+| `mcp`             | The manifest                 | An MCP server whose vendor takes only a client you register by hand.                |
+| `specs`           | The manifest                 | An Agent Spec whose shape is wrong or that names a Catalogue item nobody defines.    |
+
+The last three read what the Deployment defines in code, which a wrangler config
+cannot answer. Write it as JSON and pass it with `--manifest`, or leave it at
+`karmi.doctor.json`, where the doctor finds it by itself:
+
+```json
+{
+  "origin": "https://agents.example.com",
+  "defaults": { "providers": { "default": { "adapter": "anthropic" } } },
+  "catalogue": { "tools": [{ "name": "weather" }], "skills": [], "fragments": [], "hooks": [], "retrievers": [], "agents": [], "deliverers": [] },
+  "specs": { "agents/concierge.json": { "agentId": "concierge", "name": "Concierge", "instructions": [], "model": { "id": "anthropic/claude-sonnet-5" } } }
+}
+```
+
+`defaults` is `createKarmi({ defaults })` and `catalogue` is `karmi.catalogue.describe()`,
+both as JSON. A check whose input is absent reports `--` and never fails the run.
+
+Every check is also a function: `runChecks`, `formatFindings` and `hasFailure` are
+exported, so a Platform can run the same checks from its own tooling.
+
 ## Testing
 
 `@karmi/core/testing` ships `fakeProvider`, a scripted Provider that is registered like any other:
@@ -466,11 +513,10 @@ Bind that index in `wrangler.jsonc`, then check the actual bound index:
 pnpm exec karmi doctor --config wrangler.jsonc --binding KNOWLEDGE_VECTORS_BGE_M3 --dims 1024 --metric cosine
 ```
 
-This doctor command checks dimensions, metric and metadata indexes through the
-management API. Supply the dimensions and metric of the Knowledge embedding
-configuration when using a custom model. It reads JSON or JSONC configuration;
-pass a configuration with the intended environment's bindings at the top level.
-It does not provision or alter the index.
+`--binding` names any Vectorize binding, so a custom Retriever's index is checked
+the same way as the built-in `KARMI_VECTORIZE`. The check reads dimensions, metric
+and metadata indexes through the management API and never provisions or alters
+the index. See [`karmi doctor`](#karmi-doctor) for the rest of the checks.
 
 Embeddings and the id ledger are stored in the Knowledge Durable Object before
 external writes. `knowledge.rebuild()` restores the mirror from those saved
