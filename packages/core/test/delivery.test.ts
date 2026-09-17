@@ -39,7 +39,9 @@ it("suppresses delivery while attached and delivers a later offline Turn using t
     parts: [{ type: "text", text: "Hello" }],
     channelRef: { deliverer: { name: "receipt", ref: "saved" } },
   });
-  await expect.poll(async () => (await thread.status()).state).toBe("idle");
+  // `karmi.scope(...)` is not the Test kit's Scope, so `send` returns as soon as the input is accepted.
+  // An idle status is also the state before the Turn starts, so the completion event is what to wait for.
+  await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.completed")).toBe(true);
   await clock.advance(1000);
   expect(deliveries).toEqual([]);
   socket.close();

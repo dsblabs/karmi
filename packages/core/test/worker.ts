@@ -153,10 +153,12 @@ const startJob = defineTool({
 
 /**
  * A read-only Tool that blocks until the test opens the gate, so a test can act mid-Step deterministically.
+ * `gate.entered` counts the calls that reached it, so a test can wait until the Tool is really running
+ * rather than guess from the Thread's status.
  * It polls on a timer of its own rather than awaiting a test-side promise: a continuation resolved from
  * the test context would run there, outside the Durable Object's I/O context.
  */
-export const gate = { open: false };
+export const gate = { open: false, entered: 0 };
 export const untilOpen = async () => {
   while (!gate.open) await settle(5);
 };
@@ -166,6 +168,7 @@ const waitGate = defineTool({
   input: z.object({}),
   annotations: { readOnlyHint: true },
   execute: async () => {
+    gate.entered++;
     await untilOpen();
     return "released";
   },
