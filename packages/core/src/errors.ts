@@ -73,6 +73,7 @@ export type KarmiErrorCode =
   | "thread.notFound"
   | "thread.notParked"
   | "thread.seq.invalid"
+  | "thread.socketLimit"
   | "user.id.invalid";
 
 /** The error every karmi failure is thrown as. It carries a stable, dotted code a caller can switch on. */

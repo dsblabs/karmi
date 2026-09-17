@@ -160,7 +160,7 @@ describe("reading the log", () => {
     ]);
     expect((await thread.events({ after: 5 })).map((e) => e.seq)).toEqual([6, 7, 8]);
 
-    const parts = await take(thread.subscribe({ granularity: "part" }), 6);
+    const parts = await take(thread.subscribe({ granularity: "part", after: 0 }), 6);
     expect(parts.map((e) => e.type)).toEqual([
       "turn.started",
       "step.started",

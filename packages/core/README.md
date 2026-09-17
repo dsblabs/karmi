@@ -331,6 +331,10 @@ await karmi
 
 The Thread remembers the last supplied `channelRef.deliverer`; inputs without one retain the route. Each completion or Approval request captures that route and an event range. A durable alarm gives subscribers one second to consume the trigger before enqueueing it. The Queue checks consumption again before calling the Deliverer. Merely polling `events()` or opening a subscription does not count as consumption: the iterator must reach the completion or Approval event. A subscriber racing an in-flight delivery can still see the same event.
 
+Any attached socket (including `subscribe()` and SSE) suppresses offline delivery. Delivery waits one second to let reconnecting clients reattach.
+
+`thread.socket({ after, granularity })` returns a WebSocket upgrade response; return it directly from your Worker. Sockets and `subscribe()` stream live by default; pass `after: 0` to replay the whole log. Socket authority is fixed at upgrade until disconnection. A `4004` close is terminal; reconnect after other close codes with the last `seq` received.
+
 Delivery uses the persisted event log at the Deliverer's granularity, including Approval events. Successive ranges in a Turn do not overlap. Without a Deliverer, output stays available through `events()` and `subscribe()`.
 
 Delivery is at-least-once, independent of Turn success; deduplicate side effects using the Thread key and event `seq` within your Channel's Scope. Queued delivery and late delivery alarms skip destroyed Scopes. Configure `KARMI_QUEUE` and export `karmi.queueHandler`; the published Wrangler baseline retries three times and routes exhausted messages to `my-karmi-dlq`. Create both queues when provisioning the deployment and operate the DLQ using [Cloudflare's dead-letter queue guidance](https://developers.cloudflare.com/queues/configuration/dead-letter-queues/).

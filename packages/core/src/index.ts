@@ -267,3 +267,14 @@ export {
 export { CloudflareContainerSandbox } from "./container-sandbox";
 export { KarmiSandbox, ContainerProxy } from "./cloudflare-container";
 export type { ContainerDriver, ContainerHost, ContainerLimits, ContainerRun } from "./container-types";
+
+export {
+  ThreadProtocolError,
+  decodeTurnRequest,
+  decodeApprovalAnswer,
+  isGranularity,
+  parseJsonText,
+  type SocketFrame,
+  type ServerFrame,
+  type TurnRequest,
+} from "./thread-protocol";

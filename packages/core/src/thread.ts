@@ -1,10 +1,11 @@
+import { subscribeSocket } from "./thread-subscription";
 import type { MediaWriter } from "./media";
 import type { KarmiBindings } from "./bindings";
 import type { ScopeId, UserId } from "./context";
 import { KarmiError } from "./errors";
 import { keys } from "./keys";
 import { assertIdentifier } from "./names";
-import { remote, type Remote, unwrap } from "./outcome";
+import { remote, type Outcome, unwrap } from "./outcome";
 import type { Usage } from "./provider";
 import type { ThreadDurableObject } from "./thread-do";
 import type { ScheduleSummary } from "./schedule";
@@ -159,7 +160,13 @@ export interface Thread {
    * reference.
    */
   fork(seq: number, target?: { threadId?: string }): Promise<Thread>;
-  /** Replays events after `after` (default the whole log), then streams live until the consumer stops. */
+  /**
+   * Opens a hibernating client socket, live by default; `after` opts into replay and granularity defaults to delta.
+   * Authority is fixed at upgrade, including after credential revocation, until the client disconnects.
+   * Close code 4004 is terminal; other closes can reconnect using the last event's seq.
+   */
+  socket(options?: { after?: number; granularity?: Granularity }): Promise<Response>;
+  /** Streams live events until the consumer stops; `after` opts into replay and granularity defaults to delta. */
   subscribe(options?: { after?: number; granularity?: Granularity }): AsyncIterable<ThreadEvent>;
   /** Returns the persisted events after `after`, default the whole log, without waiting for new ones. */
   events(options?: { after?: number }): Promise<ThreadEvent[]>;
@@ -194,6 +201,7 @@ export function openThread(bindings: KarmiBindings, scope: ScopeId, target: Thre
   if (identity.user !== undefined) address.user = identity.user;
   // `keys.thread` validates the threadId, so an invalid one never reaches a Durable Object name.
   const stub = remote<ThreadDurableObject>(bindings.KARMI_THREADS, keys.thread(scope, identity.threadId));
+  const socket: Thread["socket"] = (options) => openSocket(bindings, address, options);
   return {
     key: encodeKey(identity),
     identity,
@@ -227,26 +235,42 @@ export function openThread(bindings: KarmiBindings, scope: ScopeId, target: Thre
     schedule: (input) => unwrap(stub.schedule(address, input)),
     cancelSchedule: (scheduleId) => unwrap(stub.cancelSchedule(address, scheduleId)),
     schedules: () => unwrap(stub.schedules(address)),
-    subscribe: (options) => subscribe(stub, address, options?.after ?? 0, options?.granularity ?? "delta"),
+    socket,
+    subscribe: (options) => subscribeSocket(socket, options),
   };
 }
 
-// Each poll returns as soon as the Thread has something new, or times out empty, so this loop never spins.
-async function* subscribe(
-  stub: Remote<ThreadDurableObject>,
+async function openSocket(
+  bindings: KarmiBindings,
   address: ThreadAddress,
-  after: number,
-  granularity: Granularity,
-): AsyncGenerator<ThreadEvent> {
-  for (;;) {
-    const batch = await unwrap(stub.poll(address, after, granularity));
-    for (const event of batch) {
-      after = event.seq;
-      if (event.type === "turn.completed" || event.type === "approval.requested")
-        await unwrap(stub.consumed(address, event.seq));
-      yield event;
-    }
+  options: Parameters<Thread["socket"]>[0],
+): Promise<Response> {
+  const url = new URL("https://thread.internal/socket");
+  if (options?.after !== undefined) url.searchParams.set("after", String(options.after));
+  const response = await bindings.KARMI_THREADS.getByName(keys.thread(address.scope, address.threadId)).fetch(url, {
+    headers: {
+      upgrade: "websocket",
+      "x-karmi-thread": JSON.stringify({ address, granularity: options?.granularity ?? "delta" }),
+    },
+  });
+  if (response.status !== 101) {
+    await unwrap(Promise.resolve(decodeSocketFailure(await response.text())));
   }
+  return response;
+}
+
+// The internal binding returns core's own error codes; only its failure envelope crosses this boundary.
+function decodeSocketFailure(json: string): Outcome<never> {
+  const failure: Outcome<never> = JSON.parse(json);
+  if (
+    typeof failure !== "object" ||
+    failure === null ||
+    failure.ok !== false ||
+    typeof failure.code !== "string" ||
+    typeof failure.message !== "string"
+  )
+    throw new Error("Invalid internal Thread upgrade failure.");
+  return failure;
 }
 
 /** Encodes a Thread identity as the opaque, URL-safe key `Thread.key` exposes. */
