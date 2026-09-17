@@ -1,0 +1,23 @@
+name: Container image smoke test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t karmi-sandbox packages/sandbox-container
+      - name: Check Python packages and command-line tools
+        run: |
+          docker run --rm --entrypoint sh karmi-sandbox -ec '
+            python3 -c "import pandas, openpyxl, pypdf, PIL"
+            node --version
+            ffmpeg -version
+            jq --version
+            mkdir -p /in /out
+            printf input > /in/sample
+            python3 -c "from pathlib import Path; Path(\"/out/result\").write_text(Path(\"/in/sample\").read_text())"
+            test "$(cat /out/result)" = input
+          '

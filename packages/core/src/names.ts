@@ -64,3 +64,6 @@ export function deepFreeze<T>(value: T): T {
 export const KNOWLEDGE_NAME = /^[A-Za-z0-9_-]{1,57}$/;
 /** The explanation used when a Knowledge name is invalid. */
 export const KNOWLEDGE_NAME_MESSAGE = "Knowledge names must match [A-Za-z0-9_-]{1,57}.";
+
+/** The hostname or leading wildcard pattern accepted by outbound grants. */
+export const HOST_PATTERN = /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)*$/i;

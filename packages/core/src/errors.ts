@@ -53,6 +53,7 @@ export type KarmiErrorCode =
   | "schedule.limit"
   | "schedule.notFound"
   | "ref.fragment.unknown"
+  | "scope.limit"
   | "scope.destroyed"
   | "scope.id.invalid"
   | "scope.suspended"

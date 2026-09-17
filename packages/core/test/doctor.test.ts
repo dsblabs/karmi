@@ -133,7 +133,11 @@ describe("the capabilities check", () => {
   });
 
   it("reports both tiers when both are configured", () => {
-    const config = withConfig({ worker_loaders: [{ binding: "KARMI_LOADER" }], containers: [{}] });
+    const config = withConfig({
+      worker_loaders: [{ binding: "KARMI_LOADER" }],
+      durable_objects: { bindings: [{ name: "KARMI_SANDBOX", class_name: "KarmiSandbox" }] },
+      containers: [{ class_name: "KarmiSandbox", image: "./Dockerfile" }],
+    });
     expect(statuses(checkCapabilities(config))).toEqual(["pass", "pass"]);
   });
 });

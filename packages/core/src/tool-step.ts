@@ -1,3 +1,4 @@
+import { ContainerInput } from "./container-types";
 import { scriptValue, storeStructuredResult } from "./script-results";
 import { ScriptInput, scriptTools, type ScriptExecution } from "./scripts";
 import { ingestToolResult } from "./media-ingress";
@@ -165,6 +166,7 @@ export async function runToolStep(
   };
   try {
     for (const call of pending) {
+      if (containerWaits(host, call, started, waiting, waitsOn)) continue;
       if (waitsOn(call) !== undefined) continue;
       if (host.available.get(call.name)?.tool.annotations.readOnlyHint) parallel.push(call);
       else {
@@ -503,12 +505,16 @@ async function spill(
   return { result: { ...result, content }, ...(output && { output }) };
 }
 
-async function executeScript(host: ToolStepHost, code: string, ctx: ToolContext<unknown>): Promise<ToolResult> {
+async function executeScript(host: ToolStepHost, input: unknown, ctx: ToolContext<unknown>): Promise<ToolOutcome> {
   const execution = host.scripts;
   if (!execution) return errorResult("Scripts are unavailable.");
   const available = scriptTools(host.spec, host.available, host.user);
+  const container = host.spec.capabilities?.scripts?.tier === "container" ? z.parse(ContainerInput, input) : undefined;
+  const code = container?.code ?? z.parse(ScriptInput, input).code;
   const startedAt = host.now();
   const result = await execution.sandbox.run({
+    callId: ctx.callId,
+    ...(container && { container }),
     code,
     limits: execution.limits,
     signal: ctx.signal,
@@ -524,10 +530,11 @@ async function executeScript(host: ToolStepHost, code: string, ctx: ToolContext<
     ...(host.user !== undefined && { user: host.user }),
     threadId: host.threadId,
     ...(host.parent && { parent: host.parent }),
-    tier: "isolate",
+    tier: host.spec.capabilities?.scripts?.tier ?? "isolate",
     wallMs: host.now() - startedAt,
     callId: ctx.callId,
   });
+  if ("pending" in result) return result;
   return { content: [{ type: "text", text: JSON.stringify(result) }], isError: result.error !== undefined };
 }
 
@@ -538,9 +545,7 @@ async function executeOutcome(
   ctx: ToolContext<unknown>,
   tool: Tool,
 ): Promise<ToolOutcome> {
-  return call.name === "run_script" && host.scripts
-    ? executeScript(host, z.parse(ScriptInput, input).code, ctx)
-    : tool.execute(input, ctx);
+  return call.name === "run_script" && host.scripts ? executeScript(host, input, ctx) : tool.execute(input, ctx);
 }
 
 function scriptCaller(host: ToolStepHost, ctx: ToolContext<unknown>, available: ReadonlyMap<string, AvailableTool>) {
@@ -583,4 +588,18 @@ function scriptCaller(host: ToolStepHost, ctx: ToolContext<unknown>, available: 
     }
     return { callId, value, isError };
   };
+}
+
+function containerWaits(
+  host: ToolStepHost,
+  call: ToolCall,
+  started: Set<string>,
+  waiting: ToolCall[],
+  waitsOn: (call: ToolCall) => string | undefined,
+): boolean {
+  return (
+    host.spec.capabilities?.scripts?.tier === "container" &&
+    call.name === "run_script" &&
+    (started.size > 0 || waiting.some((item) => item.name === "run_script" && waitsOn(item) === "job"))
+  );
 }

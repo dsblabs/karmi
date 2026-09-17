@@ -268,7 +268,16 @@ export function checkDurableObjects(config: WranglerConfig, entry: string | unde
 /** Reports which optional runtimes the config makes available: isolate Scripts and the container tier. */
 export function checkCapabilities(config: WranglerConfig): Finding[] {
   const loader = (config.worker_loaders ?? []).some((entry) => entry.binding === "KARMI_LOADER");
-  const containers = (config.containers ?? []).length > 0;
+  const binding = config.durable_objects?.bindings.find((entry) => entry.name === "KARMI_SANDBOX");
+  const container = (config.containers ?? []).find(
+    (entry) =>
+      typeof entry === "object" && entry !== null && "class_name" in entry && entry.class_name === binding?.class_name,
+  );
+  const image =
+    container && typeof container === "object" && "image" in container && typeof container.image === "string"
+      ? container.image
+      : undefined;
+  const containers = binding !== undefined && image !== undefined;
   return [
     loader
       ? pass("capabilities", "KARMI_LOADER is bound, so the isolate Script tier is available.")
@@ -277,7 +286,10 @@ export function checkCapabilities(config: WranglerConfig): Finding[] {
           'No KARMI_LOADER binding: an Agent granting capabilities.scripts { tier: "isolate" } fails.',
         ),
     containers
-      ? pass("capabilities", "A container is configured, so the container Script tier is available.")
+      ? pass(
+          "capabilities",
+          `KARMI_SANDBOX is bound to ${binding?.class_name} with image ${image}. Export KarmiSandbox and ContainerProxy, and match sandbox.image to this image.`,
+        )
       : skip(
           "capabilities",
           'No container is configured: an Agent granting capabilities.scripts { tier: "container" } fails.',

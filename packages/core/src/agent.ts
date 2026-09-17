@@ -51,6 +51,8 @@ export interface ConnectionDeclaration {
 export interface Capabilities {
   scripts?: {
     tier: "isolate" | "container";
+    /** Hostnames container Scripts may reach; defaults to none. */
+    egress?: { allow: string[] };
     limits?: {
       cpuMs?: number;
       wallMs?: number;

@@ -9,6 +9,8 @@ import { assertIdentifier, KNOWLEDGE_NAME, KNOWLEDGE_NAME_MESSAGE } from "./name
  * Tool callId of its parent call into one path segment.
  */
 export const keys = {
+  /** The per-Thread container Workspace identity. */
+  workspace: (scope: string, threadId: string) => `${scope}/${threadId}`,
   toolCall(threadId: string, seq: number): string {
     return `${threadId}:${seq}`;
   },

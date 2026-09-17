@@ -1,3 +1,4 @@
+import { HOST_PATTERN } from "./names";
 import { DEFAULT_MEDIA_BYTES, matchesType } from "./media";
 import * as z from "zod/mini";
 import {
@@ -93,7 +94,11 @@ const ProviderConfigSchema = z.strictObject({
 const ceiling = <T extends z.core.$ZodType>(schema: T) => z.optional(z.union([z.literal(false), schema]));
 const CeilingsSchema = z.strictObject({
   scripts: ceiling(
-    z.strictObject({ tier: z.optional(ScriptTierSchema), limits: z.optional(CapabilityLimitSchemas.scripts) }),
+    z.strictObject({
+      tier: z.optional(ScriptTierSchema),
+      maxContainers: z.optional(positiveInt),
+      limits: z.optional(CapabilityLimitSchemas.scripts),
+    }),
   ),
   longRunning: ceiling(CapabilityLimitSchemas.longRunning),
   delegation: ceiling(CapabilityLimitSchemas.delegation),
@@ -109,7 +114,6 @@ const CeilingsSchema = z.strictObject({
   context: z.optional(z.strictObject({ window: z.optional(positiveInt) })),
 });
 
-const HOST_PATTERN = /^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)*$/i;
 const hostPattern = z.string().check(z.regex(HOST_PATTERN, "must be a hostname or a *.domain glob"));
 const toolName = z.string().check(z.minLength(1));
 
@@ -226,6 +230,8 @@ export interface Ceilings {
     | false
     | {
         tier?: "isolate" | "container";
+        /** The maximum number of live Workspaces in this Scope. */
+        maxContainers?: number;
         limits?: {
           cpuMs?: number;
           wallMs?: number;

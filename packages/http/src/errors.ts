@@ -74,6 +74,7 @@ const STATUS: Record<KarmiErrorCode, number> = {
   "schedule.notFound": 404,
   "ref.fragment.unknown": 400,
   "scope.destroyed": 409,
+  "scope.limit": 409,
   "scope.id.invalid": 400,
   "scope.suspended": 409,
   "secrets.corrupt": 500,

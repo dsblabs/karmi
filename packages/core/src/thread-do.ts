@@ -1,3 +1,6 @@
+import { workspaceSandbox } from "./container-workspace";
+import { cloudflareContainer } from "./cloudflare-container";
+import { decodeContainerRun, containerLimits, type ContainerLimits } from "./container-types";
 import { knowledgeTools, knowledgeFragments } from "./knowledge-tools";
 import { providerOutput, restoreProviderTool } from "./provider-output";
 import { offeredProviderTools, resolveProviderTools } from "./provider-tools";
@@ -120,6 +123,8 @@ import type { QueueMessage } from "./queue";
 import type { UsageAttribution, UsageRecord } from "./usage";
 
 const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS container_run (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS container_workspace (id INTEGER PRIMARY KEY CHECK (id = 1));
   CREATE TABLE IF NOT EXISTS deleted (id INTEGER PRIMARY KEY CHECK (id = 1));
   CREATE TABLE IF NOT EXISTS thread (scope_id TEXT NOT NULL, agent_id TEXT NOT NULL, user_id TEXT, thread_id TEXT NOT NULL, created_at INTEGER NOT NULL, state TEXT NOT NULL, turn INTEGER NOT NULL, step INTEGER NOT NULL, attempt INTEGER NOT NULL, recoveries INTEGER NOT NULL, agent_version INTEGER, snapshot_json TEXT, usage_json TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY, turn INTEGER NOT NULL, at INTEGER NOT NULL, type TEXT NOT NULL, json TEXT NOT NULL);
@@ -155,6 +160,8 @@ const CANCELLED = Symbol("cancelled");
 export interface TurnSnapshot {
   /** The `scripts` Capability under the Scope ceiling. Absent without the grant. */
   scripts?: ScriptLimits;
+  /** The resolved Workspace limits for the container tier. */
+  container?: ContainerLimits;
   /** The Provider Tool grant bounded by Scope ceilings. */
   providerTools?: Capabilities["providerTools"];
   /** The Scope's media limits. */
@@ -423,6 +430,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       });
       return;
     }
+    await this.destroyWorkspace(this.row());
     const bucket = this.env.KARMI_MEDIA;
     if (bucket)
       for (const prefix of keys.threadObjects(address.scope, address.threadId)) {
@@ -445,6 +453,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (!forgotten.ok) throw new KarmiError(forgotten.code, forgotten.message);
     this.ctx.storage.transactionSync(() => {
       for (const table of [
+        "container_run",
+        "container_workspace",
         "thread",
         "events",
         "inputs",
@@ -937,6 +947,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   protected override async runJob(job: ScheduledJob): Promise<void> {
+    if (job.kind === "container-idle") return this.destroyWorkspace(this.row());
+    if (job.kind === "container-watchdog") return this.pollContainer();
     if (job.kind === "thread-cleanup") return this.cleanup(decodeCleanup(job.payload));
     if (this.sql.exec("SELECT id FROM deleted").toArray().length) return;
     if (job.kind === "delivery") {
@@ -1116,6 +1128,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private async finish(row: ThreadRow, end: TurnEnd): Promise<void> {
+    if (end.type !== "turn.paused") await this.destroyWorkspace(row);
     this.append(row.turn, end, this.turnInput(row.turn)?.channelRef);
     if (end.type === "turn.paused") this.update({ state: "parked" });
     else
@@ -1315,7 +1328,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         builtIns: [
           ...builtInTools(host),
           ...knowledgeTools(this.env, row.scope_id, snapshot.spec),
-          ...(snapshot.scripts && this.env.KARMI_LOADER
+          ...(snapshot.scripts &&
+          (snapshot.container ? this.env.KARMI_SANDBOX || this.deployment.sandbox?.driver : this.env.KARMI_LOADER)
             ? [scriptTool(snapshot.spec, () => current().available, row.user_id ?? undefined)]
             : []),
           ...(snapshot.spec.capabilities?.delegation
@@ -2815,8 +2829,136 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     );
   }
 
+  private containerSandbox(row: ThreadRow, snapshot: TurnSnapshot) {
+    if (!this.deployment.sandbox || !snapshot.container) return undefined;
+    const id = keys.workspace(row.scope_id, row.thread_id);
+    const driver =
+      this.deployment.sandbox.driver?.(id) ??
+      (this.env.KARMI_SANDBOX && cloudflareContainer(this.env.KARMI_SANDBOX, id));
+    if (!driver) return undefined;
+    return workspaceSandbox(
+      {
+        sql: this.sql,
+        scope: row.scope_id,
+        threadId: row.thread_id,
+        bucket: this.env.KARMI_MEDIA,
+        media: snapshot.media,
+        now: () => this.deployment.clock.now(),
+        append: (event) => this.append(row.turn, event, this.turnInput(row.turn)?.channelRef),
+        schedule: () => this.armContainerWatchdog(),
+      },
+      driver,
+      snapshot.container,
+      snapshot.spec.capabilities?.scripts?.egress?.allow ?? [],
+    );
+  }
+
+  private async reserveWorkspace(row: ThreadRow, limits: ContainerLimits | undefined): Promise<void> {
+    if (!limits) throw new Error("Container limits are unavailable.");
+    // Persist cleanup intent before the remote reservation so eviction cannot leak a Scope slot.
+    this.sql.exec("INSERT OR IGNORE INTO container_workspace (id) VALUES (1)");
+    this.scheduler.cancel("container-idle");
+    const reserved = await this.scopeStub(row).reserveContainer(row.scope_id, row.thread_id);
+    if (!reserved.ok) throw new KarmiError(reserved.code, reserved.message);
+  }
+
+  private scheduleWorkspaceIdle(limits: ContainerLimits | undefined): void {
+    if (limits)
+      this.scheduler.set({
+        id: "container-idle",
+        kind: "container-idle",
+        dueAt: this.deployment.clock.now() + limits.idleMs,
+        payload: null,
+      });
+  }
+
+  private armContainerWatchdog(): void {
+    this.scheduler.set({
+      id: "container-watchdog",
+      kind: "container-watchdog",
+      dueAt: this.deployment.clock.now() + 5000,
+      payload: null,
+    });
+  }
+
+  private async pollContainer(): Promise<void> {
+    if (this.active) {
+      this.armContainerWatchdog();
+      return;
+    }
+    const row = this.row();
+    if (!row.snapshot_json) return;
+    const snapshot = decodeSnapshot(row.snapshot_json);
+    const sandbox = this.containerSandbox(row, snapshot);
+    if (!sandbox) return;
+    const record = this.sql.exec<{ json: string }>("SELECT json FROM container_run WHERE id = 1").toArray()[0];
+    if (!record) return;
+    const run = decodeContainerRun(record.json);
+    const pending = [...this.readTurn(row).jobs.values()].find((job) => job.jobId === run.processId && !job.outcome);
+    if (!pending) return;
+    const result = await sandbox.poll(run);
+    if (!result) {
+      this.armContainerWatchdog();
+      return;
+    }
+    this.scheduleWorkspaceIdle(snapshot.container);
+    this.ctx.storage.transactionSync(() => {
+      this.append(
+        row.turn,
+        result.error
+          ? { type: "job.failed", jobId: pending.jobId, message: result.error.message }
+          : {
+              type: "job.completed",
+              jobId: pending.jobId,
+              result: { content: [{ type: "text", text: JSON.stringify(result) }] },
+            },
+        this.turnInput(row.turn)?.channelRef,
+      );
+      sandbox.acknowledge();
+      this.scheduler.cancel("container-watchdog");
+    });
+    await this.settle(row);
+  }
+
+  private async destroyWorkspace(row: ThreadRow): Promise<void> {
+    if (!this.sql.exec("SELECT id FROM container_workspace").toArray().length) return;
+    if (row.snapshot_json) await this.containerSandbox(row, decodeSnapshot(row.snapshot_json))?.cancel();
+    else {
+      const id = keys.workspace(row.scope_id, row.thread_id);
+      const driver =
+        this.deployment.sandbox?.driver?.(id) ??
+        (this.env.KARMI_SANDBOX && cloudflareContainer(this.env.KARMI_SANDBOX, id));
+      if (!driver) throw new Error("Cannot destroy the Workspace without its container runtime.");
+      await driver.destroy();
+    }
+    await this.scopeStub(row).releaseContainer(row.scope_id, row.thread_id);
+    this.sql.exec("DELETE FROM container_workspace");
+    this.scheduler.cancel("container-watchdog");
+    this.scheduler.cancel("container-idle");
+  }
+
   private scriptExecution(row: ThreadRow, snapshot: TurnSnapshot) {
-    if (!snapshot.scripts || !this.env.KARMI_LOADER) return {};
+    if (!snapshot.scripts) return {};
+    if (snapshot.container)
+      return {
+        scripts: {
+          sandbox: {
+            run: async (request: import("./sandbox").SandboxRequest) => {
+              const sandbox = this.containerSandbox(row, snapshot);
+              if (!sandbox) throw new Error("Container Scripts require KARMI_SANDBOX and sandbox.image.");
+              await this.reserveWorkspace(row, snapshot.container);
+              const result = await sandbox.run(request);
+              if (!("pending" in result)) this.scheduleWorkspaceIdle(snapshot.container);
+              return result;
+            },
+          },
+          limits: snapshot.scripts,
+          result: async () => {
+            throw new Error("Container Scripts have no Tool bridge.");
+          },
+        },
+      };
+    if (!this.env.KARMI_LOADER) return {};
     return {
       scripts: {
         sandbox: new CloudflareIsolateSandbox(this.env.KARMI_LOADER),
@@ -2975,8 +3117,11 @@ function buildSnapshot(
       ...(spec.capabilities?.delegation && {
         delegation: resolveDelegationLimits(spec.capabilities.delegation, ceilings.delegation),
       }),
-      ...(spec.capabilities?.scripts?.tier === "isolate" && {
+      ...(spec.capabilities?.scripts && {
         scripts: resolveScriptLimits(spec.capabilities.scripts, ceilings.scripts),
+        ...(spec.capabilities.scripts.tier === "container" && {
+          container: containerLimits(spec.capabilities.scripts, ceilings.scripts),
+        }),
       }),
       ...(spec.capabilities?.scheduling && {
         scheduling: resolveSchedulingLimits(spec.capabilities.scheduling, ceilings.scheduling),

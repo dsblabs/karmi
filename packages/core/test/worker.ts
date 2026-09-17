@@ -1,3 +1,4 @@
+import { testContainer } from "./container-fixtures";
 import { defineVectorRetriever } from "../src/index";
 import { sqliteMirror, semanticEmbedder, interruptedRetriever } from "./knowledge-fixtures";
 import { z } from "zod";
@@ -755,6 +756,7 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
     logger,
     providers: { anthropic: serverProvider, "ai-sdk": serverProvider },
     mcpServers: [github, legacy, drive, crm, locked],
+    sandbox: { image: "test", driver: testContainer },
     credentials: { shared: "deployment-key" },
     defaults: {
       providers: {

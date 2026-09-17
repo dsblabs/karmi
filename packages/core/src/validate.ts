@@ -407,7 +407,16 @@ class ReferenceChecker {
   }
 
   private scripts(): void {
-    const tools = this.spec.capabilities?.scripts?.tools;
+    const scripts = this.spec.capabilities?.scripts;
+    if (scripts?.tier === "isolate" && scripts.egress)
+      this.issues.error(
+        "capability.reserved",
+        "/capabilities/scripts/egress",
+        "Egress is available only to container Scripts.",
+      );
+    if (scripts?.tier === "container" && scripts.tools)
+      this.issues.error("capability.reserved", "/capabilities/scripts/tools", "Container Scripts have no Tool bridge.");
+    const tools = scripts?.tools;
     if (!Array.isArray(tools)) return;
     const granted = this.grantedToolNames();
     for (const name of this.spec.capabilities?.providerTools?.tools ?? []) granted.delete(name);
