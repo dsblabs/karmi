@@ -1,7 +1,7 @@
-import type { Granularity, Karmi, Scope, Thread, ThreadIdentity, ThreadStatus } from "@karmi/core";
+import type { Granularity, Karmi, MediaRef, Scope, Thread, ThreadIdentity, ThreadStatus } from "@karmi/core";
 import { decodeApprovalAnswer, decodeCompact, decodeCreateThread, decodeTurnRequest, isGranularity } from "./decode";
 import { errorResponse, HttpError } from "./errors";
-import { readMultipartTurn } from "./multipart";
+import { discardMinted, readMultipartTurn } from "./multipart";
 import { eventStream } from "./sse";
 
 /** The identity a request acts as. It names the Scope and, when a person is behind the request, the User. */
@@ -120,10 +120,21 @@ async function actionRoute(
     }
     case "turns": {
       if (request.method !== "POST") return methodNotAllowed("POST");
-      const { input, steer } = contentType(request).startsWith(MULTIPART_TYPE)
-        ? await readMultipartTurn(request, thread)
-        : decodeTurnRequest(await readJson(request));
-      return Response.json(await thread.send(input, { steer }), { status: 202 });
+      // Media uploaded for a multipart Turn belongs to the transport until `send()` accepts the Turn, so the
+      // window covers the parse and the send and any throw out of it discards every ref minted inside. A JSON
+      // Turn mints nothing, which leaves the discard a no-op.
+      const minted: MediaRef[] = [];
+      let receipt;
+      try {
+        const { input, steer } = contentType(request).startsWith(MULTIPART_TYPE)
+          ? await readMultipartTurn(request, thread, minted)
+          : decodeTurnRequest(await readJson(request));
+        receipt = await thread.send(input, { steer });
+      } catch (error) {
+        await discardMinted(thread.uploads, minted);
+        throw error;
+      }
+      return Response.json(receipt, { status: 202 });
     }
     case "approvals": {
       if (request.method !== "POST") return methodNotAllowed("POST");

@@ -1,5 +1,5 @@
 import { subscribeSocket } from "./thread-subscription";
-import type { MediaWriter } from "./media";
+import type { ThreadUploads } from "./media";
 import type { KarmiBindings } from "./bindings";
 import type { ScopeId, UserId } from "./context";
 import { KarmiError } from "./errors";
@@ -125,8 +125,8 @@ export interface ThreadJobs {
 
 /** A handle on one Thread. Every method calls the Thread's Durable Object, which holds all state. */
 export interface Thread {
-  /** Stores media under this Thread and returns the `MediaRef` a Turn input can carry. */
-  readonly uploads: MediaWriter;
+  /** Stores media under this Thread and returns the `MediaRef` a Turn input can carry, or discards one again. */
+  readonly uploads: ThreadUploads;
   /** Marks the Thread as deleted immediately. Its storage is removed later in scheduler batches. */
   delete(): Promise<void>;
   /** The opaque, serialisable key of this Thread. `scope.thread(key)` reopens it but never creates it. */
@@ -205,7 +205,10 @@ export function openThread(bindings: KarmiBindings, scope: ScopeId, target: Thre
   return {
     key: encodeKey(identity),
     identity,
-    uploads: { put: (body, options) => unwrap(stub.upload(address, body, options ?? {})) },
+    uploads: {
+      put: (body, options) => unwrap(stub.upload(address, body, options ?? {})),
+      delete: (ref) => unwrap(stub.discardUpload(address, ref)),
+    },
     delete: () => unwrap(stub.delete(address)),
     send: (input, options) => unwrap(stub.send(address, input, options?.steer === true)),
     approve: (seq, answer) => unwrap(stub.approve(address, seq, answer)),

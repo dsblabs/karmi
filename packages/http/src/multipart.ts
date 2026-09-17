@@ -1,4 +1,4 @@
-import { mediaKind, type MediaRef, type Part, type Thread, type TurnInput } from "@karmi/core";
+import { mediaKind, type MediaRef, type Part, type Thread, type ThreadUploads, type TurnInput } from "@karmi/core";
 import { HttpError } from "./errors";
 import { parseJsonText, type TurnRequest } from "./decode";
 
@@ -16,15 +16,17 @@ function partOf(ref: MediaRef): Part {
 /**
  * Reads a `multipart/form-data` Turn: every `text` field becomes a text Part and every file is uploaded to
  * the Thread and becomes a media Part, in the order posted. `skill`, `channelRef` (JSON) and `steer`
- * (`"true"`) are read as on a JSON Turn. Throws a 400 `HttpError` when no Part results.
+ * (`"true"`) are read as on a JSON Turn. Throws a 400 `HttpError` when no Part results. Each ref is pushed
+ * onto `minted` as it is uploaded, so the caller can discard them all when it abandons the Turn.
  */
-export async function readMultipartTurn(request: Request, thread: Thread): Promise<TurnRequest> {
+export async function readMultipartTurn(request: Request, thread: Thread, minted: MediaRef[]): Promise<TurnRequest> {
   const form = await request.formData();
   const parts: Part[] = [];
   const fields: { skill?: string; channelRef?: unknown; steer?: boolean } = {};
   for (const [name, value] of form.entries()) {
     if (typeof value !== "string") {
       const ref = await thread.uploads.put(value.stream(), { mimeType: value.type, name: value.name });
+      minted.push(ref);
       parts.push(partOf(ref));
     } else if (name === "text") parts.push({ type: "text", text: value });
     else if (name === "skill") fields.skill = value;
@@ -40,4 +42,12 @@ export async function readMultipartTurn(request: Request, thread: Thread): Promi
     ...(fields.channelRef !== undefined && { channelRef: fields.channelRef }),
   };
   return { input, steer: fields.steer === true };
+}
+
+/**
+ * Deletes every ref uploaded for a Turn that was never accepted. It never throws: a discard that fails leaves
+ * an object the Thread's own cleanup still reclaims, and the caller has an error of its own to report.
+ */
+export async function discardMinted(uploads: Pick<ThreadUploads, "delete">, minted: MediaRef[]): Promise<void> {
+  await Promise.all(minted.map((ref) => uploads.delete(ref).catch(() => {})));
 }

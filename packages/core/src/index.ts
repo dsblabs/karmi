@@ -209,7 +209,7 @@ export {
   type RequestMedia,
   type EncodedMedia,
 } from "./media-request";
-export type { MediaWriter, MediaBody, MediaOptions } from "./media";
+export type { MediaWriter, ThreadUploads, MediaBody, MediaOptions } from "./media";
 
 export type { MediaUrlOptions } from "./media-url";
 

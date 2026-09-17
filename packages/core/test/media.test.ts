@@ -185,3 +185,21 @@ it("does not recreate spill after a deleted Thread’s cancelled Tool eventually
   await expect.poll(() => returned).toBe(true);
   expect((await env.KARMI_MEDIA.list({ prefix: "test/threads/media-late-spill/" })).objects).toEqual([]);
 });
+
+it("discards an upload this Thread minted and leaves a ref from another Thread alone", async () => {
+  const thread = scope.thread({ agent: "concierge", threadId: "media-discard" });
+  const ref = await thread.uploads.put(pdf, { name: "report.pdf" });
+  provider.script(["OK"]);
+  const events = await thread.send({ kind: "message", parts: [{ type: "file", media: ref }] });
+  // A Fork's log carries refs into the parent's prefix, so its own delete must not reach them.
+  const fork = await thread.fork(events.at(-1)!.seq);
+  await fork.uploads.delete(ref);
+  expect(await env.KARMI_MEDIA.get(ref.key)).not.toBeNull();
+  await thread.uploads.delete(ref);
+  expect(await env.KARMI_MEDIA.get(ref.key)).toBeNull();
+  // Deleting what is already gone is a no-op, and a ref whose id karmi never minted is refused.
+  await thread.uploads.delete(ref);
+  await expect(thread.uploads.delete({ ...ref, id: "not-an-id/" })).rejects.toMatchObject({
+    code: "media.id.invalid",
+  });
+});

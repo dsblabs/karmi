@@ -11,8 +11,10 @@ import {
   postTurn,
   untilEvent,
 } from "./helpers";
+import { discardMinted } from "../src/multipart";
 import { provider } from "./worker";
 import { SELF } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 
 beforeEach(() => provider.script(() => "OK"));
 
@@ -111,7 +113,8 @@ describe("turns", () => {
   });
 
   it("uploads multipart files to the Thread and sends them as media Parts in posted order", async () => {
-    const key = await createThread("alice");
+    const threadId = `multipart-${Date.now()}`;
+    const key = await createThread("alice", "concierge", threadId);
     const form = new FormData();
     form.append("text", "What is this?");
     form.append(
@@ -144,8 +147,39 @@ describe("turns", () => {
         ],
       },
     });
+    expect(await mediaKeys(threadId)).toHaveLength(2);
     const empty = await api("alice", "POST", `/threads/${key}/turns`, undefined, { body: new FormData() });
     expect(empty.status).toBe(400);
+    expect(await mediaKeys(threadId)).toHaveLength(2);
+  });
+
+  it("discards multipart uploads when the Turn is rejected before send() accepts it", async () => {
+    const threadId = `rollback-${Date.now()}`;
+    const key = await createThread("alice", "concierge", threadId);
+    const file = () => new File(["hello"], "notes.txt", { type: "text/plain" });
+
+    const unknown = new FormData();
+    unknown.append("file", file());
+    unknown.append("mystery", "1");
+    const rejected = await api("alice", "POST", `/threads/${key}/turns`, undefined, { body: unknown });
+    expect(rejected.status).toBe(400);
+    expect(decodeError(await rejected.json()).message).toContain('Unknown form field "mystery"');
+    expect(await mediaKeys(threadId)).toEqual([]);
+
+    // An unknown Deliverer is rejected by `send()` itself, after the reader has already uploaded the file.
+    const undeliverable = new FormData();
+    undeliverable.append("file", file());
+    undeliverable.append("channelRef", JSON.stringify({ deliverer: { name: "nobody", ref: 1 } }));
+    const failed = await api("alice", "POST", `/threads/${key}/turns`, undefined, { body: undeliverable });
+    expect(decodeError(await failed.json()).code).toBe("deliverer.notFound");
+    expect(await mediaKeys(threadId)).toEqual([]);
+  });
+
+  it("keeps the caller's error when the discard itself fails", async () => {
+    const refused = { delete: () => Promise.reject(new Error("R2 is down.")) };
+    await expect(discardMinted(refused, [{ id: "01", key: "k", mimeType: "text/plain", bytes: 1 }])).resolves.toBe(
+      undefined,
+    );
   });
 
   it("maps karmi errors to statuses: 404 for a Thread that was never created, 400 for a seq past the log", async () => {
@@ -205,3 +239,9 @@ describe("approvals, cancel and compact", () => {
     expect((await api("alice", "POST", `/threads/${key}/compact`, { instructions: 7 })).status).toBe(400);
   });
 });
+
+/** The keys of the media stored under the Thread `threadId` of the test Scope, sorted. */
+async function mediaKeys(threadId: string): Promise<string[]> {
+  const listed = await env.KARMI_MEDIA.list({ prefix: `test/media/${threadId}/` });
+  return listed.objects.map((object) => object.key).sort();
+}
