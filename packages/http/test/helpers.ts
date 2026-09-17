@@ -24,9 +24,13 @@ export function api(
 }
 
 let n = 0;
-/** Creates a fresh Thread for `agent` as `token` and returns its key. */
-export async function createThread(token: string, agent = "concierge"): Promise<string> {
-  const response = await api(token, "POST", "/threads", { agent, threadId: `t${++n}-${Date.now()}` });
+/** Creates a fresh Thread for `agent` as `token` and returns its key. `threadId` names it, for a test that reads its storage. */
+export async function createThread(
+  token: string,
+  agent = "concierge",
+  threadId = `t${++n}-${Date.now()}`,
+): Promise<string> {
+  const response = await api(token, "POST", "/threads", { agent, threadId });
   expect(response.status).toBe(201);
   const { key } = decodeResource(await response.json());
   return key;

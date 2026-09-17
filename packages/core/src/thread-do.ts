@@ -402,6 +402,27 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     }
   }
 
+  /**
+   * Deletes one media object this Thread minted. It reaches nothing outside this Thread, and deleting what is
+   * already gone succeeds. It fails with `thread.deleted` for a deleted Thread and `media.id.invalid` for a ref
+   * whose `id` is not one karmi minted.
+   */
+  async discardUpload(address: ThreadAddress, ref: MediaRef): Promise<Outcome<void>> {
+    const entered = this.enter(address);
+    if (!entered.ok) return entered;
+    if (this.sql.exec("SELECT id FROM deleted").toArray().length)
+      return fail(new KarmiError("thread.deleted", "This Thread has been deleted."));
+    try {
+      // The ref's own `key` is ignored and the key is rebuilt under this Thread's prefix, so a ref a Fork
+      // carries into its parent's prefix reconstructs to a key that is not there instead of deleting it.
+      await this.env.KARMI_MEDIA?.delete(keys.media(address.scope, address.threadId, ref.id));
+      return ok(undefined);
+    } catch (error) {
+      if (error instanceof KarmiError) return fail(error);
+      throw error;
+    }
+  }
+
   delete(address: ThreadAddress): Outcome<void> {
     if (this.sql.exec("SELECT id FROM deleted").toArray().length) return ok(undefined);
     const entered = this.enter(address);

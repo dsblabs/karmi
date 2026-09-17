@@ -18,6 +18,19 @@ export interface MediaOptions {
 export interface MediaWriter {
   put(body: MediaBody, options?: MediaOptions): Promise<MediaRef>;
 }
+/**
+ * The media seam of a Thread handle. A `MediaRef` becomes the Thread's to keep once a Turn input carrying it
+ * is accepted, so this is the `MediaWriter` a caller uploading a Turn input holds: it can also delete an
+ * upload it decides to abandon before sending it.
+ */
+export interface ThreadUploads extends MediaWriter {
+  /**
+   * Removes the media this Thread minted for `ref`, and succeeds when the object is already gone. It reaches
+   * nothing outside this Thread, so a ref another Thread minted is left intact. Throws `thread.deleted` for a
+   * deleted Thread and `media.id.invalid` for a ref whose `id` is not one karmi minted.
+   */
+  delete(ref: MediaRef): Promise<void>;
+}
 /** The size limit of one media object when the Scope sets none, in bytes. */
 export const DEFAULT_MEDIA_BYTES = 100 * 1024 * 1024;
 /** The size of one part of a multipart upload, which is also the largest buffer held in memory. */
