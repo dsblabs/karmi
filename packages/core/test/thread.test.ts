@@ -176,7 +176,8 @@ describe("reading the log", () => {
   it("streams live events to a subscriber that attached before the Turn", async () => {
     provider.script(["Live"]);
     const thread = fresh();
-    const seen = take(thread.subscribe({ granularity: "turn" }), 5);
+    // From seq 0, so the Turn's first events are replayed if the subscription attaches after it starts.
+    const seen = take(thread.subscribe({ granularity: "turn", after: 0 }), 5);
     await thread.send(message("Go"));
     expect((await seen).map((e) => e.type)).toEqual([
       "turn.started",

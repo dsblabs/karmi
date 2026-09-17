@@ -35,8 +35,11 @@ it("parks a running Turn at the next Step boundary while the Scope is suspended,
   provider.script([[reply.toolCall("wait_gate", {}, "c1")], "Released"]);
   const thread = scope.thread({ agent: "approver", user: "guest-1", threadId: "suspend-park" });
   gate.open = false;
+  const entered = gate.entered;
   const running = thread.send(message("Hold the line"));
-  await expect.poll(async () => (await thread.status()).state).toBe("running");
+  // A running status only says the Turn started. Suspending before the Tool is dispatched would park the
+  // Turn one Step earlier, so wait until `wait_gate` is really blocked inside the Step.
+  await expect.poll(() => gate.entered).toBe(entered + 1);
   await scope.suspend();
   gate.open = true;
   const parked = await running;
