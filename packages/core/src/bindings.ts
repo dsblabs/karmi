@@ -24,7 +24,8 @@ export interface KarmiBindings {
   KARMI_KEYRING?: string;
 }
 
-const BINDING_NAMES = [
+/** Every binding name karmi reads from a Worker's `env`, in the order the wrangler baseline declares them. */
+export const KARMI_BINDING_NAMES = [
   "KARMI_THREADS",
   "KARMI_SCOPES",
   "KARMI_MEMORY",
@@ -51,7 +52,7 @@ export type BindingsResolver<Env = unknown> = (env: Env) => Partial<KarmiBinding
 export function resolveBindings<Env>(env: Env, resolver?: BindingsResolver<Env>): KarmiBindings {
   const source = resolver ? resolver(env) : (env as Partial<KarmiBindings>);
   const bindings: Partial<KarmiBindings> = {};
-  for (const name of BINDING_NAMES) {
+  for (const name of KARMI_BINDING_NAMES) {
     if (source[name] !== undefined) Object.assign(bindings, { [name]: source[name] });
   }
   for (const name of REQUIRED) {

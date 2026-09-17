@@ -1,0 +1,5 @@
+# pnpm does not run a dependency's install scripts unless it is listed here. wrangler needs workerd, and
+# vitest needs esbuild.
+allowBuilds:
+  esbuild: true
+  workerd: true

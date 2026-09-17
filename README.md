@@ -1,11 +1,32 @@
 # karmi
 
-A code-first TypeScript framework for building agent harnesses that run natively on Cloudflare. See [`packages/core`](./packages/core), the Anthropic Provider in [`packages/anthropic`](./packages/anthropic), the REST/SSE/WebSocket routes in [`packages/http`](./packages/http), and the glossary in [`CONTEXT.md`](./CONTEXT.md).
+A code-first TypeScript framework for building agent harnesses that run natively on Cloudflare. See [`packages/core`](./packages/core), the Anthropic Provider in [`packages/anthropic`](./packages/anthropic), the REST/SSE/WebSocket routes in [`packages/http`](./packages/http), the project scaffolder in [`packages/create-karmi`](./packages/create-karmi), and the glossary in [`CONTEXT.md`](./CONTEXT.md).
 
 ```sh
 pnpm install
 pnpm typecheck && pnpm lint && pnpm test
 ```
+
+## Zero to deployed
+
+```sh
+pnpm create karmi my-agent
+cd my-agent && pnpm install
+pnpm typecheck && pnpm test
+```
+
+`pnpm create karmi` writes the wrangler baseline, a sample Agent and Tool, the
+HTTP routes, a cron and a Queue consumer over the Thread API, a test suite and
+CI. The template is [`packages/create-karmi/template`](./packages/create-karmi/template),
+a workspace package of this repository, so it is typechecked, doctored and
+tested on every change.
+
+`karmi doctor` checks a project before `wrangler deploy` does: the compatibility
+date, the `KARMI_*` bindings, the Durable Object re-exports and migrations, which
+Script tiers are reachable, a bound Vectorize index, an AI Gateway in front of
+deferred Tools, the MCP pre-registration checklist with the exact callback URL,
+and Agent Specs that name Catalogue items nobody defines. See
+[`packages/core`](./packages/core#karmi-doctor).
 
 ## Isolate scripts
 

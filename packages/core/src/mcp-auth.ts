@@ -219,6 +219,24 @@ export function preRegistration(issuer: string): PreRegistration | undefined {
 }
 
 /**
+ * The pre-registration entry for the vendor that hosts `url`, matched on the hostname of its issuer or a
+ * subdomain of it, or undefined. It is a hint for `karmi doctor`, which sees a server's URL but not its
+ * issuer.
+ */
+export function preRegistrationForUrl(url: string): PreRegistration | undefined {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+  return PRE_REGISTRATION_REQUIRED.find((entry) => {
+    const issuer = new URL(entry.issuer).hostname;
+    return host === issuer || host.endsWith(`.${issuer}`);
+  });
+}
+
+/**
  * Whether an authorization server's metadata advertises neither CIMD nor a registration endpoint, so only
  * a pre-registered client can be used with it.
  */

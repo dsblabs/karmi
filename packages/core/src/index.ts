@@ -137,6 +137,7 @@ export {
   clientDocument,
   PRE_REGISTRATION_REQUIRED,
   preRegistration,
+  preRegistrationForUrl,
   OAUTH_CALLBACK_PATH,
   CLIENT_DOCUMENT_PATH,
   type McpClientIdentity,
@@ -149,7 +150,7 @@ export type { McpAuthorizeRequest } from "./scope";
 export type { McpCatalog, McpEra, McpTool, McpReference } from "./mcp-catalog";
 export { parseMcpReference } from "./mcp-catalog";
 export { retry, type RetryOptions } from "./retry";
-export { resolveBindings, type KarmiBindings, type BindingsResolver } from "./bindings";
+export { resolveBindings, KARMI_BINDING_NAMES, type KarmiBindings, type BindingsResolver } from "./bindings";
 export { assertCompatibilityBaseline, COMPATIBILITY_DATE_FLOOR } from "./compat";
 export type {
   Scope,
@@ -250,3 +251,16 @@ export {
 export { VectorizeStore } from "./vectorize-store";
 
 export { checkVectorizeIndex } from "./vector-doctor";
+
+export {
+  runChecks,
+  decodeWranglerConfig,
+  decodeDoctorManifest,
+  formatFindings,
+  hasFailure,
+  type CheckStatus,
+  type Finding,
+  type DoctorInput,
+  type DoctorManifest,
+  type WranglerConfig,
+} from "./doctor";
