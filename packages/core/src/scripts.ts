@@ -1,3 +1,4 @@
+import { ContainerInput } from "./container-types";
 import * as z from "zod/mini";
 import type { Capabilities, AgentSpec } from "./agent";
 import type { Ceilings } from "./scope-config";
@@ -60,8 +61,10 @@ export function scriptTool(spec: AgentSpec, available: () => ReadonlyMap<string,
     kind: "tool",
     name: "run_script",
     description:
-      "Run a one-shot JavaScript module in an isolate. Export a default async function returning the value to keep.",
-    input: ScriptInput,
+      spec.capabilities?.scripts?.tier === "container"
+        ? "Run shell or Python in the Thread Workspace. Read named files in /in and write artifacts to /out. No Tools or secrets are available."
+        : "Run a one-shot JavaScript module in an isolate. Export a default async function returning the value to keep.",
+    input: spec.capabilities?.scripts?.tier === "container" ? ContainerInput : ScriptInput,
     annotations: DEFAULT_ANNOTATIONS,
     instructions: { kind: "fragment", name: "script-usage", render: () => scriptUsage(spec, available(), user) },
     execute: () => {
@@ -71,6 +74,8 @@ export function scriptTool(spec: AgentSpec, available: () => ReadonlyMap<string,
 }
 
 function scriptUsage(spec: AgentSpec, available: ReadonlyMap<string, AvailableTool>, user?: string): string {
+  if (spec.capabilities?.scripts?.tier === "container")
+    return "Use run_script with code, language (shell or python), and optional files (names mapped to MediaRefs). Read /in; write /out. Egress requires capabilities.scripts.egress.allow. Long scripts become Jobs.";
   const tools = scriptTools(spec, available, user);
   const unavailable = [...available.values()]
     .filter(

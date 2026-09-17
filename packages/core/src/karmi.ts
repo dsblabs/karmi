@@ -1,3 +1,4 @@
+import type { ContainerDriver } from "./container-types";
 import { mediaUrls, type MediaUrlOptions } from "./media-url";
 import { env } from "cloudflare:workers";
 import { resolveBindings, type BindingsResolver } from "./bindings";
@@ -22,6 +23,8 @@ import { layerDeploymentCredentials, type SecretsProvider } from "./secrets";
 export interface KarmiOptions<Env = unknown> {
   /** Everything the Deployment defines in code, for Agent Specs to reference by name. */
   catalogue: CatalogueInput;
+  /** The container image configured for KARMI_SANDBOX in Wrangler. */
+  sandbox?: { image: string; driver?: (workspaceId: string) => ContainerDriver };
   /** How presigned media URLs are minted. */
   media?: MediaUrlOptions;
   /** The time source. Defaults to wall time. */
@@ -95,6 +98,7 @@ export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
       "A UsageHandler needs KARMI_QUEUE; see @karmi/core/wrangler.baseline.jsonc.",
     );
   const deployment: Deployment = {
+    ...(options.sandbox && { sandbox: options.sandbox }),
     clock: options.clock ?? wallClock,
     logger: options.logger ?? consoleLogger(),
     catalogue,

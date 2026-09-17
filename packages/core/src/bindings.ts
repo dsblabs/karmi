@@ -1,3 +1,4 @@
+import type { KarmiSandbox } from "./cloudflare-container";
 import { KarmiError } from "./errors";
 
 /** The Worker bindings karmi uses, under the fixed names the published wrangler baseline declares. */
@@ -16,6 +17,8 @@ export interface KarmiBindings {
   KARMI_QUEUE?: Queue;
   /** The Worker loader that runs Scripts in isolates. */
   KARMI_LOADER?: WorkerLoader;
+  /** The per-Thread container Workspace namespace. */
+  KARMI_SANDBOX?: DurableObjectNamespace<KarmiSandbox>;
   /** The Vectorize index behind the built-in Vector store. */
   KARMI_VECTORIZE?: Vectorize;
   /** The Workers AI binding. */
@@ -33,6 +36,7 @@ export const KARMI_BINDING_NAMES = [
   "KARMI_MEDIA",
   "KARMI_QUEUE",
   "KARMI_LOADER",
+  "KARMI_SANDBOX",
   "KARMI_VECTORIZE",
   "KARMI_AI",
   "KARMI_KEYRING",

@@ -36,6 +36,7 @@ export const TOMBSTONE_TABLES = [
 
 /** The tables the last phase empties, once every store outside the Scope's own object is empty. */
 const REMAINING_TABLES = [
+  "container_leases",
   "scope_revisions",
   "agent_specs",
   "agent_heads",

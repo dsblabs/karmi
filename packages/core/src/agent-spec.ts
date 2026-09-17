@@ -1,3 +1,4 @@
+import { HOST_PATTERN } from "./names";
 import * as z from "zod/mini";
 import { HOOK_POINTS } from "./hook";
 import { IDENTIFIER } from "./names";
@@ -102,6 +103,11 @@ const CapabilitiesSchema = z.strictObject({
   scripts: z.optional(
     z.strictObject({
       tier: ScriptTierSchema,
+      egress: z.optional(
+        z.strictObject({
+          allow: z.array(z.string().check(z.regex(HOST_PATTERN, "must be a hostname or a *.domain glob"))),
+        }),
+      ),
       limits: z.optional(CapabilityLimitSchemas.scripts),
       tools: z.optional(z.union([z.literal("allowed"), z.array(name)])),
     }),

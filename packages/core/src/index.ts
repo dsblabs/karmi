@@ -264,3 +264,6 @@ export {
   type DoctorManifest,
   type WranglerConfig,
 } from "./doctor";
+export { CloudflareContainerSandbox } from "./container-sandbox";
+export { KarmiSandbox, ContainerProxy } from "./cloudflare-container";
+export type { ContainerDriver, ContainerHost, ContainerLimits, ContainerRun } from "./container-types";

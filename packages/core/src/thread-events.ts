@@ -123,7 +123,7 @@ export type ModelUsageRecord = Usage & {
 export type UsageRecordData = { type: "usage.recorded" } & UsageAttribution &
   (
     | ({ kind: "model" | "compaction" } & ModelUsageRecord)
-    | { kind: "script"; tier: "isolate"; wallMs: number; callId: string }
+    | { kind: "script"; tier: "isolate" | "container"; wallMs: number; callId: string }
   );
 
 type EventData =

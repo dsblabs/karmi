@@ -10,6 +10,8 @@ export type JobKind =
   | "delegation-notify"
   | "delegation-deadline"
   | "thread-cleanup"
+  | "container-watchdog"
+  | "container-idle"
   | "watchdog"
   | "park-timeout"
   | "schedule"

@@ -1,3 +1,4 @@
+import type { ContainerDriver } from "./container-types";
 import type { Catalogue } from "./catalogue";
 import type { Clock } from "./clock";
 import type { Logger } from "./context";
@@ -8,6 +9,8 @@ import type { SecretsProvider } from "./secrets";
 
 /** Everything `createKarmi` assembled at boot, shared by the Worker and its Durable Objects. */
 export interface Deployment {
+  /** The container image configured in Wrangler. */
+  readonly sandbox?: { image: string; driver?: (workspaceId: string) => ContainerDriver };
   readonly clock: Clock;
   /** The Logger every line goes through, before karmi binds its attribution fields. */
   readonly logger: Logger;

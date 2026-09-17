@@ -22,7 +22,11 @@
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
     },
-    "./wrangler.baseline.jsonc": "./wrangler.baseline.jsonc"
+    "./wrangler.baseline.jsonc": "./wrangler.baseline.jsonc",
+    "./sandbox": {
+      "types": "./dist/sandbox-runtime.d.ts",
+      "default": "./dist/sandbox-runtime.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && tsc-alias -p tsconfig.build.json -f -fe .js",
@@ -46,6 +50,7 @@
     "zod": "^4.5.4"
   },
   "dependencies": {
+    "@cloudflare/sandbox": "0.12.9",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/core": "2.0.0",
     "aws4fetch": "^1.0.20",

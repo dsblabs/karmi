@@ -36,6 +36,7 @@ import { validateAgentSpec, type ValidationResult } from "./validate";
 // lifecycle state. The Scope handle (scope.ts) is the only caller.
 
 const SCHEMA = `
+  CREATE TABLE IF NOT EXISTS container_leases (thread_id TEXT PRIMARY KEY);
   CREATE TABLE IF NOT EXISTS scope_head (scope_id TEXT PRIMARY KEY, state TEXT NOT NULL, current_revision INTEGER NOT NULL, destroy_operation_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS scope_revisions (revision INTEGER PRIMARY KEY, config_json TEXT NOT NULL, created_at INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS agent_specs (agent_id TEXT NOT NULL, version INTEGER NOT NULL, spec_json TEXT NOT NULL, catalogue_fingerprint TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (agent_id, version));
@@ -321,6 +322,33 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return decodeConfig(row.config_json);
   }
 
+  /** Reserves one Workspace slot until the Thread confirms its destruction. */
+  reserveContainer(scope: ScopeId, threadId: string): Outcome<void> {
+    const entered = this.enter(scope);
+    if (!entered.ok) return entered;
+    const config = resolveScopeConfig(this.deployment.defaults, this.document(entered.value.current_revision));
+    const ceiling = config.ceilings?.scripts;
+    const max = ceiling === false ? 0 : (ceiling?.maxContainers ?? Number.MAX_SAFE_INTEGER);
+
+    const exists = this.sql
+      .exec("SELECT thread_id FROM container_leases WHERE thread_id = ?", threadId)
+      .toArray().length;
+    const count = this.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM container_leases").one().count;
+    if (!exists && count >= max)
+      return fail(new KarmiError("scope.limit", "The Scope maxContainers ceiling was reached."));
+    this.sql.exec("INSERT OR IGNORE INTO container_leases (thread_id) VALUES (?)", threadId);
+    return ok(undefined);
+  }
+
+  /** Releases a destroyed Thread Workspace's Scope reservation. */
+  releaseContainer(scope: ScopeId, threadId: string): Outcome<void> {
+    const entered = this.enter(scope, false);
+    if (!entered.ok) return entered;
+    this.sql.exec("DELETE FROM container_leases WHERE thread_id = ?", threadId);
+    return ok(undefined);
+  }
+
+  /** Reads the current Scope config document. */
   configGet(scope: ScopeId): Outcome<ConfigRecord> {
     const head = this.enter(scope);
     if (!head.ok) return head;
