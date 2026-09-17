@@ -25,7 +25,7 @@ An external surface through which a human or event reaches a session — a chat 
 _Avoid_: integration, connector, frontend
 
 **Deliverer**:
-A named Catalogue callback for a Channel’s offline output. The Thread remembers `channelRef.deliverer { name, ref }`; completion and Approval events not consumed by a subscriber reach the callback through the Queue, at least once, at its chosen event granularity.
+A named Catalogue callback for a Channel’s offline output. The Thread remembers `channelRef.deliverer { name, ref }`; completion and Approval events reach the callback through the Queue when no Subscriber is attached, at least once, at its chosen event granularity.
 _Avoid_: notification service, Channel integration (for the Framework callback)
 
 **Capability**:
@@ -119,6 +119,10 @@ _Avoid_: workflow, task, background task, async tool
 **Event**:
 A non-chat Turn input: a typed JSON payload from a webhook, queue, fleet cron or Schedule, concerning a User (or none), delivered into a Thread by the caller's own code (or by the Thread's own Schedule) and shown to the Agent through a Fragment. One shape from every source: the `type` is namespaced by the caller and never interpreted by the Framework, which keeps no taxonomy of where Events come from and does not dedupe repeated deliveries. Not a Primitive of its own.
 _Avoid_: trigger (for the input), message, notification, job
+
+**Subscriber**:
+A live client attached to a Thread, receiving its Events as they are appended. Attachment is state of the Thread itself rather than of any open request, so a Thread with Subscribers still costs nothing while idle. A Thread with no Subscriber routes completion and Approval Events to its Deliverer instead.
+_Avoid_: listener, watcher, socket, connection (that is an MCP grant)
 
 **Schedule**:
 An Event a Thread will receive at a future time — once (`at`, `delay`) or repeatedly (`cron`). Belongs to the Thread it wakes; created by code through the Thread API, or by the Agent itself for its own Thread under the `scheduling` Capability. A firing is an ordinary Turn input and follows the one-Turn-at-a-time rule; a recurring Schedule holds at most one undelivered firing. The only public face of the Framework's timer — Step watchdogs and parked-Turn timeouts ride the same alarm but are not Schedules.
@@ -238,7 +242,7 @@ A `tools.loaded` event in the Thread log. From that event on, the deferred Tools
 _Avoid_: activation event, tool load
 
 **Deliverer**:
-A Catalogue item — code, by name — that pushes a Thread's output to a Channel when no live subscriber is attached. Chosen per Thread from the last inbound input; invoked from a Queue, at-least-once.
+A Catalogue item — code, by name — that pushes a Thread's output to a Channel when no Subscriber is attached. Chosen per Thread from the last inbound input; invoked from a Queue, at-least-once.
 _Avoid_: webhook, callback, notifier, sender
 
 **Delegation**:
