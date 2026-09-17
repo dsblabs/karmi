@@ -43,7 +43,7 @@ Errors are `{ error: { code, message } }`. A karmi code maps to its status: a mi
 
 ## Streams
 
-SSE and WebSocket carry the same JSON: each frame is one `ThreadEvent` exactly as `thread.events()` returns it. Both replay the log after `after` (default the whole log) and then stream live, so a client that remembers the last `seq` it saw loses nothing across a reconnect. An SSE record's `id` is the event's `seq`, and the route reads `Last-Event-ID`, so a browser `EventSource` resumes on its own. `granularity` is `delta` (default), `part` or `turn`, as on `thread.subscribe()`.
+SSE and WebSocket carry the same JSON: each frame is one `ThreadEvent` exactly as `thread.events()` returns it. Both stream live by default; `after` opts into replay before live events, so a client that remembers the last `seq` it saw loses nothing across a reconnect. A WebSocket is owned by the Thread Durable Object and hibernates while idle; no `ctx.waitUntil` is needed. Its authority is fixed at upgrade, so credential revocation takes effect when it disconnects. Close code `4004` means the Thread or Scope is gone and the client must stop reconnecting; standard transient codes reconnect with the last `seq`. An SSE record's `id` is the event's `seq`, and the route reads `Last-Event-ID`, so a browser `EventSource` resumes on its own. `granularity` is `delta` (default), `part` or `turn`, as on `thread.subscribe()`.
 
 A WebSocket client sends JSON frames and gets an `ack` or `error` frame back, correlated by an optional `id` of its choosing:
 

@@ -2,7 +2,6 @@ import type { Granularity, Karmi, Scope, Thread, ThreadIdentity, ThreadStatus } 
 import { decodeApprovalAnswer, decodeCompact, decodeCreateThread, decodeTurnRequest, isGranularity } from "./decode";
 import { errorResponse, HttpError } from "./errors";
 import { readMultipartTurn } from "./multipart";
-import { openSocket } from "./socket";
 import { eventStream } from "./sse";
 
 /** The identity a request acts as. It names the Scope and, when a person is behind the request, the User. */
@@ -34,7 +33,7 @@ export type ThreadResource = ThreadIdentity & { key: string; status: ThreadStatu
 export interface HttpHandler {
   /**
    * Answers a request under `/threads`, or returns undefined for any other path so the Worker can serve it
-   * itself. A WebSocket's pump is registered with `ctx.waitUntil` when `ctx` is given.
+   * itself. WebSockets are owned by the Thread and need no Worker lifetime management.
    */
   handle(request: Request, ctx?: ExecutionContext): Promise<Response | undefined>;
   /** `handle` with a 404 for unmatched paths, shaped to be a Worker's `fetch` export. */
@@ -50,7 +49,7 @@ const MULTIPART_TYPE = "multipart/form-data";
  * differs from the Principal's is a 404. Errors are JSON `{ error: { code, message } }` with karmi's codes.
  */
 export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
-  const handle = async (request: Request, ctx?: ExecutionContext): Promise<Response | undefined> => {
+  const handle = async (request: Request, _ctx?: ExecutionContext): Promise<Response | undefined> => {
     const [root, key, action, arg, extra] = new URL(request.url).pathname.split("/").filter(Boolean);
     if (root !== "threads" || extra !== undefined) return undefined;
     try {
@@ -59,7 +58,7 @@ export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
       const scope = options.karmi.scope(principal.scope);
       if (key === undefined) return await collectionRoute(request, scope, principal);
       const thread = openOwnedThread(scope, key, principal);
-      if (action === undefined) return await threadRoute(request, thread, ctx);
+      if (action === undefined) return await threadRoute(request, thread);
       if (arg !== undefined && action !== "approvals") return notFound();
       return await actionRoute(request, thread, action, arg);
     } catch (error) {
@@ -99,12 +98,10 @@ async function toResource(thread: Thread): Promise<ThreadResource> {
   return { ...thread.identity, key: thread.key, status: await thread.status() };
 }
 
-async function threadRoute(request: Request, thread: Thread, ctx: ExecutionContext | undefined): Promise<Response> {
+async function threadRoute(request: Request, thread: Thread): Promise<Response> {
   if (request.method !== "GET") return methodNotAllowed("GET");
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return Response.json(await toResource(thread));
-  const { response, done } = openSocket(thread, await streamOptions(request, thread));
-  ctx?.waitUntil(done);
-  return response;
+  return thread.socket(await streamOptions(request, thread));
 }
 
 async function actionRoute(
@@ -118,8 +115,8 @@ async function actionRoute(
       if (request.method !== "GET") return methodNotAllowed("GET");
       const { after, granularity } = await streamOptions(request, thread);
       if (!request.headers.get("accept")?.includes("text/event-stream"))
-        return Response.json(await thread.events({ after }));
-      return eventStream(thread.subscribe({ after, granularity }), request.signal);
+        return Response.json(await thread.events(after === undefined ? {} : { after }));
+      return eventStream(thread.subscribe({ ...(after !== undefined && { after }), granularity }), request.signal);
     }
     case "turns": {
       if (request.method !== "POST") return methodNotAllowed("POST");
@@ -151,18 +148,19 @@ async function actionRoute(
 
 // `after` comes from the query or, on an EventSource reconnect, from `Last-Event-ID`. The status check turns a
 // position past the end of the log into a 400 before any stream headers are sent, and a missing Thread into a 404.
-async function streamOptions(request: Request, thread: Thread): Promise<{ after: number; granularity: Granularity }> {
+async function streamOptions(request: Request, thread: Thread): Promise<{ after?: number; granularity: Granularity }> {
   const url = new URL(request.url);
-  const raw = request.headers.get("last-event-id") ?? url.searchParams.get("after") ?? "0";
-  const after = Number(raw);
-  if (!Number.isInteger(after) || after < 0)
+  const raw = request.headers.get("last-event-id") ?? url.searchParams.get("after");
+  const after = raw === null ? undefined : Number(raw);
+  if (after !== undefined && (!Number.isInteger(after) || after < 0))
     throw new HttpError(400, "http.badRequest", "after must be a non-negative integer.");
   const granularity = url.searchParams.get("granularity") ?? "delta";
   if (!isGranularity(granularity))
     throw new HttpError(400, "http.badRequest", "granularity must be delta, part or turn.");
   const status = await thread.status();
-  if (after > status.seq) throw new HttpError(400, "http.badRequest", `The log ends at seq ${status.seq}.`);
-  return { after, granularity };
+  if (after !== undefined && after > status.seq)
+    throw new HttpError(400, "http.badRequest", `The log ends at seq ${status.seq}.`);
+  return { ...(after !== undefined && { after }), granularity };
 }
 
 function contentType(request: Request): string {

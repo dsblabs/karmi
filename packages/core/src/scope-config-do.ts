@@ -557,6 +557,23 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
           result,
         };
     }
+    this.indexThread(agentId, thread);
+    return ok({
+      state: head.value.state,
+      agent: agent.value,
+      config: resolveScopeConfig(this.deployment.defaults, this.document(head.value.current_revision)),
+    });
+  }
+
+  /** Registers an attached Thread so Scope destruction can close it even before its first Turn. */
+  threadAttach(scope: ScopeId, agentId: string, thread: ThreadActivity): Outcome<void> {
+    const head = this.enter(scope);
+    if (!head.ok) return head;
+    this.indexThread(agentId, thread);
+    return ok(undefined);
+  }
+
+  private indexThread(agentId: string, thread: ThreadActivity): void {
     this.sql.exec(
       "INSERT INTO threads (thread_id, agent_id, user_id, created_at, last_active_at, title) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (thread_id) DO UPDATE SET last_active_at = excluded.last_active_at, title = COALESCE(threads.title, excluded.title)",
       thread.threadId,
@@ -573,11 +590,6 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
         thread.parent.threadKey,
         thread.parent.callId,
       );
-    return ok({
-      state: head.value.state,
-      agent: agent.value,
-      config: resolveScopeConfig(this.deployment.defaults, this.document(head.value.current_revision)),
-    });
   }
 
   /** Removes a Thread from the index. */

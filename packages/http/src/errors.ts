@@ -1,4 +1,4 @@
-import { KarmiError, type KarmiErrorCode } from "@karmi/core";
+import { ThreadProtocolError, KarmiError, type KarmiErrorCode } from "@karmi/core";
 
 /** The code of a failure the transport itself raises, before or instead of a Thread API call. */
 export type HttpErrorCode =
@@ -93,6 +93,7 @@ const STATUS: Record<KarmiErrorCode, number> = {
   "thread.notFound": 404,
   "thread.notParked": 409,
   "thread.seq.invalid": 400,
+  "thread.socketLimit": 429,
   "user.id.invalid": 400,
 };
 
@@ -103,6 +104,8 @@ export function statusOf(code: KarmiErrorCode): number {
 
 /** The status and JSON body that report `error`, whatever threw it. An unknown error is a 500 with no detail. */
 export function describeError(error: unknown): { status: number; body: ErrorBody } {
+  if (error instanceof ThreadProtocolError)
+    return { status: 400, body: { error: { code: error.code, message: error.message } } };
   if (error instanceof HttpError)
     return { status: error.status, body: { error: { code: error.code, message: error.message } } };
   if (error instanceof KarmiError)

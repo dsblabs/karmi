@@ -2,7 +2,7 @@ import { createExecutionContext, createMessageBatch, getQueueResult } from "clou
 import { env } from "cloudflare:workers";
 import { reply } from "../src/testing/index";
 import { beforeEach, expect, it } from "vitest";
-import { deliveries, karmi, provider, clock, scope, deliveryFailure } from "./worker";
+import { deliveries, karmi, provider, clock, deliveryFailure } from "./worker";
 
 beforeEach(() => {
   deliveries.length = 0;
@@ -29,19 +29,22 @@ it("delivers an offline payment webhook reply through the Queue", async () => {
   expect(deliveries[0]!.events.some((e) => e.type === "message.delta")).toBe(false);
 });
 
-it("suppresses a completed reply consumed by a subscriber, then delivers a later offline Turn using the saved route", async () => {
+it("suppresses delivery while attached and delivers a later offline Turn using the saved route", async () => {
   provider.script(["Online", "Offline"]);
-  const thread = scope.thread({ agent: "concierge", threadId: "online" });
+  const thread = karmi.scope("test").thread({ agent: "concierge", threadId: "online" });
+  const socket = (await thread.socket()).webSocket!;
+  socket.accept();
   await thread.send({
     kind: "message",
     parts: [{ type: "text", text: "Hello" }],
     channelRef: { deliverer: { name: "receipt", ref: "saved" } },
   });
+  await expect.poll(async () => (await thread.status()).state).toBe("idle");
   await clock.advance(1000);
   expect(deliveries).toEqual([]);
-  const offline = karmi.scope("test").thread(thread.key);
-  await offline.send({ kind: "event", type: "payment.received", payload: {} });
-  await expect.poll(async () => (await offline.events()).filter((e) => e.type === "turn.completed").length).toBe(2);
+  socket.close();
+  await thread.send({ kind: "event", type: "payment.received", payload: {} });
+  await expect.poll(async () => (await thread.events()).filter((e) => e.type === "turn.completed").length).toBe(2);
   await clock.advance(1000);
   await expect.poll(() => deliveries.length).toBe(1);
   expect(deliveries[0]).toMatchObject({ ref: "saved" });
@@ -116,7 +119,7 @@ it("retries a failed delivery without failing its Turn and no-ops queued work af
   expect(deliveries).toHaveLength(1);
 });
 
-it("delivers after a subscriber stops before consuming the completion", async () => {
+it("delivers after a subscriber detaches before the delivery job fires", async () => {
   provider.script(["Unread"]);
   const thread = karmi.scope("test").thread({ agent: "concierge", threadId: "disconnected" });
   await thread.send({
@@ -126,7 +129,7 @@ it("delivers after a subscriber stops before consuming the completion", async ()
     channelRef: { deliverer: { name: "receipt", ref: "disconnected" } },
   });
   await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.completed")).toBe(true);
-  for await (const event of thread.subscribe()) {
+  for await (const event of thread.subscribe({ after: 0 })) {
     expect(event.type).toBe("turn.started");
     break;
   }

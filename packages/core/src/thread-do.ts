@@ -1,3 +1,4 @@
+import { decodeSocketAttachment, handleSocketFrame, excludedEventTypes, type SocketAttachment } from "./thread-sockets";
 import { workspaceSandbox } from "./container-workspace";
 import { cloudflareContainer } from "./cloudflare-container";
 import { decodeContainerRun, containerLimits, type ContainerLimits } from "./container-types";
@@ -131,7 +132,7 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS provider_tool_calls ON events (turn) WHERE type = 'server_tool.called';
   CREATE INDEX IF NOT EXISTS events_turn_seq ON events (turn, seq);
   CREATE TABLE IF NOT EXISTS delivery_route (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
-  CREATE TABLE IF NOT EXISTS deliveries (to_seq INTEGER PRIMARY KEY, from_seq INTEGER NOT NULL, turn INTEGER NOT NULL, binding_json TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
+  CREATE TABLE IF NOT EXISTS deliveries (to_seq INTEGER PRIMARY KEY, from_seq INTEGER NOT NULL, turn INTEGER NOT NULL, binding_json TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS deliveries_turn ON deliveries (turn, to_seq);
   CREATE TABLE IF NOT EXISTS inputs (id INTEGER PRIMARY KEY AUTOINCREMENT, turn INTEGER NOT NULL, json TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS usage_outbox (seq INTEGER PRIMARY KEY);
@@ -140,8 +141,8 @@ const SCHEMA = `
 /** The largest Turn snapshot, in bytes of JSON, a Thread stores. A Spec that produces a larger one is rejected. */
 export const SNAPSHOT_LIMIT = 256 * 1024;
 const MAX_STEP_ATTEMPTS = 3;
-const POLL_TIMEOUT_MS = 15_000;
-const POLL_LIMIT = 256;
+const REPLAY_LIMIT = 256;
+const SOCKET_LIMIT = 64;
 /** How many Usage records one Queue message carries at most. */
 const USAGE_BATCH = 100;
 /** How long a Step may run without progress before the alarm presumes it lost and re-enters the loop. */
@@ -283,8 +284,6 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private syncAgain = false;
   private head = 0;
   private active = false;
-  /** Subscribers waiting on an empty poll. Each append wakes them all. */
-  private waiters: (() => void)[] = [];
   /** The root of the Turn's AbortSignal tree. It is aborted when the Turn ends or is cancelled. */
   private turnAbort = new AbortController();
   /** The running Turn's MCP servers, as catalogues and lazily opened sessions. Dropped when the Turn ends. */
@@ -416,7 +415,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       dueAt: this.deployment.clock.now(),
       payload: address,
     });
-    for (const wake of this.waiters.splice(0)) wake();
+    for (const socket of this.ctx.getWebSockets()) socket.close(4004, "Thread deleted.");
     return ok(undefined);
   }
 
@@ -575,23 +574,82 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return ok(status);
   }
 
-  /** Returns the next events after `after`, waiting for the first one when the log has nothing yet. */
-  async poll(address: ThreadAddress, after: number, granularity: Granularity): Promise<Outcome<ThreadEvent[]>> {
-    const row = this.enter(address);
-    if (!row.ok) return row;
-    if (after > this.head)
-      return fail(
-        new KarmiError("thread.seq.invalid", `The log ends at seq ${this.head}; cannot subscribe after ${after}.`),
+  /** Accepts the single internal WebSocket upgrade path into this Thread. */
+  override async fetch(request: globalThis.Request): Promise<Response> {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket")
+      return new Response("WebSocket upgrade required.", { status: 426 });
+    const attachment = decodeSocketAttachment(JSON.parse(request.headers.get("x-karmi-thread") ?? "null"));
+    const entered = this.enter(attachment.address);
+    if (!entered.ok) return Response.json(entered, { status: 400 });
+    const row = entered.value;
+    const registered = await this.scopeStub(row).threadAttach(row.scope_id, row.agent_id, {
+      threadId: row.thread_id,
+      ...(row.user_id !== null && { userId: row.user_id }),
+      createdAt: row.created_at,
+      activeAt: this.deployment.clock.now(),
+    });
+    const destroyed = !registered.ok && registered.code === "scope.destroyed";
+    if (!registered.ok && (!destroyed || this.head === 0)) return Response.json(registered, { status: 400 });
+    // Scope lookup yields, so deletion and the cap must be checked again before accepting.
+    const current = this.enter(attachment.address);
+    if (!current.ok) return Response.json(current, { status: 400 });
+    const raw = new URL(request.url).searchParams.get("after");
+    const after = raw === null ? this.head : Number(raw);
+    if (!Number.isSafeInteger(after) || after < 0 || after > this.head)
+      return Response.json(
+        fail(
+          new KarmiError("thread.seq.invalid", `The log ends at seq ${this.head}; cannot subscribe after ${after}.`),
+        ),
+        { status: 400 },
       );
-    if (after === this.head) await this.nextAppend();
-    return ok(this.read(after, granularity, POLL_LIMIT));
+    if (this.ctx.getWebSockets().length >= SOCKET_LIMIT)
+      return Response.json(fail(new KarmiError("thread.socketLimit", "This Thread has too many attached sockets.")), {
+        status: 429,
+      });
+    const pair = new WebSocketPair();
+    pair[1].serializeAttachment(attachment);
+    this.ctx.acceptWebSocket(pair[1]);
+    this.replaySocket(pair[1], attachment, after);
+    // A rejected Turn may have logged its failure after Scope destruction; let subscribers read it and stop.
+    if (destroyed && current.value.state === "idle") pair[1].close(4004, "Scope destroyed.");
+    return new Response(null, { status: 101, webSocket: pair[0], headers: { "x-karmi-seq": String(after) } });
   }
 
-  consumed(address: ThreadAddress, seq: number): Outcome<void> {
-    const entered = this.enter(address);
-    if (!entered.ok) return entered;
-    this.sql.exec("UPDATE deliveries SET consumed = 1 WHERE to_seq = ?", seq);
-    return ok(undefined);
+  private replaySocket(socket: WebSocket, attachment: SocketAttachment, after: number): void {
+    while (after < this.head) {
+      const events = this.read(after, attachment.granularity, REPLAY_LIMIT);
+      for (const event of events) if (!this.sendSocket(socket, JSON.stringify(event))) return;
+      after = events.at(-1)?.seq ?? this.head;
+    }
+  }
+
+  /** Dispatches a client frame using the authority saved when its socket was accepted. */
+  async webSocketMessage(socket: WebSocket, data: string | ArrayBuffer): Promise<void> {
+    const { address } = decodeSocketAttachment(socket.deserializeAttachment());
+    this.sendSocket(socket, JSON.stringify(await handleSocketFrame(this, address, data)));
+  }
+
+  /** Completes the close handshake and reports abnormal disconnects that may have lost buffered data. */
+  webSocketClose(socket: WebSocket, code: number, reason: string, wasClean: boolean): void {
+    // The runtime exposes no send-buffer size or delivery acknowledgement, so abnormal closes are the signal.
+    if (!wasClean || (code !== 1000 && code !== 1001 && code !== 4004))
+      this.deployment.logger.warn("Thread socket closed with potentially outstanding data", {
+        code,
+        reason,
+        head: this.head,
+      });
+    socket.close(code === 1005 || code === 1006 ? 1011 : code, reason);
+  }
+
+  private sendSocket(socket: WebSocket, frame: string): boolean {
+    try {
+      socket.send(frame);
+      return true;
+    } catch {
+      this.deployment.logger.warn("Thread socket send failed with outstanding data", { head: this.head });
+      socket.close(1011, "Reconnect to replay events.");
+      return false;
+    }
   }
 
   delivery(
@@ -601,9 +659,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   ): Outcome<{ binding: DeliveryBinding; events: ThreadEvent[] } | null> {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
+    if (this.ctx.getWebSockets().length > 0) return ok(null);
     const delivery = this.sql
       .exec<{ binding_json: string }>(
-        "SELECT binding_json FROM deliveries WHERE from_seq = ? AND to_seq = ? AND consumed = 0",
+        "SELECT binding_json FROM deliveries WHERE from_seq = ? AND to_seq = ?",
         fromSeq,
         toSeq,
       )
@@ -811,28 +870,13 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return ok(undefined);
   }
 
-  private nextAppend(): Promise<void> {
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.waiters = this.waiters.filter((waiter) => waiter !== wake);
-        resolve();
-      }, POLL_TIMEOUT_MS);
-      const wake = () => {
-        clearTimeout(timer);
-        resolve();
-      };
-      this.waiters.push(wake);
-    });
-  }
-
   private read(
     after: number,
     granularity: Granularity,
     limit: number,
     through = Number.MAX_SAFE_INTEGER,
   ): ThreadEvent[] {
-    const excluded: ThreadEventType[] =
-      granularity === "delta" ? [] : granularity === "part" ? ["message.delta"] : ["message.delta", "message.part"];
+    const excluded = excludedEventTypes[granularity];
     const rows =
       excluded.length === 0
         ? this.sql.exec<EventRow>(
@@ -891,14 +935,11 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           turn,
           route.json,
         );
-        // The delivery is due a second later so a live subscriber can acknowledge the event first. The Queue
-        // checks again before delivering.
+        // Wait a second to let a reconnecting client reattach. The Queue checks attachment again.
         this.scheduler.set({ id: `delivery:${seq}`, kind: "delivery", dueAt: at + 1000, payload: { toSeq: seq } });
       }
     }
-    const waiters = this.waiters;
-    this.waiters = [];
-    for (const wake of waiters) wake();
+    this.broadcast(event);
     if (
       data.type === "approval.requested" ||
       data.type === "approval.resolved" ||
@@ -907,6 +948,17 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     )
       this.scheduleParentNotification();
     return event;
+  }
+
+  private broadcast(event: ThreadEvent): void {
+    const sockets = this.ctx.getWebSockets();
+    if (sockets.length === 0) return;
+    const frame = JSON.stringify(event);
+    for (const socket of sockets) {
+      const attachment = decodeSocketAttachment(socket.deserializeAttachment());
+      if (!excludedEventTypes[attachment.granularity].includes(event.type)) this.sendSocket(socket, frame);
+      if (event.type === "turn.failed" && event.reason === "scope.destroyed") socket.close(4004, "Scope destroyed.");
+    }
   }
 
   private update(
@@ -952,15 +1004,14 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (job.kind === "thread-cleanup") return this.cleanup(decodeCleanup(job.payload));
     if (this.sql.exec("SELECT id FROM deleted").toArray().length) return;
     if (job.kind === "delivery") {
+      // Any attached Subscriber suppresses delivery. Socket tags can distinguish audiences if needed.
+      if (this.ctx.getWebSockets().length > 0) return;
       const row = this.row();
       const { toSeq } = job.payload as { toSeq: number };
       const delivery = this.sql
-        .exec<{ from_seq: number; consumed: number }>(
-          "SELECT from_seq, consumed FROM deliveries WHERE to_seq = ?",
-          toSeq,
-        )
+        .exec<{ from_seq: number }>("SELECT from_seq FROM deliveries WHERE to_seq = ?", toSeq)
         .toArray()[0];
-      if (!delivery || delivery.consumed) return;
+      if (!delivery) return;
       const status = await this.scopeStub(row).status(row.scope_id);
       if (!status.ok) throw new KarmiError(status.code, status.message);
       if (status.value.state === "destroying" || status.value.state === "destroyed") return;
