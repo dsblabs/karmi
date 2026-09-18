@@ -1,4 +1,5 @@
 import { testContainer } from "./container-fixtures";
+import { DurableObject } from "cloudflare:workers";
 import { defineVectorRetriever } from "../src/index";
 import { sqliteMirror, semanticEmbedder, interruptedRetriever } from "./knowledge-fixtures";
 import { z } from "zod";
@@ -778,6 +779,9 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
 );
 
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;
+
+/** An empty SQLite Durable Object used to test migrations without application-owned tables. */
+export class MigrationTestDO extends DurableObject {}
 
 export default {
   fetch(request: Request): Response {

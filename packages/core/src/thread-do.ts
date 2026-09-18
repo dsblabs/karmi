@@ -312,11 +312,6 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       );
     if (!columns("thread").has("platform_failure")) {
       ctx.storage.sql.exec("ALTER TABLE thread ADD COLUMN platform_failure INTEGER NOT NULL DEFAULT 0");
-      // A Thread written before the jobs table existed has no watchdog row, so a running Turn gets one here.
-      ctx.storage.sql.exec(
-        "INSERT OR IGNORE INTO jobs (id, kind, dueAt, payload, attempt, generation) SELECT 'watchdog', 'watchdog', 0, 'null', 0, ? FROM thread WHERE state = 'running'",
-        crypto.randomUUID(),
-      );
     }
     if (!columns("thread").has("cancelled"))
       ctx.storage.sql.exec("ALTER TABLE thread ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0");
@@ -1042,7 +1037,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       id: "watchdog",
       kind: "watchdog",
       dueAt: this.deployment.clock.now() + STEP_WATCHDOG_MS,
-      payload: null,
+      payload: {},
     });
   }
 
@@ -1963,7 +1958,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private scheduleUsageFlush(dueAt: number): void {
-    this.scheduler.set({ id: "usage", kind: "usage", dueAt, payload: null });
+    this.scheduler.set({ id: "usage", kind: "usage", dueAt, payload: {} });
   }
 
   // Turn-level Hooks are dispatched by name with the Turn's context. `before-turn` and `before-compact`
@@ -2661,7 +2656,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       return fail(new KarmiError("thread.busy", "Child Thread already exists."));
     this.delegations.attach(origin);
     const deadline = Math.min(...origin.chain.map((a) => a.deadline));
-    this.scheduler.set({ id: "delegation-deadline", kind: "delegation-deadline", dueAt: deadline, payload: null });
+    this.scheduler.set({ id: "delegation-deadline", kind: "delegation-deadline", dueAt: deadline, payload: {} });
     const sent = this.send(address, input);
     return sent.ok ? ok(undefined) : sent;
   }
@@ -2716,13 +2711,13 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     };
     const limit = await this.admitDelegation(row, child);
     if (limit) return delegationError(`limit_exceeded: ${limit}`);
-    this.scheduler.set({ id: "delegation-deadline", kind: "delegation-deadline", dueAt: deadline, payload: null });
+    this.scheduler.set({ id: "delegation-deadline", kind: "delegation-deadline", dueAt: deadline, payload: {} });
     this.append(
       row.turn,
       { type: "delegation.started", id: stableId, childKey: encodeKey(childAddress) },
       this.turnInput(row.turn)?.channelRef,
     );
-    this.scheduler.set({ id: "delegation", kind: "delegation", dueAt: this.deployment.clock.now(), payload: null });
+    this.scheduler.set({ id: "delegation", kind: "delegation", dueAt: this.deployment.clock.now(), payload: {} });
     return { pending: stableId };
   }
 
@@ -2779,7 +2774,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   async delegationChanged(address: ThreadAddress): Promise<void> {
     const entered = this.enter(address);
     if (!entered.ok) return;
-    this.scheduler.set({ id: "delegation", kind: "delegation", dueAt: this.deployment.clock.now(), payload: null });
+    this.scheduler.set({ id: "delegation", kind: "delegation", dueAt: this.deployment.clock.now(), payload: {} });
     await this.syncDelegations();
   }
 
@@ -2902,7 +2897,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   private async releaseChild(child: DelegationRecord): Promise<void> {
     // The delegation job is armed first so the release is retried when a remote ancestor is unavailable.
-    this.scheduler.set({ id: "delegation", kind: "delegation", dueAt: this.deployment.clock.now(), payload: null });
+    this.scheduler.set({ id: "delegation", kind: "delegation", dueAt: this.deployment.clock.now(), payload: {} });
     await this.releaseDelegation(child.origin.chain, child.id, !child.reserved);
     child.released = true;
     this.delegations.save(child);
@@ -2921,7 +2916,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       id: "delegation-notify",
       kind: "delegation-notify",
       dueAt: this.deployment.clock.now(),
-      payload: null,
+      payload: {},
     });
     void this.notifyParent().catch((error) =>
       this.deployment.logger.warn("Delegation notification deferred", { error: errorMessage(error) }),
@@ -2967,7 +2962,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         id: "container-idle",
         kind: "container-idle",
         dueAt: this.deployment.clock.now() + limits.idleMs,
-        payload: null,
+        payload: {},
       });
   }
 
@@ -2976,7 +2971,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       id: "container-watchdog",
       kind: "container-watchdog",
       dueAt: this.deployment.clock.now() + 5000,
-      payload: null,
+      payload: {},
     });
   }
 

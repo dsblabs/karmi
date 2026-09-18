@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "turbo run build",
+    "db:generate": "pnpm --filter @karmi/core db:generate",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,mts,js}\"",
