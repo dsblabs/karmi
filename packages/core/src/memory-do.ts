@@ -1,23 +1,18 @@
 import { DurableObject } from "cloudflare:workers";
+import { desc, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/durable-sqlite";
+import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import type { KarmiBindings } from "./bindings";
 import type { ScopeId } from "./context";
+import memoryMigrations from "./db/memory/migrations";
+import { notes } from "./db/memory/notes";
+import { memoryHead, memorySchema, vectorIds, vectors } from "./db/memory/schema";
 import type { Deployment } from "./deployment";
 import { ftsQuery, RECALL_LIMIT, type MemoryNote, type MemoryView, type MemoryWrite } from "./memory";
 import { ok, type Outcome } from "./outcome";
 
-// One Memory Durable Object holds what every Agent in a Scope remembers about one User: a head row with
-// the Profile as JSON and an FTS5 table of Notes. The Durable Object is the only writer, so a `recall`
-// after a `remember` in the same Turn always sees the Note.
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS memory_head (scope_id TEXT NOT NULL, user_id TEXT NOT NULL, profile_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
-  CREATE VIRTUAL TABLE IF NOT EXISTS notes USING fts5(text, agent_id UNINDEXED, created_at UNINDEXED);
-`;
-
-type HeadRow = { scope_id: string; user_id: string; profile_json: string; updated_at: number };
-type NoteRow = { id: number; text: string; agent_id: string; created_at: number };
-
-// The decode point for the one JSON column this Durable Object writes.
-const decodeProfile = (json: string): Record<string, unknown> => JSON.parse(json);
+type MemoryHead = typeof memoryHead.$inferSelect;
+type NoteRow = typeof notes.$inferSelect;
 
 /**
  * The Durable Object behind one User's Memory in a Scope. Every method returns an Outcome. The Thread
@@ -25,34 +20,30 @@ const decodeProfile = (json: string): Record<string, unknown> => JSON.parse(json
  */
 export abstract class MemoryDurableObject extends DurableObject<KarmiBindings> {
   abstract readonly deployment: Deployment;
+  private readonly db;
 
   constructor(ctx: DurableObjectState, env: KarmiBindings) {
     super(ctx, env);
-    ctx.storage.sql.exec(SCHEMA);
-  }
-
-  private get sql(): SqlStorage {
-    return this.ctx.storage.sql;
+    this.db = drizzle(ctx.storage, { schema: memorySchema });
+    ctx.blockConcurrencyWhile(() => migrate(this.db, memoryMigrations));
   }
 
   // Returns the head row, or undefined before the first write. A read never creates one, so reading a
   // User who has no Memory leaves no storage behind.
-  private head(scope: ScopeId, user: string): HeadRow | undefined {
-    const head = this.sql.exec<HeadRow>("SELECT * FROM memory_head").toArray()[0];
+  private loadHead(scope: ScopeId, user: string): MemoryHead | undefined {
+    const head = this.db.select().from(memoryHead).get();
     // Only a keys.ts bug can address one User's object as another. Refusing keeps it from leaking Memory.
-    if (head && (head.scope_id !== scope || head.user_id !== user))
-      throw new Error(`Memory for "${head.scope_id}/${head.user_id}" was addressed as "${scope}/${user}".`);
+    if (head && (head.scopeId !== scope || head.userId !== user))
+      throw new Error(`Memory for "${head.scopeId}/${head.userId}" was addressed as "${scope}/${user}".`);
     return head;
   }
 
   /** Returns the Profile and the `limit` most recent Notes. */
   get(scope: ScopeId, user: string, limit: number): Outcome<MemoryView> {
-    const head = this.head(scope, user);
+    const head = this.loadHead(scope, user);
     if (!head) return ok({ profile: {}, notes: [] });
-    const rows = this.sql
-      .exec<NoteRow>("SELECT rowid AS id, text, agent_id, created_at FROM notes ORDER BY rowid DESC LIMIT ?", limit)
-      .toArray();
-    return ok({ profile: decodeProfile(head.profile_json), notes: rows.map(toNote) });
+    const rows = this.db.select().from(notes).orderBy(desc(notes.id)).limit(limit).all();
+    return ok({ profile: decodeProfile(head.profile), notes: rows.map(toNote) });
   }
 
   /**
@@ -61,22 +52,17 @@ export abstract class MemoryDurableObject extends DurableObject<KarmiBindings> {
    */
   remember(scope: ScopeId, user: string, write: MemoryWrite): Outcome<void> {
     const now = this.deployment.clock.now();
-    this.ctx.storage.transactionSync(() => {
-      const profile = decodeProfile(this.head(scope, user)?.profile_json ?? "{}");
+    const current = this.loadHead(scope, user);
+    this.db.transaction((tx) => {
+      const profile = decodeProfile(current?.profile ?? {});
       for (const [field, value] of Object.entries(write.profile ?? {})) {
         if (value === null) delete profile[field];
         else profile[field] = value;
       }
-      this.sql.exec("DELETE FROM memory_head");
-      this.sql.exec(
-        "INSERT INTO memory_head (scope_id, user_id, profile_json, updated_at) VALUES (?, ?, ?, ?)",
-        scope,
-        user,
-        JSON.stringify(profile),
-        now,
-      );
+      tx.delete(memoryHead).run();
+      tx.insert(memoryHead).values({ scopeId: scope, userId: user, profile, updatedAt: now }).run();
       if (write.note !== undefined)
-        this.sql.exec("INSERT INTO notes (text, agent_id, created_at) VALUES (?, ?, ?)", write.note, write.agent, now);
+        tx.insert(notes).values({ text: write.note, agentId: write.agent, createdAt: now }).run();
     });
     return ok(undefined);
   }
@@ -84,28 +70,33 @@ export abstract class MemoryDurableObject extends DurableObject<KarmiBindings> {
   /** Returns the Notes matching `query` by full-text search, best match first. A blank query matches none. */
   recall(scope: ScopeId, user: string, query: string): Outcome<MemoryNote[]> {
     const match = ftsQuery(query);
-    if (!this.head(scope, user) || match === undefined) return ok([]);
-    const rows = this.sql
-      .exec<NoteRow>(
-        `SELECT rowid AS id, text, agent_id, created_at FROM notes
-        WHERE notes MATCH ? ORDER BY bm25(notes), rowid DESC LIMIT ?`,
-        match,
-        RECALL_LIMIT,
-      )
-      .toArray();
+    if (!this.loadHead(scope, user) || match === undefined) return ok([]);
+    const rows = this.db.all<NoteRow>(
+      sql`SELECT rowid AS id, text, agent_id AS agentId, created_at AS createdAt FROM notes
+          WHERE notes MATCH ${match} ORDER BY bm25(notes), rowid DESC LIMIT ${RECALL_LIMIT}`,
+    );
     return ok(rows.map(toNote));
   }
 
-  /** Deletes the Profile, every Note and the object's storage. */
+  /** Deletes the Profile, every Note and every vector owned by this Memory. */
   async clear(scope: ScopeId, user: string): Promise<Outcome<void>> {
-    this.head(scope, user);
-    await this.ctx.storage.deleteAll();
-    // deleteAll drops the tables too, and this instance may be called again before it is evicted.
-    this.sql.exec(SCHEMA);
+    this.loadHead(scope, user);
+    this.db.transaction((tx) => {
+      tx.delete(notes).run();
+      tx.delete(vectorIds).run();
+      tx.delete(vectors).run();
+      tx.delete(memoryHead).run();
+    });
     return ok(undefined);
   }
 }
 
 function toNote(row: NoteRow): MemoryNote {
-  return { id: row.id, text: row.text, agent: row.agent_id, at: row.created_at };
+  return { id: row.id, text: row.text, agent: row.agentId, at: row.createdAt };
+}
+
+function decodeProfile(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new Error("The stored Memory Profile is not an object.");
+  return Object.fromEntries(Object.entries(value));
 }

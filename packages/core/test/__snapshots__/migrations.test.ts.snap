@@ -144,6 +144,91 @@ END",
 ]
 `;
 
+exports[`committed migrations > migrates an empty Memory database exactly once > Memory sqlite_master 1`] = `
+[
+  {
+    "name": "vector_ids_doc",
+    "sql": "CREATE INDEX \`vector_ids_doc\` ON \`vector_ids\` (\`doc\`)",
+    "type": "index",
+  },
+  {
+    "name": "vectors_corpus",
+    "sql": "CREATE INDEX \`vectors_corpus\` ON \`vectors\` (\`ns\`,\`knowledge\`,\`id\`)",
+    "type": "index",
+  },
+  {
+    "name": "__drizzle_migrations",
+    "sql": "CREATE TABLE "__drizzle_migrations" (
+					id SERIAL PRIMARY KEY,
+					hash text NOT NULL,
+					created_at numeric
+				)",
+    "type": "table",
+  },
+  {
+    "name": "memory_head",
+    "sql": "CREATE TABLE \`memory_head\` (
+	\`scope_id\` text NOT NULL,
+	\`user_id\` text NOT NULL,
+	\`profile_json\` text NOT NULL,
+	\`updated_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "notes",
+    "sql": "CREATE VIRTUAL TABLE \`notes\` USING fts5(text, agent_id UNINDEXED, created_at UNINDEXED)",
+    "type": "table",
+  },
+  {
+    "name": "notes_config",
+    "sql": "CREATE TABLE 'notes_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+    "type": "table",
+  },
+  {
+    "name": "notes_content",
+    "sql": "CREATE TABLE 'notes_content'(id INTEGER PRIMARY KEY, c0, c1, c2)",
+    "type": "table",
+  },
+  {
+    "name": "notes_data",
+    "sql": "CREATE TABLE 'notes_data'(id INTEGER PRIMARY KEY, block BLOB)",
+    "type": "table",
+  },
+  {
+    "name": "notes_docsize",
+    "sql": "CREATE TABLE 'notes_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
+    "type": "table",
+  },
+  {
+    "name": "notes_idx",
+    "sql": "CREATE TABLE 'notes_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+    "type": "table",
+  },
+  {
+    "name": "vector_ids",
+    "sql": "CREATE TABLE \`vector_ids\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`doc\` text NOT NULL,
+	\`seq\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "vectors",
+    "sql": "CREATE TABLE \`vectors\` (
+	\`ns\` text NOT NULL,
+	\`id\` text NOT NULL,
+	\`knowledge\` text NOT NULL,
+	\`doc\` text NOT NULL,
+	\`values_blob\` blob NOT NULL,
+	PRIMARY KEY(\`ns\`, \`id\`)
+)",
+    "type": "table",
+  },
+]
+`;
+
 exports[`committed migrations > migrates an empty Scheduler database exactly once > Scheduler sqlite_master 1`] = `
 [
   {
