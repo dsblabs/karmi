@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import knowledgeMigrations from "../src/db/knowledge/migrations";
 import memoryMigrations from "../src/db/memory/migrations";
 import schedulerMigrations from "../src/db/scheduler/migrations";
+import scopeConfigMigrations from "../src/db/scope-config/migrations";
 import { expectMigrationSchema } from "./migration-fixtures";
 
 const migrationModules = import.meta.glob("../src/db/*/migrations/index.ts", {
@@ -53,5 +54,9 @@ describe("committed migrations", () => {
 
   it("migrates an empty Memory database exactly once", async () => {
     await expectMigrationSchema(memoryMigrations, "Memory sqlite_master");
+  });
+
+  it("migrates an empty Scope config database exactly once", async () => {
+    await expectMigrationSchema(scopeConfigMigrations, "Scope config sqlite_master");
   });
 });
