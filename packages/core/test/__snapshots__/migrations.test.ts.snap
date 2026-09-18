@@ -1,0 +1,32 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`committed migrations > migrates an empty Scheduler database exactly once > Scheduler sqlite_master 1`] = `
+[
+  {
+    "name": "jobs_due",
+    "sql": "CREATE INDEX \`jobs_due\` ON \`jobs\` (\`dueAt\`,\`id\`)",
+    "type": "index",
+  },
+  {
+    "name": "__drizzle_migrations",
+    "sql": "CREATE TABLE "__drizzle_migrations" (
+					id SERIAL PRIMARY KEY,
+					hash text NOT NULL,
+					created_at numeric
+				)",
+    "type": "table",
+  },
+  {
+    "name": "jobs",
+    "sql": "CREATE TABLE \`jobs\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`kind\` text NOT NULL,
+	\`dueAt\` integer NOT NULL,
+	\`payload\` text NOT NULL,
+	\`attempt\` integer NOT NULL,
+	\`generation\` text NOT NULL
+)",
+    "type": "table",
+  },
+]
+`;

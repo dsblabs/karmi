@@ -41,7 +41,9 @@ Folding events, computing limits and deciding the next action are pure functions
 
 ## Persistence schema
 
-The create statements always describe the current schema. Migrations for older data are versioned and run once. Don't probe the live schema on every startup. Break long queries across lines, because formatters never split strings.
+Each Durable Object's schema file is the source of truth. Generate versioned migrations from it with
+`pnpm db:generate`; every migration runs once. Never edit or combine a generated migration after it has
+been merged. Don't probe the live schema on every startup.
 
 ## Ids and keys
 

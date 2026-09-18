@@ -3,3 +3,7 @@ declare module "*?raw" {
   const contents: string;
   export default contents;
 }
+
+interface ImportMeta {
+  glob(pattern: string, options: { eager: true; import?: string; query?: string }): Record<string, unknown>;
+}
