@@ -80,12 +80,62 @@ function assertScope(scope: ScopeId): ScopeId {
 
 /** The Scope of an R2 `key`, or undefined unless the key is a Framework media or spilled-output key. */
 export function mediaKeyScope(key: string): string | undefined {
-  return /^([A-Za-z0-9_-]{1,64})\/(?:media\/[A-Za-z0-9_-]{1,64}(?:\/[A-Za-z0-9_%-]+)*\/[A-Za-z0-9_-]{1,64}|threads\/[A-Za-z0-9_-]{1,64}(?:\/[A-Za-z0-9_%-]+)*\/tool-output\/\d+)$/.exec(
-    key,
-  )?.[1];
+  return parseObjectKey(key)?.scope;
+}
+
+/** A Framework media or spilled-output R2 key split into the parts it was minted from. */
+export type ObjectKey =
+  | {
+      kind: "media";
+      scope: ScopeId;
+      /** The Thread whose media prefix holds the object. */
+      threadId: string;
+      /** The media id, which is also the last segment of the key. */
+      id: string;
+    }
+  | {
+      kind: "tool-output";
+      scope: ScopeId;
+      /** The Thread whose tool-output prefix holds the object. */
+      threadId: string;
+      /** The `seq` of the Tool result whose output was spilled. */
+      seq: number;
+      /** Whether the object holds the result's structured content as JSON rather than its text. */
+      structured: boolean;
+    };
+
+const THREAD_ID = "[A-Za-z0-9_-]{1,64}(?:/[A-Za-z0-9_%-]+)*";
+const WHOLE_THREAD_ID = new RegExp(`^${THREAD_ID}$`);
+const OBJECT_KEY = new RegExp(
+  `^([A-Za-z0-9_-]{1,64})/(?:media/(${THREAD_ID})/([A-Za-z0-9_-]{1,64})|threads/(${THREAD_ID})/tool-output/(\\d+)(\\.json)?)$`,
+);
+
+/** The parts of an R2 `key`, or undefined unless the key is a Framework media or spilled-output key. */
+export function parseObjectKey(key: string): ObjectKey | undefined {
+  const [, scope, mediaThread, id, outputThread, seq, json] = OBJECT_KEY.exec(key) ?? [];
+  if (!scope) return undefined;
+  if (mediaThread && id) return { kind: "media", scope, threadId: mediaThread, id };
+  if (outputThread && seq)
+    return { kind: "tool-output", scope, threadId: outputThread, seq: Number(seq), structured: !!json };
+  return undefined;
+}
+
+/**
+ * Whether Thread `threadId` of `scope` may read the object at `key`. A Thread reads its own objects and those
+ * of the Threads above and below it in a chain of Delegations, because Delegation hands media from a parent to
+ * its child and back. It never reads another Scope's objects or those of any other Thread.
+ */
+export function threadMayRead(key: string, scope: ScopeId, threadId: string): boolean {
+  const owner = parseObjectKey(key);
+  if (owner?.scope !== scope) return false;
+  // A child Thread's id is its parent's id followed by one more path segment.
+  return (
+    owner.threadId === threadId ||
+    owner.threadId.startsWith(`${threadId}/`) ||
+    threadId.startsWith(`${owner.threadId}/`)
+  );
 }
 
 function assertThreadId(id: string): void {
-  if (id.length > 2048 || !/^[A-Za-z0-9_-]{1,64}(?:\/[A-Za-z0-9_%-]+)*$/.test(id))
-    throw new KarmiError("thread.id.invalid", "Invalid Thread id.");
+  if (id.length > 2048 || !WHOLE_THREAD_ID.test(id)) throw new KarmiError("thread.id.invalid", "Invalid Thread id.");
 }

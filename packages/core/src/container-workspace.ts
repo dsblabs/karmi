@@ -3,7 +3,7 @@ import { decodeContainerRun, type ContainerDriver, type ContainerLimits } from "
 import { DEFAULT_MEDIA_BYTES, putMedia } from "./media";
 import type { ScopeConfigDocument } from "./scope-config";
 import type { ThreadEventData } from "./thread-events";
-import { mediaKeyScope } from "./keys";
+import { threadMayRead } from "./keys";
 
 /** The Thread resources used by a Workspace without passing any credentials into its process. */
 export interface WorkspaceHost {
@@ -48,7 +48,8 @@ export function workspaceSandbox(
         if (pending.length) host.append({ type: "job.progress", jobId, content: [{ type: "text", text: stdout }] });
       },
       load: async (ref) => {
-        if (mediaKeyScope(ref.key) !== host.scope) throw new Error("Script files must reference media in this Scope.");
+        if (!threadMayRead(ref.key, host.scope, host.threadId))
+          throw new Error("Script files must reference media of this Thread.");
         const object = await host.bucket?.get(ref.key);
         if (!object) throw new Error("Script input media is unavailable.");
         if (object.size > (host.media?.maxBytes ?? DEFAULT_MEDIA_BYTES))

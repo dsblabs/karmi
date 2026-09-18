@@ -90,7 +90,7 @@ it("materialises named media and rejects references from another Scope", async (
     ],
     "done",
   ]);
-  expect(JSON.stringify(await thread.send(input))).toContain("Script files must reference media in this Scope");
+  expect(JSON.stringify(await thread.send(input))).toContain("Script files must reference media of this Thread");
 });
 
 it("kills a Job that exceeds its wall deadline", async () => {
