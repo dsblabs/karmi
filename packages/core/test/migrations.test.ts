@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import schedulerMigrations from "../src/db/scheduler/migrations";
+import knowledgeMigrations from "../src/db/knowledge/migrations";
 import { expectMigrationSchema } from "./migration-fixtures";
 
 const migrationModules = import.meta.glob("../src/db/*/migrations/index.ts", {
@@ -43,5 +44,9 @@ describe("committed migrations", () => {
 
   it("migrates an empty Scheduler database exactly once", async () => {
     await expectMigrationSchema(schedulerMigrations, "Scheduler sqlite_master");
+  });
+
+  it("migrates an empty Knowledge database exactly once", async () => {
+    await expectMigrationSchema(knowledgeMigrations, "Knowledge sqlite_master");
   });
 });

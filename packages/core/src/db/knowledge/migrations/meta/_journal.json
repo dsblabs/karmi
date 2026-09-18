@@ -1,1 +1,27 @@
-{"version":"7","dialect":"sqlite","entries":[]}
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1789730131356,
+      "tag": "0000_sticky_nomad",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789730144805,
+      "tag": "0001_worried_thor",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789730145330,
+      "tag": "0002_fts5",
+      "breakpoints": true
+    }
+  ]
+}

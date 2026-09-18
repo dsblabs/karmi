@@ -5,6 +5,7 @@ import { KarmiError } from "./errors";
 import { defaultEmbeddingIndex, workersAiEmbedder } from "./embedder";
 import { defineRetriever, type RetrieverContext } from "./retriever";
 import { VectorLedger } from "./vector-ledger";
+import { retrieverDatabase } from "./retriever-internal";
 import {
   embeddingIndexSchema,
   validateVector,
@@ -100,7 +101,7 @@ function resources(options: VectorRetrieverOptions, embedding: EmbeddingIndex, c
       "knowledge.indexConflict",
       "The Retriever embedding model, dimensions or metric differ from this Knowledge index.",
     );
-  const ledger = new VectorLedger(ctx.storage, ctx.knowledge, embedding, options.maxChunks);
+  const ledger = new VectorLedger(retrieverDatabase(ctx), ctx.knowledge, embedding, options.maxChunks);
   return { ledger, store: options.store?.(ctx) ?? ledger.local };
 }
 function embedder(options: VectorRetrieverOptions, ctx: RetrieverContext<Settings>): Embedder {

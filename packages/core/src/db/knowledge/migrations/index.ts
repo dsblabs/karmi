@@ -3,7 +3,36 @@ export default {
   journal: {
     version: "7",
     dialect: "sqlite",
-    entries: [],
+    entries: [
+      {
+        idx: 0,
+        version: "6",
+        when: 1789730131356,
+        tag: "0000_sticky_nomad",
+        breakpoints: true,
+      },
+      {
+        idx: 1,
+        version: "6",
+        when: 1789730144805,
+        tag: "0001_worried_thor",
+        breakpoints: true,
+      },
+      {
+        idx: 2,
+        version: "6",
+        when: 1789730145330,
+        tag: "0002_fts5",
+        breakpoints: true,
+      },
+    ],
   },
-  migrations: {},
+  migrations: {
+    m0000:
+      'CREATE TABLE `chunks` (\n\t`id` integer PRIMARY KEY NOT NULL,\n\t`doc` text NOT NULL,\n\t`seq` integer NOT NULL,\n\t`text` text NOT NULL,\n\t`meta` text NOT NULL\n);\n--> statement-breakpoint\nCREATE UNIQUE INDEX `chunks_doc_seq_unique` ON `chunks` (`doc`,`seq`);--> statement-breakpoint\nCREATE TABLE `documents` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`text` text NOT NULL,\n\t`meta` text NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `ingest_documents` (\n\t`job` text NOT NULL,\n\t`seq` integer NOT NULL,\n\t`document` text NOT NULL,\n\tPRIMARY KEY(`job`, `seq`)\n);\n--> statement-breakpoint\nCREATE TABLE `ingest_jobs` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`request` text NOT NULL,\n\t`completed` integer DEFAULT 0 NOT NULL,\n\t`total` integer NOT NULL,\n\t`notified` integer DEFAULT false NOT NULL\n);\n--> statement-breakpoint\nCREATE INDEX `ingest_pending` ON `ingest_jobs` (`notified`) WHERE "ingest_jobs"."notified" = 0;--> statement-breakpoint\nCREATE TABLE `knowledge_head` (\n\t`scope` text NOT NULL,\n\t`name` text NOT NULL,\n\t`options` text NOT NULL\n);\n',
+    m0001:
+      "CREATE TABLE `vector_ids` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`doc` text NOT NULL,\n\t`seq` integer NOT NULL\n);\n--> statement-breakpoint\nCREATE INDEX `vector_ids_doc` ON `vector_ids` (`doc`);--> statement-breakpoint\nCREATE TABLE `vectors` (\n\t`ns` text NOT NULL,\n\t`id` text NOT NULL,\n\t`knowledge` text NOT NULL,\n\t`doc` text NOT NULL,\n\t`values_blob` blob NOT NULL,\n\tPRIMARY KEY(`ns`, `id`)\n);\n--> statement-breakpoint\nCREATE INDEX `vectors_corpus` ON `vectors` (`ns`,`knowledge`,`id`);",
+    m0002:
+      "CREATE VIRTUAL TABLE `chunks_fts` USING fts5(text, content='chunks', content_rowid='id');\n--> statement-breakpoint\nCREATE TRIGGER `chunks_insert` AFTER INSERT ON `chunks` BEGIN\n  INSERT INTO `chunks_fts`(rowid, text) VALUES (new.id, new.text);\nEND;\n--> statement-breakpoint\nCREATE TRIGGER `chunks_delete` AFTER DELETE ON `chunks` BEGIN\n  INSERT INTO `chunks_fts`(`chunks_fts`, rowid, text) VALUES ('delete', old.id, old.text);\nEND;\n",
+  },
 };
