@@ -1,5 +1,149 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`committed migrations > migrates an empty Knowledge database exactly once > Knowledge sqlite_master 1`] = `
+[
+  {
+    "name": "chunks_doc_seq_unique",
+    "sql": "CREATE UNIQUE INDEX \`chunks_doc_seq_unique\` ON \`chunks\` (\`doc\`,\`seq\`)",
+    "type": "index",
+  },
+  {
+    "name": "ingest_pending",
+    "sql": "CREATE INDEX \`ingest_pending\` ON \`ingest_jobs\` (\`notified\`) WHERE "ingest_jobs"."notified" = 0",
+    "type": "index",
+  },
+  {
+    "name": "vector_ids_doc",
+    "sql": "CREATE INDEX \`vector_ids_doc\` ON \`vector_ids\` (\`doc\`)",
+    "type": "index",
+  },
+  {
+    "name": "vectors_corpus",
+    "sql": "CREATE INDEX \`vectors_corpus\` ON \`vectors\` (\`ns\`,\`knowledge\`,\`id\`)",
+    "type": "index",
+  },
+  {
+    "name": "__drizzle_migrations",
+    "sql": "CREATE TABLE "__drizzle_migrations" (
+					id SERIAL PRIMARY KEY,
+					hash text NOT NULL,
+					created_at numeric
+				)",
+    "type": "table",
+  },
+  {
+    "name": "chunks",
+    "sql": "CREATE TABLE \`chunks\` (
+	\`id\` integer PRIMARY KEY NOT NULL,
+	\`doc\` text NOT NULL,
+	\`seq\` integer NOT NULL,
+	\`text\` text NOT NULL,
+	\`meta\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "chunks_fts",
+    "sql": "CREATE VIRTUAL TABLE \`chunks_fts\` USING fts5(text, content='chunks', content_rowid='id')",
+    "type": "table",
+  },
+  {
+    "name": "chunks_fts_config",
+    "sql": "CREATE TABLE 'chunks_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+    "type": "table",
+  },
+  {
+    "name": "chunks_fts_data",
+    "sql": "CREATE TABLE 'chunks_fts_data'(id INTEGER PRIMARY KEY, block BLOB)",
+    "type": "table",
+  },
+  {
+    "name": "chunks_fts_docsize",
+    "sql": "CREATE TABLE 'chunks_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
+    "type": "table",
+  },
+  {
+    "name": "chunks_fts_idx",
+    "sql": "CREATE TABLE 'chunks_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+    "type": "table",
+  },
+  {
+    "name": "documents",
+    "sql": "CREATE TABLE \`documents\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`text\` text NOT NULL,
+	\`meta\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "ingest_documents",
+    "sql": "CREATE TABLE \`ingest_documents\` (
+	\`job\` text NOT NULL,
+	\`seq\` integer NOT NULL,
+	\`document\` text NOT NULL,
+	PRIMARY KEY(\`job\`, \`seq\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "ingest_jobs",
+    "sql": "CREATE TABLE \`ingest_jobs\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`request\` text NOT NULL,
+	\`completed\` integer DEFAULT 0 NOT NULL,
+	\`total\` integer NOT NULL,
+	\`notified\` integer DEFAULT false NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "knowledge_head",
+    "sql": "CREATE TABLE \`knowledge_head\` (
+	\`scope\` text NOT NULL,
+	\`name\` text NOT NULL,
+	\`options\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "vector_ids",
+    "sql": "CREATE TABLE \`vector_ids\` (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`doc\` text NOT NULL,
+	\`seq\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "vectors",
+    "sql": "CREATE TABLE \`vectors\` (
+	\`ns\` text NOT NULL,
+	\`id\` text NOT NULL,
+	\`knowledge\` text NOT NULL,
+	\`doc\` text NOT NULL,
+	\`values_blob\` blob NOT NULL,
+	PRIMARY KEY(\`ns\`, \`id\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "chunks_delete",
+    "sql": "CREATE TRIGGER \`chunks_delete\` AFTER DELETE ON \`chunks\` BEGIN
+  INSERT INTO \`chunks_fts\`(\`chunks_fts\`, rowid, text) VALUES ('delete', old.id, old.text);
+END",
+    "type": "trigger",
+  },
+  {
+    "name": "chunks_insert",
+    "sql": "CREATE TRIGGER \`chunks_insert\` AFTER INSERT ON \`chunks\` BEGIN
+  INSERT INTO \`chunks_fts\`(rowid, text) VALUES (new.id, new.text);
+END",
+    "type": "trigger",
+  },
+]
+`;
+
 exports[`committed migrations > migrates an empty Scheduler database exactly once > Scheduler sqlite_master 1`] = `
 [
   {

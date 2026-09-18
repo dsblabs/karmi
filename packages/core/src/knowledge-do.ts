@@ -1,7 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
+import { and, asc, eq, gt, lt } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/durable-sqlite";
+import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import * as z from "zod/mini";
 import type { KarmiBindings } from "./bindings";
 import type { Deployment } from "./deployment";
+import knowledgeMigrations from "./db/knowledge/migrations";
+import { documents, ingestDocuments, ingestJobs, knowledgeHead, knowledgeSchema } from "./db/knowledge/schema";
 import { errorMessage, KarmiError } from "./errors";
 import { keys } from "./keys";
 import {
@@ -17,11 +22,12 @@ import { KnowledgeStore } from "./knowledge-store";
 import { bindLogger } from "./logger";
 import { fail, ok, remote, unwrap, type Outcome } from "./outcome";
 import { fts5Retriever, type KnowledgeDocument, type Retriever, type RetrieverContext } from "./retriever";
+import { attachRetrieverDatabase } from "./retriever-internal";
 import type { ScopeConfigDurableObject } from "./scope-config-do";
 import { openThread } from "./thread";
 
-type Head = { scope: string; name: string; options: string };
-type JobRow = { id: string; request: string; completed: number; total: number; notified: number };
+type Head = typeof knowledgeHead.$inferSelect;
+type JobRow = typeof ingestJobs.$inferSelect;
 const requestSchema = z.object({
   fingerprint: z.string(),
   options: knowledgeIngestSchema,
@@ -36,14 +42,13 @@ const searchSchema = z.object({
 export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings> {
   abstract readonly deployment: Deployment;
   private readonly store: KnowledgeStore;
+  private readonly db;
 
   constructor(ctx: DurableObjectState, env: KarmiBindings) {
     super(ctx, env);
-    this.store = new KnowledgeStore(ctx.storage);
-  }
-
-  private get sql(): SqlStorage {
-    return this.store.sql;
+    this.db = drizzle(ctx.storage, { schema: knowledgeSchema });
+    this.store = new KnowledgeStore(this.db);
+    ctx.blockConcurrencyWhile(() => migrate(this.db, knowledgeMigrations));
   }
 
   private config(scope: string) {
@@ -57,7 +62,7 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
     const status = tombstoned ? undefined : await unwrap(this.config(scope).status(scope));
     if (status && (status.state === "destroying" || status.state === "destroyed"))
       throw new KarmiError("scope.destroyed", `Scope "${scope}" has been destroyed.`);
-    const head = this.sql.exec<Head>("SELECT * FROM knowledge_head").toArray()[0];
+    const head = this.db.select().from(knowledgeHead).get();
     if (head && (head.scope !== scope || head.name !== name))
       throw new KarmiError("knowledge.invalid", "Knowledge was addressed with a different Scope or name.");
     return head;
@@ -82,17 +87,20 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
 
   private context(head: Head, retriever: Retriever, settings?: Record<string, unknown>): RetrieverContext<unknown> {
     const embedding = decodeOptions(head.options).index?.embedding;
-    return {
-      knowledge: { scope: head.scope, name: head.name },
-      settings: retriever.settings ? z.parse(retriever.settings, settings ?? {}) : undefined,
-      logger: bindLogger(this.deployment.logger, { scope: head.scope }),
-      signal: AbortSignal.timeout(25000),
-      storage: this.sql,
-      ...(embedding && { embedding }),
-      ...(this.env.KARMI_AI && { ai: this.env.KARMI_AI }),
-      search: (query, topK) => this.store.search(query, topK),
-      inline: () => this.store.inline(),
-    };
+    return attachRetrieverDatabase(
+      {
+        knowledge: { scope: head.scope, name: head.name },
+        settings: retriever.settings ? z.parse(retriever.settings, settings ?? {}) : undefined,
+        logger: bindLogger(this.deployment.logger, { scope: head.scope }),
+        signal: AbortSignal.timeout(25000),
+        storage: this.ctx.storage.sql,
+        ...(embedding && { embedding }),
+        ...(this.env.KARMI_AI && { ai: this.env.KARMI_AI }),
+        search: (query, topK) => this.store.search(query, topK),
+        inline: () => this.store.inline(),
+      },
+      this.db,
+    );
   }
 
   /** Ingests documents, returning a pending Job for requests above the bulk threshold. */
@@ -121,11 +129,11 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
         ...(saved.retriever && { retriever: saved.retriever }),
         ...(saved.settings && { settings: saved.settings }),
       };
-      const target = head ?? { scope, name, options: JSON.stringify(fixed) };
+      const target = head ?? { scope, name, options: fixed };
       this.context(target, this.retriever(fixed.retriever), fixed.settings);
       const fingerprint = await digest(JSON.stringify({ docs, fixed, threadKey: options.threadKey }));
       const id = options.jobId ?? crypto.randomUUID();
-      const previous = this.sql.exec<JobRow>("SELECT * FROM ingest_jobs WHERE id = ?", id).toArray()[0];
+      const previous = this.db.select().from(ingestJobs).where(eq(ingestJobs.id, id)).get();
       if (previous) {
         if (decodeRequest(previous.request).fingerprint !== fingerprint)
           throw new KarmiError("knowledge.indexConflict", "The jobId already identifies a different ingest.");
@@ -143,34 +151,26 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
       if (docs.reduce((size, doc) => size + doc.text.length, 0) > KNOWLEDGE_BULK_THRESHOLD || docs.length > 32)
         return { pending: id };
       await this.process(target, id, docs.length);
-      if (options.jobId) this.sql.exec("UPDATE ingest_jobs SET notified = 1 WHERE id = ?", id);
-      else this.sql.exec("DELETE FROM ingest_jobs WHERE id = ?", id);
+      if (options.jobId) this.db.update(ingestJobs).set({ notified: true }).where(eq(ingestJobs.id, id)).run();
+      else this.db.delete(ingestJobs).where(eq(ingestJobs.id, id)).run();
       return { indexed: docs.length };
     });
   }
 
   private stage(head: Head, id: string, docs: KnowledgeDocument[], request: z.output<typeof requestSchema>): void {
-    this.ctx.storage.transactionSync(() => {
-      if (!this.sql.exec("SELECT 1 FROM knowledge_head").toArray().length)
-        this.sql.exec("INSERT INTO knowledge_head VALUES (?, ?, ?)", head.scope, head.name, head.options);
-      this.sql.exec(
-        "INSERT INTO ingest_jobs (id, request, total) VALUES (?, ?, ?)",
-        id,
-        JSON.stringify(request),
-        docs.length,
-      );
-      docs.forEach((doc, seq) =>
-        this.sql.exec("INSERT INTO ingest_documents VALUES (?, ?, ?)", id, seq, JSON.stringify(doc)),
-      );
+    this.db.transaction((tx) => {
+      if (!tx.select({ scope: knowledgeHead.scope }).from(knowledgeHead).get())
+        tx.insert(knowledgeHead).values(head).run();
+      tx.insert(ingestJobs).values({ id, request, total: docs.length }).run();
+      docs.forEach((document, seq) => tx.insert(ingestDocuments).values({ job: id, seq, document }).run());
     });
   }
 
   private assertIdle(includeCallbacks = false): void {
-    if (
-      this.sql
-        .exec(`SELECT 1 FROM ingest_jobs WHERE notified = 0 ${includeCallbacks ? "" : "AND completed < total"} LIMIT 1`)
-        .toArray().length
-    )
+    const pending = includeCallbacks
+      ? eq(ingestJobs.notified, false)
+      : and(eq(ingestJobs.notified, false), lt(ingestJobs.completed, ingestJobs.total));
+    if (this.db.select({ id: ingestJobs.id }).from(ingestJobs).where(pending).limit(1).get())
       throw new KarmiError(
         "knowledge.busy",
         "A Knowledge ingest is pending; wait for its Job before changing the corpus.",
@@ -182,23 +182,28 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
     const retriever = this.retriever(options.retriever);
     const context = this.context(head, retriever, options.settings);
     const index = options.index ?? z.parse(knowledgeIndexSchema, {});
-    const rows = this.sql
-      .exec<{ seq: number; document: string }>(
-        "SELECT seq, document FROM ingest_documents WHERE job = ? ORDER BY seq LIMIT ?",
-        id,
-        limit,
-      )
-      .toArray();
+    const rows = this.db
+      .select({ seq: ingestDocuments.seq, document: ingestDocuments.document })
+      .from(ingestDocuments)
+      .where(eq(ingestDocuments.job, id))
+      .orderBy(asc(ingestDocuments.seq))
+      .limit(limit)
+      .all();
     for (const row of rows) {
-      const doc = z.parse(knowledgeDocumentsSchema, [JSON.parse(row.document)])[0];
+      const doc = z.parse(knowledgeDocumentsSchema, [row.document])[0];
       if (!doc) continue;
       const chunks = chunkDocument(doc, index);
       await retriever.delete?.([doc.id], context);
       this.store.replace(doc, chunks);
       await retriever.index?.(chunks, context);
-      this.ctx.storage.transactionSync(() => {
-        this.sql.exec("UPDATE ingest_jobs SET completed = ? WHERE id = ?", row.seq + 1, id);
-        this.sql.exec("DELETE FROM ingest_documents WHERE job = ? AND seq = ?", id, row.seq);
+      this.db.transaction((tx) => {
+        tx.update(ingestJobs)
+          .set({ completed: row.seq + 1 })
+          .where(eq(ingestJobs.id, id))
+          .run();
+        tx.delete(ingestDocuments)
+          .where(and(eq(ingestDocuments.job, id), eq(ingestDocuments.seq, row.seq)))
+          .run();
       });
     }
   }
@@ -206,19 +211,24 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
   /** Runs the next ingest batch; alarm retries repeat only unfinished document operations. */
   async alarm(): Promise<void> {
     const result = await this.boundary(async () => {
-      const head = this.sql.exec<Head>("SELECT * FROM knowledge_head").toArray()[0];
+      const head = this.db.select().from(knowledgeHead).get();
       if (!head) return;
       await this.enter(head.scope, head.name);
-      const job = this.sql
-        .exec<JobRow>("SELECT * FROM ingest_jobs WHERE notified = 0 ORDER BY rowid LIMIT 1")
-        .toArray()[0];
+      const job = this.db
+        .select()
+        .from(ingestJobs)
+        .where(eq(ingestJobs.notified, false))
+        .orderBy(asc(ingestJobs.id))
+        .limit(1)
+        .get();
       if (!job) return;
       await this.ctx.storage.setAlarm(this.deployment.clock.now() + 1000);
       await this.process(head, job.id, 8);
-      const updated = this.sql.exec<JobRow>("SELECT * FROM ingest_jobs WHERE id = ?", job.id).one();
+      const updated = this.db.select().from(ingestJobs).where(eq(ingestJobs.id, job.id)).get();
+      if (!updated) throw new KarmiError("job.notFound", `No Knowledge ingest Job "${job.id}".`);
       if (updated.completed !== updated.total) return;
       await this.notify(head, updated);
-      this.sql.exec("UPDATE ingest_jobs SET notified = 1 WHERE id = ?", job.id);
+      this.db.update(ingestJobs).set({ notified: true }).where(eq(ingestJobs.id, job.id)).run();
     });
     if (!result.ok) this.deployment.logger.warn("Knowledge ingest will retry.", { error: result.message });
   }
@@ -255,7 +265,7 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
   job(scope: string, name: string, id: string): Promise<Outcome<KnowledgeJob>> {
     return this.boundary(async () => {
       await this.enter(scope, name);
-      const job = this.sql.exec<JobRow>("SELECT * FROM ingest_jobs WHERE id = ?", id).toArray()[0];
+      const job = this.db.select().from(ingestJobs).where(eq(ingestJobs.id, id)).get();
       if (!job) throw new KarmiError("job.notFound", `No Knowledge ingest Job "${id}".`);
       return {
         state: job.completed === job.total ? "completed" : "pending",
@@ -310,7 +320,7 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
       const options = decodeOptions(head.options);
       const retriever = this.retriever(options.retriever);
       await retriever.delete?.(ids, this.context(head, retriever, options.settings));
-      this.ctx.storage.transactionSync(() => this.store.remove(ids));
+      this.db.transaction(() => this.store.remove(ids));
     });
   }
 
@@ -330,9 +340,13 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
         const context = this.context(head, retriever, options.settings);
         let after = "";
         while (true) {
-          const docs = this.sql
-            .exec<{ id: string }>("SELECT id FROM documents WHERE id > ? ORDER BY id LIMIT 100", after)
-            .toArray();
+          const docs = this.db
+            .select({ id: documents.id })
+            .from(documents)
+            .where(gt(documents.id, after))
+            .orderBy(asc(documents.id))
+            .limit(100)
+            .all();
           const last = docs.at(-1);
           if (!last) break;
           await retriever.delete?.(
@@ -350,14 +364,14 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
   }
 }
 
-function decodeRequest(json: string): z.output<typeof requestSchema> {
-  return z.parse(requestSchema, JSON.parse(json));
+function decodeRequest(value: unknown): z.output<typeof requestSchema> {
+  return z.parse(requestSchema, value);
 }
 async function digest(text: string): Promise<string> {
   const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function decodeOptions(json: string): z.output<typeof knowledgeIngestSchema> {
-  return z.parse(knowledgeIngestSchema, JSON.parse(json));
+function decodeOptions(value: unknown): z.output<typeof knowledgeIngestSchema> {
+  return z.parse(knowledgeIngestSchema, value);
 }
