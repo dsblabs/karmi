@@ -3,7 +3,26 @@ export default {
   journal: {
     version: "7",
     dialect: "sqlite",
-    entries: [],
+    entries: [
+      {
+        idx: 0,
+        version: "6",
+        when: 1789731399847,
+        tag: "0000_naive_firedrake",
+        breakpoints: true,
+      },
+      {
+        idx: 1,
+        version: "6",
+        when: 1789731404864,
+        tag: "0001_fts5",
+        breakpoints: true,
+      },
+    ],
   },
-  migrations: {},
+  migrations: {
+    m0000:
+      "CREATE TABLE `memory_head` (\n\t`scope_id` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`profile_json` text NOT NULL,\n\t`updated_at` integer NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `vector_ids` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`doc` text NOT NULL,\n\t`seq` integer NOT NULL\n);\n--> statement-breakpoint\nCREATE INDEX `vector_ids_doc` ON `vector_ids` (`doc`);--> statement-breakpoint\nCREATE TABLE `vectors` (\n\t`ns` text NOT NULL,\n\t`id` text NOT NULL,\n\t`knowledge` text NOT NULL,\n\t`doc` text NOT NULL,\n\t`values_blob` blob NOT NULL,\n\tPRIMARY KEY(`ns`, `id`)\n);\n--> statement-breakpoint\nCREATE INDEX `vectors_corpus` ON `vectors` (`ns`,`knowledge`,`id`);",
+    m0001: "CREATE VIRTUAL TABLE `notes` USING fts5(text, agent_id UNINDEXED, created_at UNINDEXED);\n",
+  },
 };
