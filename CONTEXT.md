@@ -206,7 +206,7 @@ A Harness Step that shrinks a Thread's model context when `contextTokens > windo
 _Avoid_: summarisation (for the Step), truncation, pruning, context reset
 
 **Fork**:
-A new Thread for the same Agent and User seeded with another Thread's log up to a `seq` by row copy (`thread.fork(seq)`); no tree is kept, and media stays with the original Thread, read by reference.
+A new Thread for the same Agent and User seeded with another Thread's log up to a `seq` by row copy (`thread.fork(seq)`); no tree is kept, and the media the copied log refers to is copied too, so the Fork owns its own media and outlives the original Thread intact.
 _Avoid_: branch (for the Thread), clone, copy (for the operation)
 
 **Spill**:
