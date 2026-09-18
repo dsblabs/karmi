@@ -22,3 +22,4 @@ A Fork used to copy event rows only. Its `MediaRef`s kept pointing at objects un
 - If fork latency becomes a problem, the S3 credentials already used for presigned URLs allow a server-side `CopyObject`, which moves no bytes through the Durable Object.
 - "A `MediaRef` lives and dies with its Thread" holds with no exception, and Thread cleanup stays a walk over the Thread's own prefixes.
 - A Fork created before this change still carries its original's keys and loses that media once reads are Thread-scoped.
+- Thread-granular reads still let a Thread read the objects of its Delegation parents and children, because Delegation hands refs across that boundary in both directions: a parent's attachments to its child and a child's media back in its result.

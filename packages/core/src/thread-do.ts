@@ -42,7 +42,8 @@ import {
   type SchedulingLimits,
 } from "./schedule";
 import { nextCronTime } from "./cron";
-import { mediaAccess, putMedia, type MediaBody, type MediaOptions } from "./media";
+import { copyObjects, mediaAccess, putMedia, type MediaBody, type MediaOptions, type ObjectCopy } from "./media";
+import { forkMedia } from "./fork";
 import { chooseProfile, resolveScopeConfig, type ScopeConfigDocument } from "./scope-config";
 import type { MediaRef } from "./context";
 import { AGENT_SPEC_DEFAULTS } from "./agent-spec";
@@ -147,6 +148,8 @@ const SOCKET_LIMIT = 64;
 const USAGE_BATCH = 100;
 /** How long a Step may run without progress before the alarm presumes it lost and re-enters the loop. */
 const STEP_WATCHDOG_MS = 60_000;
+/** How long a Fork's copies may run before the cleanup job treats the Fork as abandoned by an eviction. */
+const FORK_CLEANUP_MS = 60_000;
 const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 /** What a Turn may spend before asking to continue, when the Agent has no `longRunning` grant. */
 export const DEFAULT_BUDGET: Readonly<Budget> = Object.freeze({ steps: 25, wallMs: 10 * 60_000, tokens: 500_000 });
@@ -413,8 +416,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (this.sql.exec("SELECT id FROM deleted").toArray().length)
       return fail(new KarmiError("thread.deleted", "This Thread has been deleted."));
     try {
-      // The ref's own `key` is ignored and the key is rebuilt under this Thread's prefix, so a ref a Fork
-      // carries into its parent's prefix reconstructs to a key that is not there instead of deleting it.
+      // The key is rebuilt from the id under this Thread's prefix, so a ref naming another Thread's key can
+      // never delete that Thread's object.
       await this.env.KARMI_MEDIA?.delete(keys.media(address.scope, address.threadId, ref.id));
       return ok(undefined);
     } catch (error) {
@@ -493,7 +496,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   private media(row: ThreadRow, limits?: ScopeConfigDocument["media"]) {
     const signal = this.turnAbort.signal;
-    return mediaAccess(this.env.KARMI_MEDIA, row.scope_id, {
+    return mediaAccess(this.env.KARMI_MEDIA, row.scope_id, row.thread_id, {
       put: (body, options) =>
         putMedia(
           { bucket: this.env.KARMI_MEDIA, scope: row.scope_id, threadId: row.thread_id, limits, signal },
@@ -855,7 +858,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     }
   }
 
-  /** Copies the log up to `seq` into the Thread at `target`, which must not exist yet. */
+  /**
+   * Copies the log up to `seq` into the Thread at `target`, which must not exist yet, together with every object
+   * that log refers to (ADR-0004).
+   */
   async fork(address: ThreadAddress, seq: number, target: ThreadAddress): Promise<Outcome<void>> {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
@@ -864,30 +870,51 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const rows = this.sql
       .exec<EventRow>("SELECT seq, turn, at, type, json FROM events WHERE seq <= ? ORDER BY seq", seq)
       .toArray();
+    const forked = forkMedia(rows, address.scope, address.threadId, target.threadId);
     const stub = remote<ThreadDurableObject>(this.env.KARMI_THREADS, keys.thread(target.scope, target.threadId));
-    return stub.seed(target, rows);
+    return stub.seed(target, forked.rows, forked.copies);
   }
 
-  /** The receiving side of a fork: a fresh Durable Object takes the copied rows as its own log. */
-  seed(address: ThreadAddress, rows: EventRow[]): Outcome<void> {
+  /**
+   * The receiving side of a fork: a fresh Durable Object copies the objects the rows refer to, then takes the
+   * rows as its own log. When a copy fails the new Thread and every copy that landed are removed by its cleanup
+   * job, which leaves the id free again, and the copy's error is thrown.
+   */
+  async seed(address: ThreadAddress, rows: EventRow[], copies: ObjectCopy[]): Promise<Outcome<void>> {
     if (this.sql.exec("SELECT thread_id FROM thread").toArray().length > 0)
       return fail(new KarmiError("thread.exists", `Thread "${address.threadId}" already exists.`));
     const entered = this.enter(address);
     if (!entered.ok) return entered;
-    const last = rows.at(-1);
-    for (const row of rows)
-      this.sql.exec(
-        "INSERT INTO events (seq, turn, at, type, json) VALUES (?, ?, ?, ?, ?)",
-        row.seq,
-        row.turn,
-        row.at,
-        row.type,
-        row.json,
-      );
-    if (last) {
-      this.head = last.seq;
-      this.update({ turn: last.turn });
+    // The Thread exists from here on so that a second fork to the same id fails, and marking it active holds
+    // back any Turn sent to it until its log is in place. The cleanup job removes a half-made Fork if this
+    // Durable Object is evicted before the copies land; it waits while the Thread is active.
+    this.active = true;
+    const cleanup = { id: "thread-cleanup", kind: "thread-cleanup", payload: address } as const;
+    this.scheduler.set({ ...cleanup, dueAt: this.deployment.clock.now() + FORK_CLEANUP_MS });
+    try {
+      if (this.env.KARMI_MEDIA) await copyObjects(this.env.KARMI_MEDIA, copies);
+      this.ctx.storage.transactionSync(() => {
+        for (const row of rows)
+          this.sql.exec(
+            "INSERT INTO events (seq, turn, at, type, json) VALUES (?, ?, ?, ?, ?)",
+            row.seq,
+            row.turn,
+            row.at,
+            row.type,
+            row.json,
+          );
+        const last = rows.at(-1);
+        if (last) this.update({ turn: last.turn });
+        this.head = last?.seq ?? 0;
+      });
+    } catch (error) {
+      this.active = false;
+      this.scheduler.set({ ...cleanup, dueAt: this.deployment.clock.now() });
+      throw error;
     }
+    this.scheduler.cancel("thread-cleanup");
+    this.active = false;
+    this.kickIfQueued();
     return ok(undefined);
   }
 

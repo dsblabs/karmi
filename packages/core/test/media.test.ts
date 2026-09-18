@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { karmi, clock, provider, scope, recovery } from "./worker";
 import { reply } from "../src/testing/index";
 
@@ -121,13 +121,16 @@ it("presigns a GET with an explicit expiry and refuses invalid TTLs", async () =
   await expect(karmi.media.url(ref, { ttl: 0 })).rejects.toMatchObject({ code: "media.urlInvalid" });
 });
 
-it("refuses reads across Scopes and forged MIME metadata", async () => {
+it("refuses reads across Scopes, across Threads and of forged MIME metadata", async () => {
   const origin = karmi.scope("media-origin").thread({ agent: "concierge", threadId: "owner" });
   const ref = await origin.uploads.put(pdf);
+  const sibling = await scope.thread({ agent: "concierge", threadId: "media-scope-owner" }).uploads.put(pdf);
   const thread = scope.thread({ agent: "concierge", threadId: "media-scope-reader" });
   const local = await thread.uploads.put(pdf);
   provider.script(async ({ options }) => {
     expect(await options.media?.get(ref)).toBeUndefined();
+    expect(await options.media?.get(sibling)).toBeUndefined();
+    expect(await options.media?.get(local)).toBeDefined();
     expect(await options.media?.get({ ...local, mimeType: "image/png" })).toBeUndefined();
     return "OK";
   });
@@ -191,15 +194,109 @@ it("discards an upload this Thread minted and leaves a ref from another Thread a
   const ref = await thread.uploads.put(pdf, { name: "report.pdf" });
   provider.script(["OK"]);
   const events = await thread.send({ kind: "message", parts: [{ type: "file", media: ref }] });
-  // A Fork's log carries refs into the parent's prefix, so its own delete must not reach them.
-  const fork = await thread.fork(events.at(-1)!.seq);
+  // A Fork holds its own copy of the ref, so its delete removes that copy and leaves the original alone.
+  const fork = await thread.fork(events.at(-1)!.seq, { threadId: "media-discard-fork" });
   await fork.uploads.delete(ref);
   expect(await env.KARMI_MEDIA.get(ref.key)).not.toBeNull();
+  expect(await env.KARMI_MEDIA.get(`test/media/media-discard-fork/${ref.id}`)).toBeNull();
   await thread.uploads.delete(ref);
   expect(await env.KARMI_MEDIA.get(ref.key)).toBeNull();
   // Deleting what is already gone is a no-op, and a ref whose id karmi never minted is refused.
   await thread.uploads.delete(ref);
   await expect(thread.uploads.delete({ ...ref, id: "not-an-id/" })).rejects.toMatchObject({
     code: "media.id.invalid",
+  });
+});
+
+describe("thread.fork() media", () => {
+  it("copies the file and spilled output a Fork refers to, so both outlive the original Thread", async () => {
+    recovery.execute = async () => "spilled output ".repeat(10000);
+    const thread = scope.thread({ agent: "recovery", threadId: "media-fork-original" });
+    const upload = await thread.uploads.put(pdf, { name: "report.pdf" });
+    provider.script([[reply.toolCall("recover_read", { id: "a" })], "done"]);
+    const events = await thread.send({ kind: "message", parts: [{ type: "file", media: upload }] });
+    const fork = await thread.fork(events.at(-1)!.seq, { threadId: "media-fork-copy" });
+    await thread.delete();
+    await expect
+      .poll(async () => {
+        await clock.advance(1000);
+        const listed = await Promise.all(
+          ["test/media/media-fork-original/", "test/threads/media-fork-original/"].map((prefix) =>
+            env.KARMI_MEDIA.list({ prefix }),
+          ),
+        );
+        return listed.flatMap((list) => list.objects).length;
+      })
+      .toBe(0);
+
+    const forked = await fork.events();
+    const input = forked.find((event) => event.type === "turn.started");
+    const result = forked.find((event) => event.type === "tool.result");
+    const file = input?.input.kind === "message" ? input.input.parts[0] : undefined;
+    if (file?.type !== "file" || !result?.output) throw new Error("The Fork lost its refs.");
+    expect(file.media.key).toBe(`test/media/media-fork-copy/${upload.id}`);
+    expect(result.output.key).toMatch(/^test\/threads\/media-fork-copy\/tool-output\/\d+$/);
+    const reads: (ArrayBuffer | undefined)[] = [];
+    provider.script(async ({ options }) => {
+      reads.push(await options.media?.get(file.media), await options.media?.get(result.output!));
+      return "OK";
+    });
+    await fork.send(message);
+    await expect.poll(() => reads.length).toBe(2);
+    expect(reads.map((bytes) => bytes && new TextDecoder().decode(bytes))).toEqual([
+      pdf,
+      "spilled output ".repeat(10000),
+    ]);
+  });
+
+  it("fails the whole fork when one copy fails and leaves no Thread and no objects behind", async () => {
+    const thread = scope.thread({ agent: "concierge", threadId: "media-fork-failing" });
+    const first = await thread.uploads.put(pdf);
+    const second = await thread.uploads.put(pdf);
+    provider.script(["OK"]);
+    const events = await thread.send({
+      kind: "message",
+      parts: [
+        { type: "file", media: first },
+        { type: "file", media: second },
+      ],
+    });
+    const bucket: R2Bucket = Object.getPrototypeOf(env.KARMI_MEDIA);
+    const put = bucket.put;
+    const failing = vi.spyOn(bucket, "put").mockImplementation(function (this: R2Bucket, key, ...rest) {
+      if (key === `test/media/media-fork-failed/${second.id}`) return Promise.reject(new Error("R2 is down."));
+      return put.call(this, key, ...rest);
+    });
+    try {
+      await expect(thread.fork(events.at(-1)!.seq, { threadId: "media-fork-failed" })).rejects.toThrow("R2 is down.");
+    } finally {
+      failing.mockRestore();
+    }
+    await expect
+      .poll(async () => {
+        await clock.advance(1000);
+        const listed = await Promise.all(
+          ["test/media/media-fork-failed/", "test/threads/media-fork-failed/"].map((prefix) =>
+            env.KARMI_MEDIA.list({ prefix }),
+          ),
+        );
+        return listed.flatMap((list) => list.objects).length;
+      })
+      .toBe(0);
+    // A handle opened from a key never creates the Thread, so it can observe that none is left.
+    const failed = scope.thread(scope.thread({ agent: "concierge", threadId: "media-fork-failed" }).key);
+    await expect(failed.status()).rejects.toMatchObject({ code: "thread.notFound" });
+    expect(await env.KARMI_MEDIA.get(second.key)).not.toBeNull();
+  });
+
+  it("skips an object already missing in the original Thread", async () => {
+    const thread = scope.thread({ agent: "concierge", threadId: "media-fork-missing" });
+    const ref = await thread.uploads.put(pdf);
+    provider.script(["OK"]);
+    const events = await thread.send({ kind: "message", parts: [{ type: "file", media: ref }] });
+    await env.KARMI_MEDIA.delete(ref.key);
+    const fork = await thread.fork(events.at(-1)!.seq, { threadId: "media-fork-missing-copy" });
+    expect((await fork.events()).length).toBe(events.length);
+    expect((await env.KARMI_MEDIA.list({ prefix: "test/media/media-fork-missing-copy/" })).objects).toEqual([]);
   });
 });

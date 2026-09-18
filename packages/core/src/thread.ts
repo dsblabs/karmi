@@ -156,8 +156,9 @@ export interface Thread {
   compact(options?: CompactOptions): Promise<void>;
   /**
    * Creates a new Thread for the same Agent and User whose log is this one's up to `seq`. A `seq` at a Turn
-   * boundary gives the fork a complete transcript. Media stays with this Thread and the fork reads it by
-   * reference.
+   * boundary gives the fork a complete transcript. The media that log refers to is copied into the fork, so the
+   * fork keeps it after this Thread is deleted. Resolves once every copy has landed; if any copy fails it rejects
+   * and leaves no fork behind.
    */
   fork(seq: number, target?: { threadId?: string }): Promise<Thread>;
   /**

@@ -2,7 +2,7 @@ import { fileTypeFromBuffer } from "file-type";
 import { ulid } from "ulid";
 import type { MediaRef } from "./context";
 import { KarmiError } from "./errors";
-import { keys, mediaKeyScope } from "./keys";
+import { keys, threadMayRead } from "./keys";
 import type { ScopeConfigDocument } from "./scope-config";
 
 /** The forms in which bytes can be handed to `put`. */
@@ -133,15 +133,15 @@ export function matchesType(pattern: string, mime: string): boolean {
 }
 
 /**
- * A `MediaWriter` extended with `get`, which reads the bytes a MediaRef points at. `get` returns
- * undefined when the ref belongs to another Scope, the object is gone, or its size or type no longer
- * match the ref. A ref from a Fork may point at another Thread of the same Scope.
+ * A `MediaWriter` extended with `get`, which reads the bytes a MediaRef points at. `get` returns undefined when
+ * Thread `threadId` may not read the ref, the object is gone, or its size or type no longer match the ref. A
+ * Thread reads its own objects and those of its Delegation parents and children, never another Thread's.
  */
-export function mediaAccess(bucket: R2Bucket | undefined, scope: string, writer: MediaWriter) {
+export function mediaAccess(bucket: R2Bucket | undefined, scope: string, threadId: string, writer: MediaWriter) {
   return {
     ...writer,
     async get(ref: MediaRef): Promise<ArrayBuffer | undefined> {
-      if (!bucket || mediaKeyScope(ref.key) !== scope) return undefined;
+      if (!bucket || !threadMayRead(ref.key, scope, threadId)) return undefined;
       const object = await bucket.get(ref.key);
       if (!object) return undefined;
       if (object.size !== ref.bytes || object.httpMetadata?.contentType !== ref.mimeType) {
@@ -151,6 +151,51 @@ export function mediaAccess(bucket: R2Bucket | undefined, scope: string, writer:
       return object.arrayBuffer();
     },
   };
+}
+
+/** One R2 object to copy, as its source key and its target key. */
+export type ObjectCopy = [from: string, to: string];
+
+// Each copy holds a read and a write open at once, and a Durable Object has six outbound connections.
+const COPY_CONCURRENCY = 3;
+
+/**
+ * Copies each `[from, to]` pair of R2 keys with its content type, a few at a time, streaming the bytes. A source
+ * object already gone is skipped. It resolves once every copy has landed, and on a failure it starts no further
+ * copy and rejects with the first error once the copies in flight have settled. It never deletes anything.
+ */
+export async function copyObjects(bucket: R2Bucket, copies: readonly ObjectCopy[]): Promise<void> {
+  let next = 0;
+  let failed = false;
+  const worker = async () => {
+    for (let copy = copies[next++]; copy && !failed; copy = copies[next++]) {
+      const object = await bucket.get(copy[0]);
+      if (!object) continue;
+      // R2 accepts a streamed body only when its length is known up front. A failed write aborts the pipe so
+      // the read is not left open.
+      const { readable, writable } = new FixedLengthStream(object.size);
+      const pipe = new AbortController();
+      try {
+        await Promise.all([
+          bucket.put(copy[1], readable, { httpMetadata: object.httpMetadata ?? {} }),
+          object.body.pipeTo(writable, { signal: pipe.signal }),
+        ]);
+      } catch (error) {
+        pipe.abort(error);
+        throw error;
+      }
+    }
+  };
+  const settled = await Promise.allSettled(
+    Array.from({ length: Math.min(COPY_CONCURRENCY, copies.length) }, () =>
+      worker().catch((error: unknown) => {
+        failed = true;
+        throw error;
+      }),
+    ),
+  );
+  const failure = settled.find((result) => result.status === "rejected");
+  if (failure) throw failure.reason;
 }
 
 function assertMediaType(mimeType: string, allowedTypes?: string[]): void {
