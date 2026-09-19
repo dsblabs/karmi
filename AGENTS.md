@@ -8,6 +8,7 @@
 - "Measure twice, cut once" and YAGNI. Fight scope creep. Honor the dev's intent in a minimal and realistic fashion.
 - Always design for performance. Write code that is efficient in latency, memory, and cost, and pick data structures and access patterns that stay efficient at scale.
 - Every exported symbol carries a JSDoc block that says what it is or does in one plain sentence, then only what a caller needs: defaults, failure modes, what it never does. Internal code is commented only where the code cannot say why. Every comment is a full sentence a newcomer can read without knowing the system; a riddle, slogan or metaphor is rewritten or deleted. Details: `docs/agents/comments.md`.
+- All prose follows `docs/agents/writing.md`: docs, READMEs, JSDoc, comments, issue answers and changeset text. It is based on ASD-STE100 Simplified Technical English.
 
 ## TypeScript
 
