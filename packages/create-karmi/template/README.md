@@ -1,28 +1,34 @@
 # karmi-template
 
-A karmi Deployment: one sample Tool, one sample Agent, REST/SSE/WebSocket routes, a cron and a Queue
-consumer, and a test suite that runs the whole thing against a scripted model.
+This project is a karmi Deployment. It contains these parts:
+
+- One sample Tool and one sample Agent.
+- REST, SSE and WebSocket routes.
+- A cron and a Queue consumer.
+- A test suite that runs the full Deployment with a scripted model.
+
+Run these commands to install the packages and test the project:
 
 ```sh
 pnpm install
 pnpm typecheck && pnpm test
 ```
 
-`pnpm test` runs `karmi doctor` first, so a misconfigured Worker fails before the suite does.
+`pnpm test` runs `karmi doctor` first. Thus a Worker with an incorrect configuration fails before the suite starts.
 
-## What is where
+## Files
 
-| File               | What it holds                                                                   |
+| File               | Contents                                                                        |
 | ------------------ | ------------------------------------------------------------------------------- |
-| `src/catalogue.ts` | The Tools and Agents this Deployment defines in code.                            |
-| `src/worker.ts`    | `createKarmi`, the HTTP routes, the Durable Object re-exports and the handlers.  |
-| `src/triggers.ts`  | The cron and Queue work, written over the Thread API.                            |
-| `wrangler.jsonc`   | The karmi wrangler baseline. `karmi doctor` checks it.                           |
-| `test/worker.ts`   | The same Catalogue under `createTestKarmi`, with a scripted Provider.            |
+| `src/catalogue.ts` | The Tools and Agents this Deployment defines in code.                           |
+| `src/worker.ts`    | `createKarmi`, the HTTP routes, the Durable Object re-exports and the handlers. |
+| `src/triggers.ts`  | The cron and Queue handlers. They use the Thread API.                           |
+| `wrangler.jsonc`   | The karmi wrangler baseline. `karmi doctor` checks it.                          |
+| `test/worker.ts`   | The same Catalogue in `createTestKarmi`, with a scripted Provider.              |
 
-## Deploying
+## Deploy
 
-1. Create the Queue and its dead-letter Queue, and the R2 bucket named in `wrangler.jsonc`:
+1. Create the Queue, its dead-letter Queue and the R2 bucket that `wrangler.jsonc` names:
 
    ```sh
    npx wrangler queues create karmi-template-queue
@@ -30,25 +36,29 @@ pnpm typecheck && pnpm test
    npx wrangler r2 bucket create karmi-template-media
    ```
 
-2. Set the two secrets. `KARMI_KEYRING` encrypts every credential a Scope stores, and `API_TOKEN` is the
-   bearer token the sample `authenticate` accepts.
+2. Set the two secrets. `KARMI_KEYRING` encrypts each credential that a Scope stores. `API_TOKEN` is the
+   bearer token that the sample `authenticate` function accepts.
 
    ```sh
    node -e "import('@karmi/core').then(k => console.log(k.generateKeyringKey()))" | npx wrangler secret put KARMI_KEYRING
    npx wrangler secret put API_TOKEN
    ```
 
-3. Deploy, then give the `demo` Scope an Anthropic key so its Agents can run:
+3. Deploy the Worker:
 
    ```sh
    pnpm run deploy
    ```
 
+4. Give the `demo` Scope an Anthropic key. Its Agents cannot run without the key:
+
    ```ts
    await karmi.scope("demo").credentials.put({ name: "anthropic", value: process.env.ANTHROPIC_API_KEY });
    ```
 
-## Talking to an Agent
+## Send a message to an Agent
+
+These commands create a Thread, send a message and read the Thread events:
 
 ```sh
 curl -X POST https://<your-worker>/threads \

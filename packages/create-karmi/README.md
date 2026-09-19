@@ -1,8 +1,15 @@
 # create-karmi
 
-Scaffolds a karmi project: the wrangler baseline, a sample Agent and Tool, the
-REST/SSE/WebSocket routes, a cron and a Queue consumer written over the Thread
-API, a test suite on `createTestKarmi`, and CI.
+`create-karmi` creates a karmi project. The project contains these parts:
+
+- The wrangler baseline.
+- A sample Agent and a sample Tool.
+- The REST, SSE and WebSocket routes.
+- A cron and a Queue consumer that use the Thread API.
+- A test suite that uses `createTestKarmi`.
+- CI.
+
+Run these commands to create a project and test it:
 
 ```sh
 pnpm create karmi my-agent
@@ -11,17 +18,13 @@ pnpm install
 pnpm typecheck && pnpm test
 ```
 
-`pnpm test` runs `karmi doctor` before `vitest run`, so a misconfigured Worker
-fails before the suite does. Nothing else happens at scaffold time: no install,
-no git, no network.
+`pnpm test` runs `karmi doctor` before `vitest run`. Thus a Worker with an incorrect configuration fails before the suite starts. `create-karmi` only writes the project files. It does not install packages, run git or use the network.
 
-| Option          | What it does                                                                     |
-| --------------- | -------------------------------------------------------------------------------- |
-| `<directory>`   | Where the project is written. It is created when absent and must be empty.        |
-| `--name <name>` | The package, Worker, Queue and bucket name. Defaults to the directory's name.     |
+| Option          | Description                                                                           |
+| --------------- | ------------------------------------------------------------------------------------- |
+| `<directory>`   | The project directory. `create-karmi` creates it if necessary. It must be empty.      |
+| `--name <name>` | The name of the package, Worker, Queue and bucket. The default is the directory name. |
 
-The template itself lives in [`template/`](./template) and is a workspace package
-of this repository, so every karmi release typechecks, doctors and tests the
-thing a developer is about to be handed.
+The template is in [`template/`](./template). It is a workspace package of this repository. Thus each karmi release runs the type checker, `karmi doctor` and the tests on the template that a developer gets.
 
-`scaffold()` is exported too, for a tool that generates projects of its own.
+The package also exports `scaffold()`. Use it in a tool that generates its own projects.

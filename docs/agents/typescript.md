@@ -1,54 +1,52 @@
 # TypeScript
 
-The detail behind the TypeScript section of `AGENTS.md`. Read the section for the rule you are about to bend.
+This file gives the detail for the TypeScript section of `AGENTS.md`. Before you make an exception to a rule, read the section for that rule.
 
 ## Tooling first
 
-Formatting, unsafe casts, function length and error codes are enforced by the formatter, the linter and the type checker. Run all three before you finish.
+The formatter, the linter and the type checker enforce the rules for formatting, unsafe casts, function length and error codes. Run all three before you finish.
 
-Violations that predate a lint rule live in an ESLint suppressions file. Never add to it. When you fix a suppressed violation, prune the file with `eslint --prune-suppressions`. A new rule that meets existing violations gets `--suppress-rule <rule>`, never `--suppress-all`.
+An ESLint suppressions file lists the violations that are older than a lint rule. Do not add to it. When you fix a suppressed violation, run `eslint --prune-suppressions` to remove it from the file. When a new rule finds existing violations, use `--suppress-rule <rule>`. Do not use `--suppress-all`.
 
-## Narrow, don't assert
+## Narrow types, do not assert them
 
-A cast or a non-null assertion tells the compiler to stop checking. Use a type guard, a default, or a type that already says what you know. When a third-party type is genuinely wrong, cast once at that boundary and say why in a comment.
+A cast or a non-null assertion tells the compiler to stop checking. Use a type guard, a default, or a type that already contains what you know. When a third-party type is wrong, cast one time at that boundary. Give the reason in a comment.
 
 ## Decode data at the boundary, once per shape
 
-Anything that crosses a process boundary is untrusted: stored JSON, network payloads, RPC arguments. Give each shape one decode function, next to the type it produces, and make every caller use it. A shape change then has one place to handle old data.
+Do not trust data that crosses a process boundary. Stored JSON, network payloads and RPC arguments are examples. Give each shape one decode function. Put the function next to the type that it produces, and make every caller use it. Then a change to the shape has one place that handles old data.
 
 ## Derive state once, then pass it down
 
-Reading and parsing state costs I/O and CPU. Load it once per unit of work and hand the result to helpers, instead of letting each helper re-read it. Never keep a copy captured before a write and use it beside a fresh read. Re-read at one clear point, or have the write return the new state.
+To read and parse state uses I/O and CPU. Load the state one time for each unit of work and pass the result to the helpers. Do not let each helper read it again. Do not keep a copy from before a write and use it together with a new read. Read the state again at one clear point, or make the write return the new state.
 
 ## One source of truth
 
-If you are about to write "mirrors X" or "keep in sync with X", extract a shared function instead. Derive static types from runtime schemas. Write a type by hand only for readability, and add a test that pins it to the schema.
+If you start to write "mirrors X" or "keep in sync with X", extract a shared function. Derive static types from runtime schemas. Write a type by hand only when it is easier to read. Then add a test that fails when the type and the schema differ.
 
 ## One error style per layer
 
-- A layer either returns result values or throws. It doesn't mix the two.
-- Don't throw an error only to catch it and convert it a few lines up.
-- Reuse the existing result type and its constructors. Don't invent a new `{ ok, ... }` shape.
-- Error codes form one closed union with one naming convention. A new failure adds its code to the union.
+- A layer returns result values or it throws. It does not do both.
+- Do not throw an error and then catch and convert it a few lines above.
+- Use the existing result type and its constructors. Do not make a new `{ ok, ... }` shape.
+- Error codes are one closed union with one naming convention. For a new failure, add its code to the union.
 
 ## Make invalid states unrepresentable
 
-Model mutually exclusive outcomes as a discriminated union. Each branch contains only the data valid for that outcome: for example, a successful validation result carries its normalized value and warnings, while a failed result carries issues. Do not combine a boolean discriminator with optional success and failure fields in one interface.
+When only one of a set of outcomes can occur, model the outcomes as a discriminated union. Each branch contains only the data that is valid for that outcome. For example, a successful validation result has its normalized value and its warnings. A failed result has its issues. Do not put a boolean discriminator and optional success and failure fields in one interface.
 
 ## Keep pure logic apart from I/O
 
-Folding events, computing limits and deciding the next action are pure functions over plain data. Put them in their own module and test them without storage, network or timers. Stateful and I/O-owning classes keep only the I/O.
+These operations are pure functions of plain data: to fold events, to calculate limits and to decide the next action. Put them in their own module. Test them without storage, network or timers. A class that has state or does I/O keeps only the I/O.
 
 ## Persistence schema
 
-Each Durable Object's schema file is the source of truth. Generate versioned migrations from it with
-`pnpm db:generate`; every migration runs once. Never edit or combine a generated migration after it has
-been merged. Don't probe the live schema on every startup.
+The schema file of each Durable Object is the source of truth. Run `pnpm db:generate` to generate versioned migrations from it. Each migration runs one time. Do not edit or combine a generated migration after you merge it. Do not examine the live schema on each startup.
 
 ## Ids and keys
 
-Build every storage key, job id and cache key in one function. The code that creates an id and the code that looks it up or cancels it must call the same helper.
+Build every storage key, job id and cache key in one function. The code that creates an id must call the same helper as the code that finds or cancels it.
 
 ## Tests
 
-Wait on a condition, not a timer. A fixed sleep is either too slow or flaky.
+Wait for a condition. Do not wait for a timer. A fixed sleep is too slow, or it makes the test fail at random.
