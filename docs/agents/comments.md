@@ -17,9 +17,8 @@ The detail behind the comments rule in `AGENTS.md`. A comment is read by someone
 
 ## Every comment
 
-- **Full sentences, one idea each.** Not a noun phrase, not a colon-led fragment, not two facts joined by a semicolon. "What the model sees in place of a spilled result" is a label. "The text the model sees in place of a spilled result." is a sentence.
-- **Plain words.** No metaphor, no slogans, no wit. "Nothing is ambient", "keeps the snapshot honest" and "lands in one breath" tell the reader nothing they can act on.
-- **Defined terms only.** A capitalised domain term (Turn, Step, Scope, Holder) is fine because `CONTEXT.md` defines it. Any other term of art is defined in the sentence that uses it or replaced with plain words.
+The language rules for all prose are in `docs/agents/writing.md`. They apply to every comment. These rules apply only to comments:
+
 - **No project references.** No issue numbers, ticket names, "v0", "reserved for later", or "replaced when X lands". Status belongs in the issue tracker, not in the source.
 - **Wrap by hand.** Prettier does not wrap comments. Keep lines under the formatter's print width.
 
