@@ -81,7 +81,6 @@ export function defineVectorRetriever(options: VectorRetrieverOptions) {
         await store.deleteByIds(ctx.knowledge.scope, ids);
         await ledger.remove(ids);
       }
-      await store.deleteAll(ctx.knowledge.scope, ctx.knowledge.name);
     },
     async rebuild(ctx) {
       const { ledger, store } = resources(options, embedding, ctx);

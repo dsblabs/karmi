@@ -1,7 +1,9 @@
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { SqliteBruteForceStore, type EmbeddingIndex } from "../src/index";
+import type { EmbeddingIndex } from "../src/index";
+import { openKnowledgeDatabase } from "../src/db/knowledge/database";
+import { createSqliteBruteForceStore } from "../src/sqlite-vector-store";
 
 const index: EmbeddingIndex = { model: "test", dims: 2, metric: "cosine" };
 
@@ -9,7 +11,7 @@ describe("SQLite vector store", () => {
   it("ranks across pages and isolates identical ids by namespace and Knowledge", async () => {
     const stub = env.KARMI_KNOWLEDGE.getByName("store-conformance");
     await runInDurableObject(stub, async (_, state) => {
-      const store = new SqliteBruteForceStore(state.storage.sql, index, 1);
+      const store = createSqliteBruteForceStore(openKnowledgeDatabase(state.storage.sql), index, 1);
       await store.upsert("one", [
         { id: "a", values: new Float32Array([0, 1]), metadata: { knowledge: "faq", doc: "a" } },
         { id: "b", values: new Float32Array([1, 0]), metadata: { knowledge: "faq", doc: "b" } },
@@ -28,7 +30,7 @@ describe("SQLite vector store", () => {
       expect(await store.query("one", query, { ...options, doc: [] })).toEqual([]);
       await store.deleteByIds("two", ["b"]);
       expect(await store.query("one", query, options)).toHaveLength(2);
-      await store.deleteAll("one", "faq");
+      await store.deleteByIds("one", ["a", "b"]);
       expect(await store.query("one", query, options)).toEqual([]);
       expect(await store.query("one", query, { ...options, knowledge: "other" })).toHaveLength(1);
     });
@@ -37,7 +39,7 @@ describe("SQLite vector store", () => {
     "scores %s with finite results and rejects malformed vectors",
     async (metric) => {
       await runInDurableObject(env.KARMI_KNOWLEDGE.getByName(`metric-${metric}`), async (_, state) => {
-        const store = new SqliteBruteForceStore(state.storage.sql, { ...index, metric });
+        const store = createSqliteBruteForceStore(openKnowledgeDatabase(state.storage.sql), { ...index, metric });
         await store.upsert("one", [
           { id: "near", values: new Float32Array([1, 0]), metadata: { knowledge: "faq", doc: "a" } },
           { id: "zero", values: new Float32Array([0, 0]), metadata: { knowledge: "faq", doc: "a" } },

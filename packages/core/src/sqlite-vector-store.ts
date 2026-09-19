@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { openKnowledgeDatabase, type KnowledgeDatabase } from "./db/knowledge/database";
+import type { KnowledgeDatabase } from "./db/knowledge/database";
 import { vectors } from "./db/vector-schema";
 import type { ScopeId } from "./context";
 import { KarmiError } from "./errors";
@@ -81,13 +81,6 @@ class DrizzleBruteForceStore implements VectorStore {
         .where(and(eq(vectors.ns, ns), eq(vectors.id, id)))
         .run();
   }
-
-  async deleteAll(ns: ScopeId, knowledge: string): Promise<void> {
-    this.db
-      .delete(vectors)
-      .where(and(eq(vectors.ns, ns), eq(vectors.knowledge, knowledge)))
-      .run();
-  }
 }
 
 /** Creates the internal SQLite vector store over an already migrated Knowledge database. */
@@ -97,27 +90,4 @@ export function createSqliteBruteForceStore(
   maxChunks?: number,
 ): VectorStore {
   return new DrizzleBruteForceStore(db, index, maxChunks);
-}
-
-/** Scans Float32 vectors in SQLite, keeping at most maxChunks vectors in each read. */
-export class SqliteBruteForceStore implements VectorStore {
-  private readonly store: VectorStore;
-
-  /** Defaults to pages of 1000 chunks; the storage must already have the Knowledge migrations. */
-  constructor(storage: SqlStorage, index: EmbeddingIndex, maxChunks?: number) {
-    this.store = createSqliteBruteForceStore(openKnowledgeDatabase(storage), index, maxChunks);
-  }
-
-  upsert(ns: ScopeId, rows: VectorRow[]): Promise<void> {
-    return this.store.upsert(ns, rows);
-  }
-  query(ns: ScopeId, vector: Float32Array, options: VectorQuery): Promise<VectorHit[]> {
-    return this.store.query(ns, vector, options);
-  }
-  deleteByIds(ns: ScopeId, ids: string[]): Promise<void> {
-    return this.store.deleteByIds(ns, ids);
-  }
-  deleteAll(ns: ScopeId, knowledge: string): Promise<void> {
-    return this.store.deleteAll(ns, knowledge);
-  }
 }

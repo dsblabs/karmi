@@ -44,9 +44,6 @@ export const keys = {
   async vector(scope: ScopeId, knowledge: string, doc: string, seq: number): Promise<string> {
     return (await sha256Hex(JSON.stringify([assertScope(scope), knowledge, doc, seq]))).slice(0, 32);
   },
-  async vectorMirror(scope: ScopeId, id: string): Promise<string> {
-    return (await sha256Hex(JSON.stringify([assertScope(scope), id]))).slice(0, 32);
-  },
   memory(scope: ScopeId, user: string): string {
     assertIdentifier("user.id.invalid", "user", user);
     return `${assertScope(scope)}/memory/${user}`;

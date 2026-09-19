@@ -18,16 +18,6 @@ exports[`committed migrations > migrates an empty Knowledge database exactly onc
     "type": "index",
   },
   {
-    "name": "vectorize_ids_corpus",
-    "sql": "CREATE INDEX \`vectorize_ids_corpus\` ON \`vectorize_ids\` (\`ns\`,\`knowledge\`,\`id\`)",
-    "type": "index",
-  },
-  {
-    "name": "vectorize_ids_remote_unique",
-    "sql": "CREATE UNIQUE INDEX \`vectorize_ids_remote_unique\` ON \`vectorize_ids\` (\`ns\`,\`remote_id\`)",
-    "type": "index",
-  },
-  {
     "name": "vectors_corpus",
     "sql": "CREATE INDEX \`vectors_corpus\` ON \`vectors\` (\`ns\`,\`knowledge\`,\`id\`)",
     "type": "index",
@@ -122,17 +112,6 @@ exports[`committed migrations > migrates an empty Knowledge database exactly onc
 	\`id\` text PRIMARY KEY NOT NULL,
 	\`doc\` text NOT NULL,
 	\`seq\` integer NOT NULL
-)",
-    "type": "table",
-  },
-  {
-    "name": "vectorize_ids",
-    "sql": "CREATE TABLE \`vectorize_ids\` (
-	\`ns\` text NOT NULL,
-	\`id\` text NOT NULL,
-	\`remote_id\` text NOT NULL,
-	\`knowledge\` text NOT NULL,
-	PRIMARY KEY(\`ns\`, \`id\`)
 )",
     "type": "table",
   },

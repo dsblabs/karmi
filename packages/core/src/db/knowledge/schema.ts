@@ -55,21 +55,6 @@ export const ingestDocuments = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.job, table.seq] })],
 );
-/** This table maps local vector ids to the ids stored by Vectorize. */
-export const vectorizeIds = sqliteTable(
-  "vectorize_ids",
-  {
-    ns: text().notNull(),
-    id: text().notNull(),
-    remoteId: text("remote_id").notNull(),
-    knowledge: text().notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.ns, table.id] }),
-    uniqueIndex("vectorize_ids_remote_unique").on(table.ns, table.remoteId),
-    index("vectorize_ids_corpus").on(table.ns, table.knowledge, table.id),
-  ],
-);
 
 /** The complete relational schema of the Knowledge Durable Object. */
 export const knowledgeSchema = {
@@ -78,6 +63,5 @@ export const knowledgeSchema = {
   chunks,
   ingestJobs,
   ingestDocuments,
-  vectorizeIds,
   ...vectorTables,
 };

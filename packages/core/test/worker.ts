@@ -1,7 +1,7 @@
 import { testContainer } from "./container-fixtures";
 import { DurableObject } from "cloudflare:workers";
 import { defineVectorRetriever } from "../src/index";
-import { sqliteMirror, semanticEmbedder, interruptedRetriever } from "./knowledge-fixtures";
+import { testVectorMirror, semanticEmbedder, interruptedRetriever } from "./knowledge-fixtures";
 import { z } from "zod";
 import {
   defineDeliverer,
@@ -669,7 +669,7 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
     retrievers: [
       interruptedRetriever,
       defineVectorRetriever({ name: "semantic", embedder: semanticEmbedder }),
-      defineVectorRetriever({ name: "mirrored", embedder: semanticEmbedder, store: sqliteMirror }),
+      defineVectorRetriever({ name: "mirrored", embedder: semanticEmbedder, store: () => testVectorMirror }),
     ],
     deliverers: [
       receipt,

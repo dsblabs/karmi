@@ -237,7 +237,6 @@ export {
   hybridRetriever,
   type VectorRetrieverOptions,
 } from "./vector-retriever";
-export { SqliteBruteForceStore } from "./sqlite-vector-store";
 export { workersAiEmbedder } from "./embedder";
 export {
   type Embedder,
