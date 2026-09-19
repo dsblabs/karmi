@@ -2,11 +2,19 @@ import tseslint from "typescript-eslint";
 import {
   extensionlessImportPattern,
   extensionlessImportRules,
+  rawSqlExecSyntax,
   restrictedSyntax,
   rules,
   jsdocPlugin,
   jsdocRules,
 } from "../../eslint.guardrails.js";
+
+const errorConditionalSyntax = {
+  selector: "ConditionalExpression[test.operator='instanceof'][test.right.name='Error']",
+  message: "Use errorMessage() from errors.ts.",
+};
+const coreRestrictedSyntax = [...restrictedSyntax, errorConditionalSyntax];
+const databaseRestrictedSyntax = coreRestrictedSyntax.filter((rule) => rule !== rawSqlExecSyntax);
 
 // The compatibility baseline (ADR-0002): no `node:*` in core, no decorators anywhere.
 export default tseslint.config(
@@ -35,14 +43,11 @@ export default tseslint.config(
           ],
         },
       ],
-      "no-restricted-syntax": [
-        "error",
-        ...restrictedSyntax,
-        {
-          selector: "ConditionalExpression[test.operator='instanceof'][test.right.name='Error']",
-          message: "Use errorMessage() from errors.ts.",
-        },
-      ],
+      "no-restricted-syntax": ["error", ...coreRestrictedSyntax],
     },
+  },
+  {
+    files: ["src/db/**/*.ts"],
+    rules: { "no-restricted-syntax": ["error", ...databaseRestrictedSyntax] },
   },
 );

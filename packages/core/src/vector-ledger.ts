@@ -1,8 +1,8 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import { chunks, vectorIds, vectors } from "./db/knowledge/schema";
+import type { KnowledgeDatabase } from "./db/knowledge/database";
 import { keys } from "./keys";
 import type { KnowledgeChunk } from "./knowledge";
-import type { KnowledgeDatabase } from "./knowledge-store";
 import { createSqliteBruteForceStore } from "./sqlite-vector-store";
 import type { KnowledgeRef, Passage } from "./retriever";
 import type { EmbeddingIndex, VectorHit, VectorRow, VectorStore } from "./vector-store";

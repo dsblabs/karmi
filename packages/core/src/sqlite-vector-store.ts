@@ -1,6 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/durable-sqlite";
-import { knowledgeSchema } from "./db/knowledge/schema";
+import { openKnowledgeDatabase, type KnowledgeDatabase } from "./db/knowledge/database";
 import { vectors } from "./db/vector-schema";
 import type { ScopeId } from "./context";
 import { KarmiError } from "./errors";
@@ -14,7 +13,6 @@ import {
   type VectorRow,
   type VectorStore,
 } from "./vector-store";
-import type { KnowledgeDatabase } from "./knowledge-store";
 
 type Row = { id: string; valuesBlob: ArrayBuffer };
 
@@ -107,10 +105,7 @@ export class SqliteBruteForceStore implements VectorStore {
 
   /** Defaults to pages of 1000 chunks; the storage must already have the Knowledge migrations. */
   constructor(storage: SqlStorage, index: EmbeddingIndex, maxChunks?: number) {
-    // The public compatibility constructor receives only SqlStorage, while Drizzle's adapter types the
-    // same runtime client as a full DurableObjectStorage even though its queries use only `sql`.
-    const client = { sql: storage } as DurableObjectStorage;
-    this.store = createSqliteBruteForceStore(drizzle(client, { schema: knowledgeSchema }), index, maxChunks);
+    this.store = createSqliteBruteForceStore(openKnowledgeDatabase(storage), index, maxChunks);
   }
 
   upsert(ns: ScopeId, rows: VectorRow[]): Promise<void> {
