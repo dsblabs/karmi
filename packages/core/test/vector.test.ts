@@ -1,7 +1,4 @@
-import { env } from "cloudflare:workers";
-import { runInDurableObject } from "cloudflare:test";
-import { SqliteBruteForceStore } from "../src/index";
-import { semanticEmbedder } from "./knowledge-fixtures";
+import { clearTestVectorMirror, interruptNextMirrorDelete, testVectorMirrorSize } from "./knowledge-fixtures";
 import { describe, expect, it } from "vitest";
 import { karmi, scope } from "./worker";
 
@@ -41,9 +38,7 @@ describe("Vector Knowledge", () => {
   it("rebuilds a lost mirror from the ledger and fixes its embedding configuration", async () => {
     const corpus = scope.knowledge("rebuild");
     await corpus.ingest([{ id: "pet", text: "kitten" }], { retriever: "mirrored" });
-    await runInDurableObject(env.KARMI_KNOWLEDGE.getByName("test/knowledge/rebuild"), async (_, state) => {
-      await new SqliteBruteForceStore(state.storage.sql, semanticEmbedder).deleteAll("mirror_test", "rebuild");
-    });
+    clearTestVectorMirror("test", "rebuild");
     expect(await corpus.search("cat")).toEqual([]);
     await corpus.rebuild();
     expect((await corpus.search("cat"))[0]?.text).toBe("kitten");
@@ -61,5 +56,22 @@ describe("Vector Knowledge", () => {
     const options = { retriever: "semantic", index: { chunkSize: 20, overlap: 0 } };
     await corpus.ingest([{ id: "one", text: "kitten" }], options);
     await expect(corpus.ingest([{ id: "two", text: "pear" }], options)).resolves.toEqual({ indexed: 1 });
+  });
+  it("retries destruction after the external mirror applied a deletion", async () => {
+    const corpus = scope.knowledge("destroy-retry");
+    await corpus.ingest(
+      [
+        { id: "pet", text: "kitten" },
+        { id: "fruit", text: "apple" },
+      ],
+      { retriever: "mirrored" },
+    );
+    expect(testVectorMirrorSize("test", "destroy-retry")).toBe(2);
+    interruptNextMirrorDelete();
+    await expect(corpus.destroy()).rejects.toThrow("acknowledged deletion");
+    expect(testVectorMirrorSize("test", "destroy-retry")).toBe(1);
+    await expect(corpus.destroy()).resolves.toBeUndefined();
+    expect(testVectorMirrorSize("test", "destroy-retry")).toBe(0);
+    expect(await corpus.search("cat")).toEqual([]);
   });
 });

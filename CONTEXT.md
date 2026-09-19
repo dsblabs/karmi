@@ -170,11 +170,11 @@ A named corpus of documents an Agent answers from, keyed (Scope, name), identica
 _Avoid_: knowledge base, KB, RAG, memory, documents (for the corpus)
 
 **Retriever**:
-The strategy behind a Knowledge search or a Memory recall: given a query, return ranked passages. A Catalogue item; full-text (FTS5 in the Knowledge's own SQLite) is the default, vector similarity and hybrid (BM25 + vector, rank-fused) sit behind the same seam. The Framework owns chunking and the embedding call; a **Vector store** is only the mirror the vector Retriever writes to.
+The strategy behind a Knowledge search or a Memory recall: given a query, return ranked passages. A Catalogue item; full-text (FTS5 in the Knowledge's own SQLite) is the default, vector similarity and hybrid (BM25 + vector, rank-fused) sit behind the same seam. The Framework owns the authoritative Knowledge ledger, chunking and the embedding call; a custom Retriever may keep only external, rebuildable state and never reads or writes the ledger directly. A **Vector store** is only the mirror the vector Retriever writes to.
 _Avoid_: vector store (for the strategy), index, embeddings (for the strategy), RAG
 
 **Vector store**:
-Where a vector Retriever keeps embeddings, keyed by Scope: the Knowledge's own SQLite (brute-force, the default and the only one tests need) or Cloudflare Vectorize (one index per Deployment per embedding model, namespace = Scope). The Knowledge's chunk ledger is the truth; the store is a mirror rebuilt or emptied from it. The embedding model, dimensions and metric are a Knowledge-level fact fixed at first ingest.
+Where a vector Retriever keeps embeddings, keyed by Scope: the Knowledge's own SQLite (brute-force, the default and the only one tests need) or Cloudflare Vectorize (one index per Deployment per embedding model, namespace = Scope). The Knowledge's chunk ledger is the truth; the store is a mirror rebuilt or emptied from it, preserving the Framework's opaque vector IDs unchanged. The embedding model, dimensions and metric are a Knowledge-level fact fixed at first ingest.
 _Avoid_: index (for the store), database, Vectorize (as the generic term)
 
 **Agent**:

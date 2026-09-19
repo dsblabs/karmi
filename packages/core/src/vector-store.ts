@@ -37,8 +37,6 @@ export interface VectorStore {
   upsert(ns: ScopeId, rows: VectorRow[]): Promise<void>;
   query(ns: ScopeId, vector: Float32Array, options: VectorQuery): Promise<VectorHit[]>;
   deleteByIds(ns: ScopeId, ids: string[]): Promise<void>;
-  /** Clears only this Knowledge within the namespace, never another corpus. */
-  deleteAll(ns: ScopeId, knowledge: string): Promise<void>;
 }
 /** Rejects invalid embeddings before any vector reaches storage. */
 export function validateVector(vector: Float32Array, dims: number): void {

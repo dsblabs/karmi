@@ -93,7 +93,6 @@ export abstract class KnowledgeDurableObject extends DurableObject<KarmiBindings
         settings: retriever.settings ? z.parse(retriever.settings, settings ?? {}) : undefined,
         logger: bindLogger(this.deployment.logger, { scope: head.scope }),
         signal: AbortSignal.timeout(25000),
-        storage: this.ctx.storage.sql,
         ...(embedding && { embedding }),
         ...(this.env.KARMI_AI && { ai: this.env.KARMI_AI }),
         search: (query, topK) => this.store.search(query, topK),

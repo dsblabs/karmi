@@ -25,13 +25,6 @@ export default {
         tag: "0002_fts5",
         breakpoints: true,
       },
-      {
-        idx: 3,
-        version: "6",
-        when: 1789788301935,
-        tag: "0003_first_steve_rogers",
-        breakpoints: true,
-      },
     ],
   },
   migrations: {
@@ -41,7 +34,5 @@ export default {
       "CREATE TABLE `vector_ids` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`doc` text NOT NULL,\n\t`seq` integer NOT NULL\n);\n--> statement-breakpoint\nCREATE INDEX `vector_ids_doc` ON `vector_ids` (`doc`);--> statement-breakpoint\nCREATE TABLE `vectors` (\n\t`ns` text NOT NULL,\n\t`id` text NOT NULL,\n\t`knowledge` text NOT NULL,\n\t`doc` text NOT NULL,\n\t`values_blob` blob NOT NULL,\n\tPRIMARY KEY(`ns`, `id`)\n);\n--> statement-breakpoint\nCREATE INDEX `vectors_corpus` ON `vectors` (`ns`,`knowledge`,`id`);",
     m0002:
       "CREATE VIRTUAL TABLE `chunks_fts` USING fts5(text, content='chunks', content_rowid='id');\n--> statement-breakpoint\nCREATE TRIGGER `chunks_insert` AFTER INSERT ON `chunks` BEGIN\n  INSERT INTO `chunks_fts`(rowid, text) VALUES (new.id, new.text);\nEND;\n--> statement-breakpoint\nCREATE TRIGGER `chunks_delete` AFTER DELETE ON `chunks` BEGIN\n  INSERT INTO `chunks_fts`(`chunks_fts`, rowid, text) VALUES ('delete', old.id, old.text);\nEND;\n",
-    m0003:
-      "CREATE TABLE `vectorize_ids` (\n\t`ns` text NOT NULL,\n\t`id` text NOT NULL,\n\t`remote_id` text NOT NULL,\n\t`knowledge` text NOT NULL,\n\tPRIMARY KEY(`ns`, `id`)\n);\n--> statement-breakpoint\nCREATE UNIQUE INDEX `vectorize_ids_remote_unique` ON `vectorize_ids` (`ns`,`remote_id`);--> statement-breakpoint\nCREATE INDEX `vectorize_ids_corpus` ON `vectorize_ids` (`ns`,`knowledge`,`id`);",
   },
 };

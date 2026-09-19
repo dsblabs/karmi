@@ -22,13 +22,6 @@
       "when": 1789730145330,
       "tag": "0002_fts5",
       "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1789788301935,
-      "tag": "0003_first_steve_rogers",
-      "breakpoints": true
     }
   ]
 }

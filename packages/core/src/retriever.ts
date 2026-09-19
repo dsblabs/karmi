@@ -31,8 +31,6 @@ export interface RetrieverContext<Settings = undefined> {
   knowledge: KnowledgeRef;
   /** Searches the committed chunk ledger with FTS5 BM25. */
   search(query: string, topK?: number): Passage[];
-  /** The Knowledge ledger storage, available to vector Retrievers. */
-  storage: SqlStorage;
   /** The embedding configuration fixed at first ingest. */
   embedding?: EmbeddingIndex;
   /** The optional Workers AI binding for the default Embedder. */

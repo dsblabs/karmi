@@ -1,5 +1,4 @@
-import { SqliteBruteForceStore } from "../src/index";
-import { defineRetriever, type KnowledgeChunk } from "../src/index";
+import { defineRetriever, type KnowledgeChunk, type VectorRow, type VectorStore } from "../src/index";
 
 const mirrors = new Map<string, Map<string, KnowledgeChunk[]>>();
 const failed = new Set<string>();
@@ -57,15 +56,51 @@ export const semanticEmbedder: import("../src/index").Embedder = {
   },
 };
 
-/** A separate SQLite namespace simulates a rebuildable external mirror without remote services. */
-export function sqliteMirror(
-  ctx: import("../src/retriever").RetrieverContext<unknown>,
-): import("../src/index").VectorStore {
-  const store = new SqliteBruteForceStore(ctx.storage, semanticEmbedder);
-  return {
-    upsert: (ns, rows) => store.upsert(`mirror_${ns}`, rows),
-    query: (ns, vector, options) => store.query(`mirror_${ns}`, vector, options),
-    deleteByIds: (ns, ids) => store.deleteByIds(`mirror_${ns}`, ids),
-    deleteAll: (ns, knowledge) => store.deleteAll(`mirror_${ns}`, knowledge),
-  };
+const vectorMirror = new Map<string, VectorRow>();
+let interruptMirrorDelete = false;
+
+/** An in-memory Vector store that simulates a rebuildable external mirror. */
+export const testVectorMirror: VectorStore = {
+  async upsert(ns, rows) {
+    for (const row of rows) vectorMirror.set(`${ns}/${row.id}`, row);
+  },
+  async query(ns, vector, options) {
+    return [...vectorMirror]
+      .filter(
+        ([key, row]) =>
+          key.startsWith(`${ns}/`) &&
+          row.metadata.knowledge === options.knowledge &&
+          (!options.doc || options.doc.includes(row.metadata.doc)),
+      )
+      .map(([, row]) => ({
+        id: row.id,
+        score: (row.values[0] ?? 0) * (vector[0] ?? 0) + (row.values[1] ?? 0) * (vector[1] ?? 0),
+      }))
+      .sort((left, right) => right.score - left.score || left.id.localeCompare(right.id))
+      .slice(0, options.topK);
+  },
+  async deleteByIds(ns, ids) {
+    for (const id of ids) vectorMirror.delete(`${ns}/${id}`);
+    if (interruptMirrorDelete) {
+      interruptMirrorDelete = false;
+      throw new Error("The external mirror acknowledged deletion before the connection broke.");
+    }
+  },
+};
+
+/** Makes the next external mirror deletion fail after applying the write. */
+export function interruptNextMirrorDelete(): void {
+  interruptMirrorDelete = true;
+}
+
+/** Removes one corpus from the external mirror to exercise ledger rebuilds. */
+export function clearTestVectorMirror(ns: string, knowledge: string): void {
+  for (const [key, row] of vectorMirror)
+    if (key.startsWith(`${ns}/`) && row.metadata.knowledge === knowledge) vectorMirror.delete(key);
+}
+
+/** Counts the vectors for one corpus in the external test mirror. */
+export function testVectorMirrorSize(ns: string, knowledge: string): number {
+  return [...vectorMirror].filter(([key, row]) => key.startsWith(`${ns}/`) && row.metadata.knowledge === knowledge)
+    .length;
 }

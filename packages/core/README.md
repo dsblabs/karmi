@@ -510,7 +510,7 @@ import { defineVectorRetriever, VectorizeStore } from "@karmi/core";
 
 const search = defineVectorRetriever({
   name: "search",
-  store: (ctx) => new VectorizeStore(env.KNOWLEDGE_VECTORS_BGE_M3, ctx.storage, ctx.embedding?.metric),
+  store: (ctx) => new VectorizeStore(env.KNOWLEDGE_VECTORS_BGE_M3, ctx.embedding?.metric),
 });
 ```
 
