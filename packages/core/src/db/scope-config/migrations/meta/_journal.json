@@ -1,1 +1,13 @@
-{"version":"7","dialect":"sqlite","entries":[]}
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1789733231045,
+      "tag": "0000_sudden_eddie_brock",
+      "breakpoints": true
+    }
+  ]
+}

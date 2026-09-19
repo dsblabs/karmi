@@ -259,3 +259,212 @@ exports[`committed migrations > migrates an empty Scheduler database exactly onc
   },
 ]
 `;
+
+exports[`committed migrations > migrates an empty Scope config database exactly once > Scope config sqlite_master 1`] = `
+[
+  {
+    "name": "thread_parents_by_parent",
+    "sql": "CREATE INDEX \`thread_parents_by_parent\` ON \`thread_parents\` (\`thread_key\`)",
+    "type": "index",
+  },
+  {
+    "name": "threads_by_agent_user",
+    "sql": "CREATE INDEX \`threads_by_agent_user\` ON \`threads\` (\`agent_id\`,\`user_id\`,\`last_active_at\`)",
+    "type": "index",
+  },
+  {
+    "name": "__drizzle_migrations",
+    "sql": "CREATE TABLE "__drizzle_migrations" (
+					id SERIAL PRIMARY KEY,
+					hash text NOT NULL,
+					created_at numeric
+				)",
+    "type": "table",
+  },
+  {
+    "name": "agent_heads",
+    "sql": "CREATE TABLE \`agent_heads\` (
+	\`agent_id\` text PRIMARY KEY NOT NULL,
+	\`current_version\` integer NOT NULL,
+	\`deleted_at\` integer
+)",
+    "type": "table",
+  },
+  {
+    "name": "agent_specs",
+    "sql": "CREATE TABLE \`agent_specs\` (
+	\`agent_id\` text NOT NULL,
+	\`version\` integer NOT NULL,
+	\`spec_json\` text NOT NULL,
+	\`catalogue_fingerprint\` text NOT NULL,
+	\`created_at\` integer NOT NULL,
+	PRIMARY KEY(\`agent_id\`, \`version\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "connections",
+    "sql": "CREATE TABLE \`connections\` (
+	\`agent_id\` text NOT NULL,
+	\`name\` text NOT NULL,
+	\`value_json\` text NOT NULL,
+	\`updated_at\` integer NOT NULL,
+	PRIMARY KEY(\`agent_id\`, \`name\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "container_leases",
+    "sql": "CREATE TABLE \`container_leases\` (
+	\`thread_id\` text PRIMARY KEY NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "destroy_operations",
+    "sql": "CREATE TABLE \`destroy_operations\` (
+	\`operation_id\` text PRIMARY KEY NOT NULL,
+	\`state\` text NOT NULL,
+	\`started_at\` integer NOT NULL,
+	\`updated_at\` integer NOT NULL,
+	\`cursor_json\` text
+)",
+    "type": "table",
+  },
+  {
+    "name": "knowledge_names",
+    "sql": "CREATE TABLE \`knowledge_names\` (
+	\`name\` text PRIMARY KEY NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "mcp_catalog",
+    "sql": "CREATE TABLE \`mcp_catalog\` (
+	\`server_id\` text NOT NULL,
+	\`partition\` text NOT NULL,
+	\`catalog_json\` text NOT NULL,
+	\`updated_at\` integer NOT NULL,
+	PRIMARY KEY(\`server_id\`, \`partition\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "mcp_clients",
+    "sql": "CREATE TABLE \`mcp_clients\` (
+	\`issuer\` text PRIMARY KEY NOT NULL,
+	\`client_id\` text NOT NULL,
+	\`secret_ref\` text,
+	\`info_json\` text NOT NULL,
+	\`created_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "mcp_grants",
+    "sql": "CREATE TABLE \`mcp_grants\` (
+	\`server_id\` text NOT NULL,
+	\`holder\` text NOT NULL,
+	\`issuer\` text NOT NULL,
+	\`access_token\` text NOT NULL,
+	\`refresh_token\` text,
+	\`expires_at\` integer,
+	\`scope\` text,
+	\`discovery_json\` text,
+	\`updated_at\` integer NOT NULL,
+	PRIMARY KEY(\`server_id\`, \`holder\`)
+)",
+    "type": "table",
+  },
+  {
+    "name": "mcp_oauth_state",
+    "sql": "CREATE TABLE \`mcp_oauth_state\` (
+	\`nonce\` text PRIMARY KEY NOT NULL,
+	\`server_id\` text NOT NULL,
+	\`holder\` text NOT NULL,
+	\`user_id\` text,
+	\`thread_json\` text,
+	\`return_to\` text,
+	\`verifier\` text,
+	\`discovery_json\` text,
+	\`expires_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "memory_users",
+    "sql": "CREATE TABLE \`memory_users\` (
+	\`user_id\` text PRIMARY KEY NOT NULL,
+	\`created_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "provider_credentials",
+    "sql": "CREATE TABLE \`provider_credentials\` (
+	\`name\` text PRIMARY KEY NOT NULL,
+	\`version\` integer NOT NULL,
+	\`kek\` text,
+	\`dek\` text,
+	\`ciphertext\` text,
+	\`created_at\` integer NOT NULL,
+	\`updated_at\` integer NOT NULL,
+	\`revoked_at\` integer
+)",
+    "type": "table",
+  },
+  {
+    "name": "scope_head",
+    "sql": "CREATE TABLE \`scope_head\` (
+	\`scope_id\` text PRIMARY KEY NOT NULL,
+	\`state\` text NOT NULL,
+	\`current_revision\` integer NOT NULL,
+	\`destroy_operation_id\` text,
+	\`created_at\` integer NOT NULL,
+	\`updated_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "scope_revisions",
+    "sql": "CREATE TABLE \`scope_revisions\` (
+	\`revision\` integer PRIMARY KEY NOT NULL,
+	\`config_json\` text NOT NULL,
+	\`created_at\` integer NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "thread_parents",
+    "sql": "CREATE TABLE \`thread_parents\` (
+	\`thread_id\` text PRIMARY KEY NOT NULL,
+	\`thread_key\` text NOT NULL,
+	\`call_id\` text NOT NULL
+)",
+    "type": "table",
+  },
+  {
+    "name": "threads",
+    "sql": "CREATE TABLE \`threads\` (
+	\`thread_id\` text PRIMARY KEY NOT NULL,
+	\`agent_id\` text NOT NULL,
+	\`user_id\` text,
+	\`created_at\` integer NOT NULL,
+	\`last_active_at\` integer NOT NULL,
+	\`title\` text
+)",
+    "type": "table",
+  },
+  {
+    "name": "user_connections",
+    "sql": "CREATE TABLE \`user_connections\` (
+	\`user_id\` text NOT NULL,
+	\`name\` text NOT NULL,
+	\`value_json\` text NOT NULL,
+	\`updated_at\` integer NOT NULL,
+	PRIMARY KEY(\`user_id\`, \`name\`)
+)",
+    "type": "table",
+  },
+]
+`;

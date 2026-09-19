@@ -1,5 +1,24 @@
+import { asc, eq } from "drizzle-orm";
 import type { KarmiBindings } from "./bindings";
 import type { ScopeId } from "./context";
+import {
+  agentHeads,
+  agentSpecs,
+  connections,
+  containerLeases,
+  knowledgeNames,
+  mcpCatalog,
+  mcpClients,
+  mcpGrants,
+  mcpOAuthState,
+  memoryUsers,
+  providerCredentials,
+  scopeRevisions,
+  threadParents,
+  threads,
+  userConnections,
+  type ScopeConfigDatabase,
+} from "./db/scope-config/schema";
 import type { Deployment } from "./deployment";
 import { errorMessage, KarmiError } from "./errors";
 import { keys } from "./keys";
@@ -26,25 +45,25 @@ const BATCH_ATTEMPTS = 5;
  * credential or an MCP grant of a destroying Scope.
  */
 export const TOMBSTONE_TABLES = [
-  "provider_credentials",
-  "mcp_catalog",
-  "mcp_grants",
-  "mcp_clients",
-  "mcp_oauth_state",
-  "user_connections",
+  providerCredentials,
+  mcpCatalog,
+  mcpGrants,
+  mcpClients,
+  mcpOAuthState,
+  userConnections,
 ] as const;
 
 /** The tables the last phase empties, once every store outside the Scope's own object is empty. */
 const REMAINING_TABLES = [
-  "container_leases",
-  "scope_revisions",
-  "agent_specs",
-  "agent_heads",
-  "connections",
-  "threads",
-  "thread_parents",
-  "knowledge_names",
-  "memory_users",
+  containerLeases,
+  scopeRevisions,
+  agentSpecs,
+  agentHeads,
+  connections,
+  threads,
+  threadParents,
+  knowledgeNames,
+  memoryUsers,
 ] as const;
 
 /** The stages of the walk, in the order it runs them. */
@@ -92,8 +111,8 @@ export interface DestroyWalk {
   deployment: Deployment;
   /** The Durable Object's own bindings, which name every store the Scope wrote to. */
   bindings: KarmiBindings;
-  /** The ScopeConfig Durable Object's SQLite, which holds the Thread, Memory and Knowledge indexes. */
-  sql: SqlStorage;
+  /** The ScopeConfig Durable Object's database, which holds the Thread, Memory and Knowledge indexes. */
+  db: ScopeConfigDatabase;
   /** How many times the current batch has already failed. */
   attempt: number;
 }
@@ -103,12 +122,9 @@ export function startCursor(): DestroyCursor {
   return { progress: { phase: "secrets", threads: 0, memory: 0, knowledge: 0, objects: 0, skipped: 0 } };
 }
 
-/**
- * The cursor stored on an operation row, or a fresh one when the walk has not run yet. Only this module
- * writes the column, so decoding does not validate it again.
- */
-export function decodeCursor(json: string | null): DestroyCursor {
-  return json === null ? startCursor() : JSON.parse(json);
+/** The cursor stored on an operation row, or a fresh one when the walk has not run yet. */
+export function decodeCursor(stored: DestroyCursor | null): DestroyCursor {
+  return stored ?? startCursor();
 }
 
 /**
@@ -216,57 +232,58 @@ async function revokeExternal(walk: DestroyWalk): Promise<ExternalCleanup | unde
 }
 
 async function deleteThreads(walk: DestroyWalk, cursor: DestroyCursor): Promise<DestroyCursor> {
-  const rows = walk.sql
-    .exec<{ thread_id: string; agent_id: string; user_id: string | null }>(
-      "SELECT thread_id, agent_id, user_id FROM threads ORDER BY thread_id LIMIT ?",
-      OBJECT_BATCH,
-    )
-    .toArray();
+  const rows = walk.db
+    .select({ threadId: threads.threadId, agentId: threads.agentId, userId: threads.userId })
+    .from(threads)
+    .orderBy(asc(threads.threadId))
+    .limit(OBJECT_BATCH)
+    .all();
   const batch = await deleteBatch(
     walk,
     rows,
-    (row) => `thread ${row.thread_id}`,
+    (row) => `thread ${row.threadId}`,
     async (row) => {
-      const stub = remote<ThreadDurableObject>(walk.bindings.KARMI_THREADS, keys.thread(walk.scope, row.thread_id));
+      const stub = remote<ThreadDurableObject>(walk.bindings.KARMI_THREADS, keys.thread(walk.scope, row.threadId));
       const deleted = await stub.delete({
         scope: walk.scope,
-        threadId: row.thread_id,
-        agent: row.agent_id,
-        ...(row.user_id !== null && { user: row.user_id }),
+        threadId: row.threadId,
+        agent: row.agentId,
+        ...(row.userId !== null && { user: row.userId }),
         create: false,
       });
       // An indexed Thread whose object never took a Turn has nothing to delete.
       if (!deleted.ok && deleted.code !== "thread.notFound") throw new KarmiError(deleted.code, deleted.message);
     },
     (row) => {
-      walk.sql.exec("DELETE FROM threads WHERE thread_id = ?", row.thread_id);
-      walk.sql.exec("DELETE FROM thread_parents WHERE thread_id = ?", row.thread_id);
+      walk.db.delete(threads).where(eq(threads.threadId, row.threadId)).run();
+      walk.db.delete(threadParents).where(eq(threadParents.threadId, row.threadId)).run();
     },
   );
   return counted(cursor, rows.length, batch, "threads");
 }
 
 async function deleteMemory(walk: DestroyWalk, cursor: DestroyCursor): Promise<DestroyCursor> {
-  const rows = walk.sql
-    .exec<{ user_id: string }>("SELECT user_id FROM memory_users ORDER BY user_id LIMIT ?", OBJECT_BATCH)
-    .toArray();
+  const rows = walk.db
+    .select({ userId: memoryUsers.userId })
+    .from(memoryUsers)
+    .orderBy(asc(memoryUsers.userId))
+    .limit(OBJECT_BATCH)
+    .all();
   const batch = await deleteBatch(
     walk,
     rows,
-    (row) => `memory ${row.user_id}`,
+    (row) => `memory ${row.userId}`,
     async (row) => {
-      const stub = remote<MemoryDurableObject>(walk.bindings.KARMI_MEMORY, keys.memory(walk.scope, row.user_id));
-      await unwrap(stub.clear(walk.scope, row.user_id));
+      const stub = remote<MemoryDurableObject>(walk.bindings.KARMI_MEMORY, keys.memory(walk.scope, row.userId));
+      await unwrap(stub.clear(walk.scope, row.userId));
     },
-    (row) => void walk.sql.exec("DELETE FROM memory_users WHERE user_id = ?", row.user_id),
+    (row) => void walk.db.delete(memoryUsers).where(eq(memoryUsers.userId, row.userId)).run(),
   );
   return counted(cursor, rows.length, batch, "memory");
 }
 
 async function deleteKnowledge(walk: DestroyWalk, cursor: DestroyCursor): Promise<DestroyCursor> {
-  const rows = walk.sql
-    .exec<{ name: string }>("SELECT name FROM knowledge_names ORDER BY name LIMIT ?", OBJECT_BATCH)
-    .toArray();
+  const rows = walk.db.select().from(knowledgeNames).orderBy(asc(knowledgeNames.name)).limit(OBJECT_BATCH).all();
   // Without the binding no corpus can ever have been written, so the index rows are all that is left.
   const namespace = walk.bindings.KARMI_KNOWLEDGE;
   const batch = await deleteBatch(
@@ -278,7 +295,7 @@ async function deleteKnowledge(walk: DestroyWalk, cursor: DestroyCursor): Promis
       const stub = remote<KnowledgeDurableObject>(namespace, keys.knowledge(walk.scope, row.name));
       await unwrap(stub.destroy(walk.scope, row.name, "scope-destroy"));
     },
-    (row) => void walk.sql.exec("DELETE FROM knowledge_names WHERE name = ?", row.name),
+    (row) => void walk.db.delete(knowledgeNames).where(eq(knowledgeNames.name, row.name)).run(),
   );
   return counted(cursor, rows.length, batch, "knowledge");
 }
@@ -296,6 +313,6 @@ async function deleteMedia(walk: DestroyWalk, cursor: DestroyCursor): Promise<De
  * ScopeId can never be used again.
  */
 function deleteConfig(walk: DestroyWalk, cursor: DestroyCursor): DestroyCursor {
-  for (const table of REMAINING_TABLES) walk.sql.exec(`DELETE FROM ${table}`);
+  for (const table of REMAINING_TABLES) walk.db.delete(table).run();
   return advance(cursor, true, {});
 }

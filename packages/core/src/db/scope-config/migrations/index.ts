@@ -3,7 +3,18 @@ export default {
   journal: {
     version: "7",
     dialect: "sqlite",
-    entries: [],
+    entries: [
+      {
+        idx: 0,
+        version: "6",
+        when: 1789733231045,
+        tag: "0000_sudden_eddie_brock",
+        breakpoints: true,
+      },
+    ],
   },
-  migrations: {},
+  migrations: {
+    m0000:
+      "CREATE TABLE `agent_heads` (\n\t`agent_id` text PRIMARY KEY NOT NULL,\n\t`current_version` integer NOT NULL,\n\t`deleted_at` integer\n);\n--> statement-breakpoint\nCREATE TABLE `agent_specs` (\n\t`agent_id` text NOT NULL,\n\t`version` integer NOT NULL,\n\t`spec_json` text NOT NULL,\n\t`catalogue_fingerprint` text NOT NULL,\n\t`created_at` integer NOT NULL,\n\tPRIMARY KEY(`agent_id`, `version`)\n);\n--> statement-breakpoint\nCREATE TABLE `connections` (\n\t`agent_id` text NOT NULL,\n\t`name` text NOT NULL,\n\t`value_json` text NOT NULL,\n\t`updated_at` integer NOT NULL,\n\tPRIMARY KEY(`agent_id`, `name`)\n);\n--> statement-breakpoint\nCREATE TABLE `container_leases` (\n\t`thread_id` text PRIMARY KEY NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `destroy_operations` (\n\t`operation_id` text PRIMARY KEY NOT NULL,\n\t`state` text NOT NULL,\n\t`started_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\t`cursor_json` text\n);\n--> statement-breakpoint\nCREATE TABLE `knowledge_names` (\n\t`name` text PRIMARY KEY NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `mcp_catalog` (\n\t`server_id` text NOT NULL,\n\t`partition` text NOT NULL,\n\t`catalog_json` text NOT NULL,\n\t`updated_at` integer NOT NULL,\n\tPRIMARY KEY(`server_id`, `partition`)\n);\n--> statement-breakpoint\nCREATE TABLE `mcp_clients` (\n\t`issuer` text PRIMARY KEY NOT NULL,\n\t`client_id` text NOT NULL,\n\t`secret_ref` text,\n\t`info_json` text NOT NULL,\n\t`created_at` integer NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `mcp_grants` (\n\t`server_id` text NOT NULL,\n\t`holder` text NOT NULL,\n\t`issuer` text NOT NULL,\n\t`access_token` text NOT NULL,\n\t`refresh_token` text,\n\t`expires_at` integer,\n\t`scope` text,\n\t`discovery_json` text,\n\t`updated_at` integer NOT NULL,\n\tPRIMARY KEY(`server_id`, `holder`)\n);\n--> statement-breakpoint\nCREATE TABLE `mcp_oauth_state` (\n\t`nonce` text PRIMARY KEY NOT NULL,\n\t`server_id` text NOT NULL,\n\t`holder` text NOT NULL,\n\t`user_id` text,\n\t`thread_json` text,\n\t`return_to` text,\n\t`verifier` text,\n\t`discovery_json` text,\n\t`expires_at` integer NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `memory_users` (\n\t`user_id` text PRIMARY KEY NOT NULL,\n\t`created_at` integer NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `provider_credentials` (\n\t`name` text PRIMARY KEY NOT NULL,\n\t`version` integer NOT NULL,\n\t`kek` text,\n\t`dek` text,\n\t`ciphertext` text,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\t`revoked_at` integer\n);\n--> statement-breakpoint\nCREATE TABLE `scope_head` (\n\t`scope_id` text PRIMARY KEY NOT NULL,\n\t`state` text NOT NULL,\n\t`current_revision` integer NOT NULL,\n\t`destroy_operation_id` text,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `scope_revisions` (\n\t`revision` integer PRIMARY KEY NOT NULL,\n\t`config_json` text NOT NULL,\n\t`created_at` integer NOT NULL\n);\n--> statement-breakpoint\nCREATE TABLE `thread_parents` (\n\t`thread_id` text PRIMARY KEY NOT NULL,\n\t`thread_key` text NOT NULL,\n\t`call_id` text NOT NULL\n);\n--> statement-breakpoint\nCREATE INDEX `thread_parents_by_parent` ON `thread_parents` (`thread_key`);--> statement-breakpoint\nCREATE TABLE `threads` (\n\t`thread_id` text PRIMARY KEY NOT NULL,\n\t`agent_id` text NOT NULL,\n\t`user_id` text,\n\t`created_at` integer NOT NULL,\n\t`last_active_at` integer NOT NULL,\n\t`title` text\n);\n--> statement-breakpoint\nCREATE INDEX `threads_by_agent_user` ON `threads` (`agent_id`,`user_id`,`last_active_at`);--> statement-breakpoint\nCREATE TABLE `user_connections` (\n\t`user_id` text NOT NULL,\n\t`name` text NOT NULL,\n\t`value_json` text NOT NULL,\n\t`updated_at` integer NOT NULL,\n\tPRIMARY KEY(`user_id`, `name`)\n);\n",
+  },
 };

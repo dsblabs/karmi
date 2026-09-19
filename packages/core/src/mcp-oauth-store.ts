@@ -1,5 +1,7 @@
 import type { OAuthDiscoveryState, StoredOAuthClientInformation } from "@modelcontextprotocol/client";
+import { and, asc, eq, lt } from "drizzle-orm";
 import type { Clock } from "./clock";
+import { mcpClients, mcpGrants, mcpOAuthState, type ScopeConfigDatabase } from "./db/scope-config/schema";
 import type { ScopeId } from "./context";
 import { sha256Hex } from "./digest";
 import { KarmiError } from "./errors";
@@ -13,42 +15,7 @@ import type { ThreadIdentity } from "./thread";
 // pending authorizations between redirect and callback. Tokens sit in the Scope's own SQLite like the
 // Connection values beside them. The refresh token never leaves this object.
 
-/** The SQL that creates the OAuth tables in the ScopeConfig Durable Object's SQLite. */
-export const OAUTH_SCHEMA = `
-  CREATE TABLE IF NOT EXISTS mcp_clients (issuer TEXT PRIMARY KEY, client_id TEXT NOT NULL, secret_ref TEXT, info_json TEXT NOT NULL, created_at INTEGER NOT NULL);
-  CREATE TABLE IF NOT EXISTS mcp_grants (server_id TEXT NOT NULL, holder TEXT NOT NULL, issuer TEXT NOT NULL, access_token TEXT NOT NULL, refresh_token TEXT, expires_at INTEGER, scope TEXT, discovery_json TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY (server_id, holder));
-  CREATE TABLE IF NOT EXISTS mcp_oauth_state (nonce TEXT PRIMARY KEY, server_id TEXT NOT NULL, holder TEXT NOT NULL, user_id TEXT, thread_json TEXT, return_to TEXT, verifier TEXT, discovery_json TEXT, expires_at INTEGER NOT NULL);
-`;
-
-type ClientRow = { issuer: string; client_id: string; secret_ref: string | null; info_json: string };
-type GrantRow = {
-  server_id: string;
-  holder: string;
-  issuer: string;
-  access_token: string;
-  refresh_token: string | null;
-  expires_at: number | null;
-  scope: string | null;
-  discovery_json: string | null;
-  updated_at: number;
-};
-type StateRow = {
-  nonce: string;
-  server_id: string;
-  holder: string;
-  user_id: string | null;
-  thread_json: string | null;
-  return_to: string | null;
-  verifier: string | null;
-  discovery_json: string | null;
-  expires_at: number;
-};
-
-// Each JSON column has one decoder. Only this module writes the rows, so they are not validated on read.
-const decodeDiscovery = (json: string): OAuthDiscoveryState => JSON.parse(json);
-const decodeClientInfo = (json: string): Omit<StoredOAuthClientInformation, "client_secret"> => JSON.parse(json);
-const decodeThread = (json: string | null): ThreadIdentity | undefined =>
-  json === null ? undefined : JSON.parse(json);
+type GrantRow = typeof mcpGrants.$inferSelect;
 
 /** A pending authorization as stored, with where its callback returns to. */
 export interface PendingAuthorizationRow {
@@ -67,16 +34,16 @@ export interface PendingAuthorizationRow {
 
 const decodeGrant = (row: GrantRow): GrantRecord => ({
   issuer: row.issuer,
-  accessToken: row.access_token,
-  ...(row.refresh_token !== null && { refreshToken: row.refresh_token }),
-  ...(row.expires_at !== null && { expiresAt: row.expires_at }),
+  accessToken: row.accessToken,
+  ...(row.refreshToken !== null && { refreshToken: row.refreshToken }),
+  ...(row.expiresAt !== null && { expiresAt: row.expiresAt }),
   ...(row.scope !== null && { scope: row.scope }),
-  ...(row.discovery_json !== null && { discovery: decodeDiscovery(row.discovery_json) }),
+  ...(row.discovery !== null && { discovery: row.discovery }),
 });
 
 /** What a SqlGrantStore needs from the Durable Object that owns it. */
 export interface OAuthStoreHost {
-  sql: SqlStorage;
+  db: ScopeConfigDatabase;
   clock: Clock;
   secrets: SecretsProvider;
   scope: ScopeId;
@@ -99,16 +66,16 @@ export class SqlGrantStore implements GrantStore {
     this.nonce = pendingInput?.nonce;
   }
 
-  private get sql(): SqlStorage {
-    return this.host.sql;
+  private get db(): ScopeConfigDatabase {
+    return this.host.db;
   }
 
   async client(issuer: string): Promise<StoredOAuthClientInformation | undefined> {
-    const row = this.sql.exec<ClientRow>("SELECT * FROM mcp_clients WHERE issuer = ?", issuer).toArray()[0];
+    const row = this.db.select().from(mcpClients).where(eq(mcpClients.issuer, issuer)).get();
     if (!row) return undefined;
-    const info: StoredOAuthClientInformation = { ...decodeClientInfo(row.info_json), client_id: row.client_id, issuer };
-    if (row.secret_ref === null) return info;
-    const secret = await this.host.secrets.resolve({ scope: this.host.scope, ref: row.secret_ref });
+    const info: StoredOAuthClientInformation = { ...row.info, client_id: row.clientId, issuer };
+    if (row.secretRef === null) return info;
+    const secret = await this.host.secrets.resolve({ scope: this.host.scope, ref: row.secretRef });
     // Dropping a registration whose secret is gone makes the SDK register again.
     if (!secret) {
       this.dropClient(issuer);
@@ -130,58 +97,56 @@ export class SqlGrantStore implements GrantStore {
       secretRef = credentialRef("scope", await secretName(issuer));
       await secrets.put({ scope, ref: secretRef }, sensitive(client_secret));
     }
-    this.sql.exec(
-      "INSERT INTO mcp_clients (issuer, client_id, secret_ref, info_json, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (issuer) DO UPDATE SET client_id = excluded.client_id, secret_ref = excluded.secret_ref, info_json = excluded.info_json, created_at = excluded.created_at",
-      issuer,
-      info.client_id,
-      secretRef,
-      JSON.stringify(rest),
-      this.host.clock.now(),
-    );
+    const values = { clientId: info.client_id, secretRef, info: rest, createdAt: this.host.clock.now() };
+    this.db
+      .insert(mcpClients)
+      .values({ issuer, ...values })
+      .onConflictDoUpdate({ target: mcpClients.issuer, set: values })
+      .run();
   }
 
   dropClient(issuer: string): void {
-    this.sql.exec("DELETE FROM mcp_clients WHERE issuer = ?", issuer);
+    this.db.delete(mcpClients).where(eq(mcpClients.issuer, issuer)).run();
   }
 
   grant(): GrantRecord | undefined {
-    const row = this.sql
-      .exec<GrantRow>("SELECT * FROM mcp_grants WHERE server_id = ? AND holder = ?", this.serverId, this.holder)
-      .toArray()[0];
+    const row = this.db.select().from(mcpGrants).where(this.grantKey()).get();
     return row && decodeGrant(row);
   }
 
   saveGrant(record: GrantRecord): void {
-    this.sql.exec(
-      "INSERT INTO mcp_grants (server_id, holder, issuer, access_token, refresh_token, expires_at, scope, discovery_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (server_id, holder) DO UPDATE SET issuer = excluded.issuer, access_token = excluded.access_token, refresh_token = excluded.refresh_token, expires_at = excluded.expires_at, scope = excluded.scope, discovery_json = excluded.discovery_json, updated_at = excluded.updated_at",
-      this.serverId,
-      this.holder,
-      record.issuer,
-      record.accessToken,
-      record.refreshToken ?? null,
-      record.expiresAt ?? null,
-      record.scope ?? null,
-      record.discovery ? JSON.stringify(record.discovery) : null,
-      this.host.clock.now(),
-    );
+    const values = {
+      issuer: record.issuer,
+      accessToken: record.accessToken,
+      refreshToken: record.refreshToken ?? null,
+      expiresAt: record.expiresAt ?? null,
+      scope: record.scope ?? null,
+      discovery: record.discovery ?? null,
+      updatedAt: this.host.clock.now(),
+    };
+    this.db
+      .insert(mcpGrants)
+      .values({ serverId: this.serverId, holder: this.holder, ...values })
+      .onConflictDoUpdate({ target: [mcpGrants.serverId, mcpGrants.holder], set: values })
+      .run();
   }
 
   dropGrant(): void {
-    this.sql.exec("DELETE FROM mcp_grants WHERE server_id = ? AND holder = ?", this.serverId, this.holder);
+    this.db.delete(mcpGrants).where(this.grantKey()).run();
   }
 
-  private pendingRow(): StateRow | undefined {
-    if (this.nonce === undefined) return undefined;
-    return this.sql.exec<StateRow>("SELECT * FROM mcp_oauth_state WHERE nonce = ?", this.nonce).toArray()[0];
+  private grantKey() {
+    return and(eq(mcpGrants.serverId, this.serverId), eq(mcpGrants.holder, this.holder));
   }
 
   pending(): PendingAuthorization | undefined {
-    const row = this.pendingRow();
+    if (this.nonce === undefined) return undefined;
+    const row = this.db.select().from(mcpOAuthState).where(eq(mcpOAuthState.nonce, this.nonce)).get();
     if (!row) return undefined;
     return {
       nonce: row.nonce,
       ...(row.verifier !== null && { verifier: row.verifier }),
-      ...(row.discovery_json !== null && { discovery: decodeDiscovery(row.discovery_json) }),
+      ...(row.discovery !== null && { discovery: row.discovery }),
     };
   }
 
@@ -189,64 +154,58 @@ export class SqlGrantStore implements GrantStore {
     const now = this.host.clock.now();
     const nonce = crypto.randomUUID().replaceAll("-", "");
     const input = this.pendingInput ?? {};
-    this.sql.exec("DELETE FROM mcp_oauth_state WHERE expires_at < ?", now);
-    this.sql.exec(
-      "INSERT INTO mcp_oauth_state (nonce, server_id, holder, user_id, thread_json, return_to, verifier, discovery_json, expires_at) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?)",
-      nonce,
-      this.serverId,
-      this.holder,
-      input.user ?? null,
-      input.thread ? JSON.stringify(input.thread) : null,
-      input.returnTo ?? null,
-      now + OAUTH_STATE_TTL_MS,
-    );
+    this.db.delete(mcpOAuthState).where(lt(mcpOAuthState.expiresAt, now)).run();
+    this.db
+      .insert(mcpOAuthState)
+      .values({
+        nonce,
+        serverId: this.serverId,
+        holder: this.holder,
+        userId: input.user ?? null,
+        thread: input.thread ?? null,
+        returnTo: input.returnTo ?? null,
+        expiresAt: now + OAUTH_STATE_TTL_MS,
+      })
+      .run();
     this.nonce = nonce;
     return { nonce };
   }
 
   savePending(patch: Partial<Omit<PendingAuthorization, "nonce">>): void {
     if (this.nonce === undefined) return;
-    if (patch.verifier !== undefined)
-      this.sql.exec("UPDATE mcp_oauth_state SET verifier = ? WHERE nonce = ?", patch.verifier, this.nonce);
-    if (patch.discovery !== undefined)
-      this.sql.exec(
-        "UPDATE mcp_oauth_state SET discovery_json = ? WHERE nonce = ?",
-        JSON.stringify(patch.discovery),
-        this.nonce,
-      );
+    const set = {
+      ...(patch.verifier !== undefined && { verifier: patch.verifier }),
+      ...(patch.discovery !== undefined && { discovery: patch.discovery }),
+    };
+    if (Object.keys(set).length > 0)
+      this.db.update(mcpOAuthState).set(set).where(eq(mcpOAuthState.nonce, this.nonce)).run();
   }
 
   saveDiscovery(discovery: OAuthDiscoveryState): void {
-    this.sql.exec(
-      "UPDATE mcp_grants SET discovery_json = ? WHERE server_id = ? AND holder = ?",
-      JSON.stringify(discovery),
-      this.serverId,
-      this.holder,
-    );
+    this.db.update(mcpGrants).set({ discovery }).where(this.grantKey()).run();
   }
 
   /** Forgets the pending authorization once its callback has been handled, whichever way it went. */
   dropPending(): void {
     if (this.nonce === undefined) return;
-    this.sql.exec("DELETE FROM mcp_oauth_state WHERE nonce = ?", this.nonce);
+    this.db.delete(mcpOAuthState).where(eq(mcpOAuthState.nonce, this.nonce)).run();
   }
 }
 
 /** The pending authorization a callback names, if it is still open. */
-export function readPending(sql: SqlStorage, nonce: string, now: number): PendingAuthorizationRow | undefined {
-  const row = sql.exec<StateRow>("SELECT * FROM mcp_oauth_state WHERE nonce = ?", nonce).toArray()[0];
-  if (!row || row.expires_at < now) return undefined;
+export function readPending(db: ScopeConfigDatabase, nonce: string, now: number): PendingAuthorizationRow | undefined {
+  const row = db.select().from(mcpOAuthState).where(eq(mcpOAuthState.nonce, nonce)).get();
+  if (!row || row.expiresAt < now) return undefined;
   const holder = row.holder;
   if (!isHolder(holder)) return undefined;
-  const thread = decodeThread(row.thread_json);
   return {
     nonce: row.nonce,
-    serverId: row.server_id,
+    serverId: row.serverId,
     holder,
-    ...(row.user_id !== null && { user: row.user_id }),
-    ...(thread && { thread }),
-    ...(row.return_to !== null && { returnTo: row.return_to }),
-    expiresAt: row.expires_at,
+    ...(row.userId !== null && { user: row.userId }),
+    ...(row.thread !== null && { thread: row.thread }),
+    ...(row.returnTo !== null && { returnTo: row.returnTo }),
+    expiresAt: row.expiresAt,
   };
 }
 
@@ -256,12 +215,12 @@ export function isHolder(value: string): value is McpHolder {
 }
 
 /** The servers a holder has grants for, as Connection names `mcp:<serverId>`. */
-export function listGrants(sql: SqlStorage, holder: McpHolder): { name: string; updatedAt: number }[] {
-  return sql
-    .exec<{ server_id: string; updated_at: number }>(
-      "SELECT server_id, updated_at FROM mcp_grants WHERE holder = ? ORDER BY server_id",
-      holder,
-    )
-    .toArray()
-    .map((row) => ({ name: `mcp:${row.server_id}`, updatedAt: row.updated_at }));
+export function listGrants(db: ScopeConfigDatabase, holder: McpHolder): { name: string; updatedAt: number }[] {
+  return db
+    .select({ serverId: mcpGrants.serverId, updatedAt: mcpGrants.updatedAt })
+    .from(mcpGrants)
+    .where(eq(mcpGrants.holder, holder))
+    .orderBy(asc(mcpGrants.serverId))
+    .all()
+    .map((row) => ({ name: `mcp:${row.serverId}`, updatedAt: row.updatedAt }));
 }

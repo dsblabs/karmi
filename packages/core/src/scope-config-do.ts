@@ -1,8 +1,30 @@
+import { and, asc, count, desc, eq, isNull, lte, ne, sql, type SQL } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/durable-sqlite";
+import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { ScheduledDurableObject, type ScheduledJob } from "./scheduler";
-import type { NormalizedAgentSpec } from "./agent-spec";
 import type { AgentSpec } from "./agent";
+import type { NormalizedAgentSpec } from "./agent-spec";
 import type { KarmiBindings } from "./bindings";
 import type { ScopeId } from "./context";
+import scopeConfigMigrations from "./db/scope-config/migrations";
+import {
+  agentHeads,
+  agentSpecs,
+  connections,
+  containerLeases,
+  destroyOperations,
+  knowledgeNames,
+  mcpCatalog,
+  memoryUsers,
+  providerCredentials,
+  scopeConfigSchema,
+  scopeHead,
+  scopeRevisions,
+  threadParents,
+  threads,
+  userConnections,
+  type ScopeConfigDatabase,
+} from "./db/scope-config/schema";
 import type { Deployment } from "./deployment";
 import { KarmiError } from "./errors";
 import { fail, ok, type Outcome } from "./outcome";
@@ -16,7 +38,7 @@ import {
   refreshGrant,
   type PreregisteredClient,
 } from "./mcp-oauth";
-import { isHolder, listGrants, OAUTH_SCHEMA, readPending, SqlGrantStore } from "./mcp-oauth-store";
+import { isHolder, listGrants, readPending, SqlGrantStore } from "./mcp-oauth-store";
 import { parseScopeConfig, resolveScopeConfig, type McpServerConfig, type ScopeConfigDocument } from "./scope-config";
 import {
   decodeCursor,
@@ -34,25 +56,6 @@ import { validateAgentSpec, type ValidationResult } from "./validate";
 // This module is the Durable Object every Scope has one of, named `{scope}/config` (keys.ts). Its SQLite
 // holds the config revisions, the Agent Spec versions, the credential rows, the OAuth grants and the
 // lifecycle state. The Scope handle (scope.ts) is the only caller.
-
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS container_leases (thread_id TEXT PRIMARY KEY);
-  CREATE TABLE IF NOT EXISTS scope_head (scope_id TEXT PRIMARY KEY, state TEXT NOT NULL, current_revision INTEGER NOT NULL, destroy_operation_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
-  CREATE TABLE IF NOT EXISTS scope_revisions (revision INTEGER PRIMARY KEY, config_json TEXT NOT NULL, created_at INTEGER NOT NULL);
-  CREATE TABLE IF NOT EXISTS agent_specs (agent_id TEXT NOT NULL, version INTEGER NOT NULL, spec_json TEXT NOT NULL, catalogue_fingerprint TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (agent_id, version));
-  CREATE TABLE IF NOT EXISTS agent_heads (agent_id TEXT PRIMARY KEY, current_version INTEGER NOT NULL, deleted_at INTEGER);
-  CREATE TABLE IF NOT EXISTS destroy_operations (operation_id TEXT PRIMARY KEY, state TEXT NOT NULL, started_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, cursor_json TEXT);
-  CREATE TABLE IF NOT EXISTS threads (thread_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, user_id TEXT, created_at INTEGER NOT NULL, last_active_at INTEGER NOT NULL, title TEXT);
-  CREATE INDEX IF NOT EXISTS threads_by_agent_user ON threads (agent_id, user_id, last_active_at);
-  CREATE TABLE IF NOT EXISTS thread_parents (thread_id TEXT PRIMARY KEY, thread_key TEXT NOT NULL, call_id TEXT NOT NULL);
-  CREATE INDEX IF NOT EXISTS thread_parents_by_parent ON thread_parents (thread_key);
-  CREATE TABLE IF NOT EXISTS connections (agent_id TEXT NOT NULL, name TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (agent_id, name));
-  CREATE TABLE IF NOT EXISTS provider_credentials (name TEXT PRIMARY KEY, version INTEGER NOT NULL, kek TEXT, dek TEXT, ciphertext TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, revoked_at INTEGER);
-  CREATE TABLE IF NOT EXISTS mcp_catalog (server_id TEXT NOT NULL, partition TEXT NOT NULL, catalog_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (server_id, partition));
-  CREATE TABLE IF NOT EXISTS user_connections (user_id TEXT NOT NULL, name TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (user_id, name));
-  CREATE TABLE IF NOT EXISTS knowledge_names (name TEXT PRIMARY KEY);
-  CREATE TABLE IF NOT EXISTS memory_users (user_id TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
-`;
 
 /** The id of the single maintenance job a destroy walk re-arms until the Scope is empty. */
 const DESTROY_JOB = "scope-maintenance";
@@ -143,13 +146,6 @@ export interface StoredCredential extends CredentialInfo {
 
 export type { Outcome } from "./outcome";
 
-// These are the decode points for the JSON columns this Durable Object writes. Every value is validated
-// before it is stored, so decoding does not validate again.
-const decodeConfig = (json: string): ScopeConfigDocument => JSON.parse(json);
-// JSON carries no explicit `undefined`, so a stored normalized Spec is also a plain `AgentSpec`.
-const decodeSpec = (json: string): NormalizedAgentSpec & AgentSpec => JSON.parse(json);
-const decodeCatalog = (json: string): McpCatalog => JSON.parse(json);
-
 /** The key of one cached MCP catalogue: a server and a credential Partition. */
 export interface McpCatalogKey {
   serverId: string;
@@ -223,48 +219,23 @@ export { isHolder };
 const notFound = (agentId: string) =>
   fail(new KarmiError("agent.notFound", `Agent "${agentId}" does not exist in this Scope.`));
 
-type HeadRow = {
-  scope_id: string;
-  state: ScopeState;
-  current_revision: number;
-  destroy_operation_id: string | null;
-};
-
-type ThreadRow = {
-  thread_id: string;
-  agent_id: string;
-  user_id: string | null;
-  created_at: number;
-  last_active_at: number;
-  title: string | null;
-};
-
-type CredentialRow = {
-  name: string;
-  version: number;
-  kek: string | null;
-  dek: string | null;
-  ciphertext: string | null;
-  updated_at: number;
-  revoked_at: number | null;
-};
+type HeadRow = typeof scopeHead.$inferSelect;
+type AgentHeadRow = typeof agentHeads.$inferSelect;
+type CredentialRow = typeof providerCredentials.$inferSelect;
 
 const decodeCredential = (row: CredentialRow): StoredCredential => ({
   name: row.name,
   source: "scope",
   version: row.version,
-  updatedAt: row.updated_at,
-  ...(row.revoked_at !== null && { revokedAt: row.revoked_at }),
+  updatedAt: row.updatedAt,
+  ...(row.revokedAt !== null && { revokedAt: row.revokedAt }),
   ...(row.kek !== null &&
     row.dek !== null &&
     row.ciphertext !== null && { envelope: { kek: row.kek, dek: row.dek, ciphertext: row.ciphertext } }),
 });
 
-type AgentHeadRow = {
-  agent_id: string;
-  current_version: number;
-  deleted_at: number | null;
-};
+// The join condition that pairs each Agent head with its current Spec version.
+const currentSpec = and(eq(agentSpecs.agentId, agentHeads.agentId), eq(agentSpecs.version, agentHeads.currentVersion));
 
 /**
  * The Durable Object behind one Scope. It stores the config revisions, Agent Spec versions, Connection
@@ -273,15 +244,12 @@ type AgentHeadRow = {
  */
 export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   abstract readonly deployment: Deployment;
+  private readonly db: ScopeConfigDatabase;
 
   constructor(ctx: DurableObjectState, env: KarmiBindings) {
     super(ctx, env);
-    ctx.storage.sql.exec(SCHEMA);
-    ctx.storage.sql.exec(OAUTH_SCHEMA);
-  }
-
-  private get sql(): SqlStorage {
-    return this.ctx.storage.sql;
+    this.db = drizzle(ctx.storage, { schema: scopeConfigSchema });
+    ctx.blockConcurrencyWhile(() => migrate(this.db, scopeConfigMigrations));
   }
 
   // Refreshes in flight by `server/holder`. Concurrent Turns share one token request so they never race a
@@ -291,19 +259,21 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   // Every entry point calls this first. The head row appears on first use. Once destruction has started,
   // only the lifecycle reads that report on it may enter.
   private enter(scope: ScopeId, refuseDestroyed = true): Outcome<HeadRow> {
-    let head = this.sql.exec<HeadRow>("SELECT * FROM scope_head").toArray()[0];
+    let head = this.db.select().from(scopeHead).get();
     if (!head) {
       const now = this.deployment.clock.now();
-      this.sql.exec(
-        "INSERT INTO scope_head (scope_id, state, current_revision, created_at, updated_at) VALUES (?, 'active', 0, ?, ?)",
-        scope,
-        now,
-        now,
-      );
-      head = { scope_id: scope, state: "active", current_revision: 0, destroy_operation_id: null };
-    } else if (head.scope_id !== scope) {
+      head = {
+        scopeId: scope,
+        state: "active",
+        currentRevision: 0,
+        destroyOperationId: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.db.insert(scopeHead).values(head).run();
+    } else if (head.scopeId !== scope) {
       // Only a keys.ts bug can get here. Refusing keeps it from becoming a cross-Scope bug.
-      throw new Error(`ScopeConfig for "${head.scope_id}" was addressed as "${scope}".`);
+      throw new Error(`ScopeConfig for "${head.scopeId}" was addressed as "${scope}".`);
     }
     if (refuseDestroyed && (head.state === "destroying" || head.state === "destroyed"))
       return fail(new KarmiError("scope.destroyed", `Scope "${scope}" has been destroyed.`));
@@ -311,32 +281,33 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   }
 
   private setState(state: ScopeState): void {
-    this.sql.exec("UPDATE scope_head SET state = ?, updated_at = ?", state, this.deployment.clock.now());
+    this.db.update(scopeHead).set({ state, updatedAt: this.deployment.clock.now() }).run();
   }
 
   private document(revision: number): ScopeConfigDocument {
     if (revision === 0) return {};
-    const row = this.sql
-      .exec<{ config_json: string }>("SELECT config_json FROM scope_revisions WHERE revision = ?", revision)
-      .one();
-    return decodeConfig(row.config_json);
+    const row = this.db
+      .select({ config: scopeRevisions.config })
+      .from(scopeRevisions)
+      .where(eq(scopeRevisions.revision, revision))
+      .get();
+    if (!row) throw new Error(`Scope config revision ${revision} is missing.`);
+    return row.config;
   }
 
   /** Reserves one Workspace slot until the Thread confirms its destruction. */
   reserveContainer(scope: ScopeId, threadId: string): Outcome<void> {
     const entered = this.enter(scope);
     if (!entered.ok) return entered;
-    const config = resolveScopeConfig(this.deployment.defaults, this.document(entered.value.current_revision));
+    const config = resolveScopeConfig(this.deployment.defaults, this.document(entered.value.currentRevision));
     const ceiling = config.ceilings?.scripts;
     const max = ceiling === false ? 0 : (ceiling?.maxContainers ?? Number.MAX_SAFE_INTEGER);
 
-    const exists = this.sql
-      .exec("SELECT thread_id FROM container_leases WHERE thread_id = ?", threadId)
-      .toArray().length;
-    const count = this.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM container_leases").one().count;
-    if (!exists && count >= max)
+    const exists = this.db.select().from(containerLeases).where(eq(containerLeases.threadId, threadId)).get();
+    const leases = this.db.select({ leases: count() }).from(containerLeases).get()?.leases ?? 0;
+    if (!exists && leases >= max)
       return fail(new KarmiError("scope.limit", "The Scope maxContainers ceiling was reached."));
-    this.sql.exec("INSERT OR IGNORE INTO container_leases (thread_id) VALUES (?)", threadId);
+    this.db.insert(containerLeases).values({ threadId }).onConflictDoNothing().run();
     return ok(undefined);
   }
 
@@ -344,7 +315,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   releaseContainer(scope: ScopeId, threadId: string): Outcome<void> {
     const entered = this.enter(scope, false);
     if (!entered.ok) return entered;
-    this.sql.exec("DELETE FROM container_leases WHERE thread_id = ?", threadId);
+    this.db.delete(containerLeases).where(eq(containerLeases.threadId, threadId)).run();
     return ok(undefined);
   }
 
@@ -352,7 +323,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   configGet(scope: ScopeId): Outcome<ConfigRecord> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    return ok({ revision: head.value.current_revision, document: this.document(head.value.current_revision) });
+    return ok({ revision: head.value.currentRevision, document: this.document(head.value.currentRevision) });
   }
 
   configSet(scope: ScopeId, document: unknown, ifRevision?: number): Outcome<{ revision: number }> {
@@ -365,35 +336,32 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       if (error instanceof KarmiError) return fail(error);
       throw error;
     }
-    const current = head.value.current_revision;
+    const current = head.value.currentRevision;
     if (ifRevision !== undefined && ifRevision !== current)
       return fail(new KarmiError("config.conflict", `Scope config is at revision ${current}, not ${ifRevision}.`));
     const revision = current + 1;
     const now = this.deployment.clock.now();
-    this.ctx.storage.transactionSync(() => {
-      this.sql.exec(
-        "INSERT INTO scope_revisions (revision, config_json, created_at) VALUES (?, ?, ?)",
-        revision,
-        JSON.stringify(parsed),
-        now,
-      );
-      this.sql.exec("UPDATE scope_head SET current_revision = ?, updated_at = ?", revision, now);
+    this.db.transaction((tx) => {
+      tx.insert(scopeRevisions).values({ revision, config: parsed, createdAt: now }).run();
+      tx.update(scopeHead).set({ currentRevision: revision, updatedAt: now }).run();
     });
     return ok({ revision });
   }
 
   private agentHead(agentId: string): AgentHeadRow | undefined {
-    return this.sql.exec<AgentHeadRow>("SELECT * FROM agent_heads WHERE agent_id = ?", agentId).toArray()[0];
+    return this.db.select().from(agentHeads).where(eq(agentHeads.agentId, agentId)).get();
   }
 
   private validate(head: HeadRow, spec: unknown): ValidationResult {
-    const agents = this.sql
-      .exec<{ agent_id: string; spec_json: string }>(
-        "SELECT h.agent_id, s.spec_json FROM agent_heads h JOIN agent_specs s ON s.agent_id = h.agent_id AND s.version = h.current_version WHERE h.deleted_at IS NULL",
-      )
-      .toArray()
-      .map((row) => ({ agentId: row.agent_id, spec: decodeSpec(row.spec_json) }));
-    const config = resolveScopeConfig(this.deployment.defaults, this.document(head.current_revision));
+    const agents = this.db
+      .select({ agentId: agentHeads.agentId, spec: agentSpecs.spec })
+      .from(agentHeads)
+      .innerJoin(agentSpecs, currentSpec)
+      .where(isNull(agentHeads.deletedAt))
+      .all()
+      // JSON carries no explicit `undefined`, so a stored normalized Spec is also a plain `AgentSpec`.
+      .map((row) => ({ agentId: row.agentId, spec: row.spec as NormalizedAgentSpec & AgentSpec }));
+    const config = resolveScopeConfig(this.deployment.defaults, this.document(head.currentRevision));
     return validateAgentSpec(spec, this.deployment.catalogue, {
       config,
       agents,
@@ -430,32 +398,31 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const result = this.validate(head, spec);
     if (!result.ok) return { ok: false, code: "agent.spec.invalid", message: "Agent Spec is invalid.", result };
     const normalized = result.normalized;
-    return this.ctx.storage.transactionSync(() => {
-      const current = this.agentHead(normalized.agentId)?.current_version ?? 0;
+    const { agentId } = normalized;
+    return this.db.transaction((tx) => {
+      const current =
+        tx.select({ version: agentHeads.currentVersion }).from(agentHeads).where(eq(agentHeads.agentId, agentId)).get()
+          ?.version ?? 0;
       if (ifVersion !== undefined && ifVersion !== current)
-        return fail(
-          new KarmiError("agent.conflict", `Agent "${normalized.agentId}" is at version ${current}, not ${ifVersion}.`),
-        );
+        return fail(new KarmiError("agent.conflict", `Agent "${agentId}" is at version ${current}, not ${ifVersion}.`));
       const version = current + 1;
-      this.sql.exec(
-        "INSERT INTO agent_specs (agent_id, version, spec_json, catalogue_fingerprint, created_at) VALUES (?, ?, ?, ?, ?)",
-        normalized.agentId,
-        version,
-        JSON.stringify(normalized),
-        fingerprint,
-        this.deployment.clock.now(),
-      );
-      this.sql.exec(
-        "INSERT INTO agent_heads (agent_id, current_version, deleted_at) VALUES (?, ?, NULL) ON CONFLICT (agent_id) DO UPDATE SET current_version = excluded.current_version, deleted_at = NULL",
-        normalized.agentId,
-        version,
-      );
-      this.sql.exec(
-        "DELETE FROM agent_specs WHERE agent_id = ? AND version <= ?",
-        normalized.agentId,
-        version - AGENT_HISTORY_DEPTH,
-      );
-      return ok({ agentId: normalized.agentId, version });
+      tx.insert(agentSpecs)
+        .values({
+          agentId,
+          version,
+          spec: normalized,
+          catalogueFingerprint: fingerprint,
+          createdAt: this.deployment.clock.now(),
+        })
+        .run();
+      tx.insert(agentHeads)
+        .values({ agentId, currentVersion: version, deletedAt: null })
+        .onConflictDoUpdate({ target: agentHeads.agentId, set: { currentVersion: version, deletedAt: null } })
+        .run();
+      tx.delete(agentSpecs)
+        .where(and(eq(agentSpecs.agentId, agentId), lte(agentSpecs.version, version - AGENT_HISTORY_DEPTH)))
+        .run();
+      return ok({ agentId, version });
     });
   }
 
@@ -464,46 +431,48 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     if (!head.ok) return head;
     const agent = this.agentHead(agentId);
     if (!agent) return notFound(agentId);
-    if (version === undefined && agent.deleted_at !== null)
+    if (version === undefined && agent.deletedAt !== null)
       return fail(new KarmiError("agent.deleted", `Agent "${agentId}" has been deleted.`));
-    const wanted = version ?? agent.current_version;
-    const row = this.sql
-      .exec<{ spec_json: string; catalogue_fingerprint: string; created_at: number }>(
-        "SELECT spec_json, catalogue_fingerprint, created_at FROM agent_specs WHERE agent_id = ? AND version = ?",
-        agentId,
-        wanted,
-      )
-      .toArray()[0];
+    const wanted = version ?? agent.currentVersion;
+    const row = this.db
+      .select()
+      .from(agentSpecs)
+      .where(and(eq(agentSpecs.agentId, agentId), eq(agentSpecs.version, wanted)))
+      .get();
     if (!row) return fail(new KarmiError("agent.notFound", `Agent "${agentId}" has no version ${wanted}.`));
     const fingerprint = await this.deployment.catalogue.fingerprint();
     return ok({
       agentId,
       version: wanted,
-      spec: decodeSpec(row.spec_json),
-      createdAt: row.created_at,
-      catalogueChanged: row.catalogue_fingerprint !== fingerprint,
+      spec: row.spec,
+      createdAt: row.createdAt,
+      catalogueChanged: row.catalogueFingerprint !== fingerprint,
     });
   }
 
   agentsList(scope: ScopeId): Outcome<AgentSummary[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    const rows = this.sql
-      .exec<{ agent_id: string; version: number; spec_json: string; created_at: number }>(
-        "SELECT h.agent_id, h.current_version AS version, s.spec_json, s.created_at FROM agent_heads h JOIN agent_specs s ON s.agent_id = h.agent_id AND s.version = h.current_version WHERE h.deleted_at IS NULL ORDER BY h.agent_id",
-      )
-      .toArray();
+    const rows = this.db
+      .select({
+        agentId: agentHeads.agentId,
+        version: agentHeads.currentVersion,
+        spec: agentSpecs.spec,
+        createdAt: agentSpecs.createdAt,
+      })
+      .from(agentHeads)
+      .innerJoin(agentSpecs, currentSpec)
+      .where(isNull(agentHeads.deletedAt))
+      .orderBy(asc(agentHeads.agentId))
+      .all();
     return ok(
-      rows.map((row) => {
-        const spec = decodeSpec(row.spec_json);
-        return {
-          agentId: row.agent_id,
-          version: row.version,
-          name: spec.name,
-          ...(spec.description !== undefined && { description: spec.description }),
-          updatedAt: row.created_at,
-        };
-      }),
+      rows.map(({ agentId, version, spec, createdAt }) => ({
+        agentId,
+        version,
+        name: spec.name,
+        ...(spec.description !== undefined && { description: spec.description }),
+        updatedAt: createdAt,
+      })),
     );
   }
 
@@ -511,13 +480,14 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const head = this.enter(scope);
     if (!head.ok) return head;
     if (!this.agentHead(agentId)) return notFound(agentId);
-    const rows = this.sql
-      .exec<{ version: number; created_at: number }>(
-        "SELECT version, created_at FROM agent_specs WHERE agent_id = ? ORDER BY version",
-        agentId,
-      )
-      .toArray();
-    return ok(rows.map((row) => ({ version: row.version, createdAt: row.created_at })));
+    return ok(
+      this.db
+        .select({ version: agentSpecs.version, createdAt: agentSpecs.createdAt })
+        .from(agentSpecs)
+        .where(eq(agentSpecs.agentId, agentId))
+        .orderBy(asc(agentSpecs.version))
+        .all(),
+    );
   }
 
   agentsDelete(scope: ScopeId, agentId: string): Outcome<void> {
@@ -525,8 +495,12 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     if (!head.ok) return head;
     const agent = this.agentHead(agentId);
     if (!agent) return notFound(agentId);
-    if (agent.deleted_at === null)
-      this.sql.exec("UPDATE agent_heads SET deleted_at = ? WHERE agent_id = ?", this.deployment.clock.now(), agentId);
+    if (agent.deletedAt === null)
+      this.db
+        .update(agentHeads)
+        .set({ deletedAt: this.deployment.clock.now() })
+        .where(eq(agentHeads.agentId, agentId))
+        .run();
     return ok(undefined);
   }
 
@@ -561,7 +535,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return ok({
       state: head.value.state,
       agent: agent.value,
-      config: resolveScopeConfig(this.deployment.defaults, this.document(head.value.current_revision)),
+      config: resolveScopeConfig(this.deployment.defaults, this.document(head.value.currentRevision)),
     });
   }
 
@@ -574,30 +548,36 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   }
 
   private indexThread(agentId: string, thread: ThreadActivity): void {
-    this.sql.exec(
-      "INSERT INTO threads (thread_id, agent_id, user_id, created_at, last_active_at, title) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (thread_id) DO UPDATE SET last_active_at = excluded.last_active_at, title = COALESCE(threads.title, excluded.title)",
-      thread.threadId,
-      agentId,
-      thread.userId ?? null,
-      thread.createdAt,
-      thread.activeAt,
-      thread.title ?? null,
-    );
+    const title = thread.title ?? null;
+    this.db
+      .insert(threads)
+      .values({
+        threadId: thread.threadId,
+        agentId,
+        userId: thread.userId ?? null,
+        createdAt: thread.createdAt,
+        lastActiveAt: thread.activeAt,
+        title,
+      })
+      .onConflictDoUpdate({
+        target: threads.threadId,
+        set: { lastActiveAt: thread.activeAt, title: sql`coalesce(${threads.title}, ${title})` },
+      })
+      .run();
     if (thread.parent)
-      this.sql.exec(
-        "INSERT OR IGNORE INTO thread_parents (thread_id, thread_key, call_id) VALUES (?, ?, ?)",
-        thread.threadId,
-        thread.parent.threadKey,
-        thread.parent.callId,
-      );
+      this.db
+        .insert(threadParents)
+        .values({ threadId: thread.threadId, threadKey: thread.parent.threadKey, callId: thread.parent.callId })
+        .onConflictDoNothing()
+        .run();
   }
 
   /** Removes a Thread from the index. */
   threadForget(scope: ScopeId, threadId: string): Outcome<void> {
     const head = this.enter(scope, false);
     if (!head.ok) return head;
-    this.sql.exec("DELETE FROM threads WHERE thread_id = ?", threadId);
-    this.sql.exec("DELETE FROM thread_parents WHERE thread_id = ?", threadId);
+    this.db.delete(threads).where(eq(threads.threadId, threadId)).run();
+    this.db.delete(threadParents).where(eq(threadParents.threadId, threadId)).run();
     return ok(undefined);
   }
 
@@ -608,37 +588,31 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   threadsList(scope: ScopeId, agent: string, user?: string | null, parent?: string | null): Outcome<ThreadSummary[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    const conditions = ["t.agent_id = ?"];
-    const values: (string | null)[] = [agent];
-    if (user !== undefined) {
-      conditions.push("t.user_id IS ?");
-      values.push(user);
-    }
-    if (parent !== undefined) {
-      conditions.push("p.thread_key IS ?");
-      values.push(parent);
-    }
-    const rows = this.sql.exec<ThreadRow & { thread_key: string | null; call_id: string | null }>(
-      `SELECT t.*, p.thread_key, p.call_id FROM threads t
-       LEFT JOIN thread_parents p ON p.thread_id = t.thread_id
-       WHERE ${conditions.join(" AND ")} ORDER BY t.last_active_at DESC`,
-      ...values,
-    );
+    const conditions: SQL[] = [eq(threads.agentId, agent)];
+    if (user !== undefined) conditions.push(user === null ? isNull(threads.userId) : eq(threads.userId, user));
+    if (parent !== undefined)
+      conditions.push(parent === null ? isNull(threadParents.threadKey) : eq(threadParents.threadKey, parent));
+    const rows = this.db
+      .select({ thread: threads, threadKey: threadParents.threadKey, callId: threadParents.callId })
+      .from(threads)
+      .leftJoin(threadParents, eq(threadParents.threadId, threads.threadId))
+      .where(and(...conditions))
+      .orderBy(desc(threads.lastActiveAt))
+      .all();
     return ok(
-      rows.toArray().map((row) => {
+      rows.map(({ thread, threadKey, callId }) => {
         const identity = {
-          agent: row.agent_id,
-          threadId: row.thread_id,
-          ...(row.user_id !== null && { user: row.user_id }),
+          agent: thread.agentId,
+          threadId: thread.threadId,
+          ...(thread.userId !== null && { user: thread.userId }),
         };
         return {
           ...identity,
-          ...(row.thread_key !== null &&
-            row.call_id !== null && { parent: { threadKey: row.thread_key, callId: row.call_id } }),
+          ...(threadKey !== null && callId !== null && { parent: { threadKey, callId } }),
           key: encodeKey(identity),
-          createdAt: row.created_at,
-          lastActiveAt: row.last_active_at,
-          ...(row.title !== null && { title: row.title }),
+          createdAt: thread.createdAt,
+          lastActiveAt: thread.lastActiveAt,
+          ...(thread.title !== null && { title: thread.title }),
         };
       }),
     );
@@ -650,20 +624,19 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const head = this.enter(scope);
     if (!head.ok) return head;
     if (!this.agentHead(agentId) && !this.deployment.catalogue.agents.has(agentId)) return notFound(agentId);
-    this.sql.exec(
-      "INSERT INTO connections (agent_id, name, value_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (agent_id, name) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at",
-      agentId,
-      name,
-      JSON.stringify(value),
-      this.deployment.clock.now(),
-    );
+    const updatedAt = this.deployment.clock.now();
+    this.db
+      .insert(connections)
+      .values({ agentId, name, value, updatedAt })
+      .onConflictDoUpdate({ target: [connections.agentId, connections.name], set: { value, updatedAt } })
+      .run();
     return ok(undefined);
   }
 
   connectionsDelete(scope: ScopeId, agentId: string, name: string): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    this.sql.exec("DELETE FROM connections WHERE agent_id = ? AND name = ?", agentId, name);
+    this.db.delete(connections).where(this.connectionKey(agentId, name)).run();
     return ok(undefined);
   }
 
@@ -672,14 +645,13 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const head = this.enter(scope);
     if (!head.ok) return head;
     return ok([
-      ...this.sql
-        .exec<{ name: string; updated_at: number }>(
-          "SELECT name, updated_at FROM connections WHERE agent_id = ? ORDER BY name",
-          agentId,
-        )
-        .toArray()
-        .map((row) => ({ name: row.name, updatedAt: row.updated_at })),
-      ...listGrants(this.sql, mcpHolder("agent", agentId, undefined) ?? "agent:"),
+      ...this.db
+        .select({ name: connections.name, updatedAt: connections.updatedAt })
+        .from(connections)
+        .where(eq(connections.agentId, agentId))
+        .orderBy(asc(connections.name))
+        .all(),
+      ...listGrants(this.db, mcpHolder("agent", agentId, undefined) ?? "agent:"),
     ]);
   }
 
@@ -688,20 +660,19 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   userConnectionSet(scope: ScopeId, user: string, name: string, value: unknown): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    this.sql.exec(
-      "INSERT INTO user_connections (user_id, name, value_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, name) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at",
-      user,
-      name,
-      JSON.stringify(value),
-      this.deployment.clock.now(),
-    );
+    const updatedAt = this.deployment.clock.now();
+    this.db
+      .insert(userConnections)
+      .values({ userId: user, name, value, updatedAt })
+      .onConflictDoUpdate({ target: [userConnections.userId, userConnections.name], set: { value, updatedAt } })
+      .run();
     return ok(undefined);
   }
 
   userConnectionDelete(scope: ScopeId, user: string, name: string): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    this.sql.exec("DELETE FROM user_connections WHERE user_id = ? AND name = ?", user, name);
+    this.db.delete(userConnections).where(this.userConnectionKey(user, name)).run();
     return ok(undefined);
   }
 
@@ -709,14 +680,13 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const head = this.enter(scope);
     if (!head.ok) return head;
     return ok([
-      ...this.sql
-        .exec<{ name: string; updated_at: number }>(
-          "SELECT name, updated_at FROM user_connections WHERE user_id = ? ORDER BY name",
-          user,
-        )
-        .toArray()
-        .map((row) => ({ name: row.name, updatedAt: row.updated_at })),
-      ...listGrants(this.sql, mcpHolder("user", undefined, user) ?? "user:"),
+      ...this.db
+        .select({ name: userConnections.name, updatedAt: userConnections.updatedAt })
+        .from(userConnections)
+        .where(eq(userConnections.userId, user))
+        .orderBy(asc(userConnections.name))
+        .all(),
+      ...listGrants(this.db, mcpHolder("user", undefined, user) ?? "user:"),
     ]);
   }
 
@@ -725,9 +695,11 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const head = this.enter(scope);
     if (!head.ok) return head;
     return ok(
-      this.sql
-        .exec<{ name: string }>("SELECT name FROM knowledge_names ORDER BY name")
-        .toArray()
+      this.db
+        .select()
+        .from(knowledgeNames)
+        .orderBy(asc(knowledgeNames.name))
+        .all()
         .map((row) => row.name),
     );
   }
@@ -736,7 +708,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   knowledgeAdd(scope: ScopeId, name: string): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    this.sql.exec("INSERT OR IGNORE INTO knowledge_names VALUES (?)", name);
+    this.db.insert(knowledgeNames).values({ name }).onConflictDoNothing().run();
     return ok(undefined);
   }
 
@@ -744,7 +716,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   knowledgeRemove(scope: ScopeId, name: string): Outcome<void> {
     const head = this.enter(scope, false);
     if (!head.ok) return head;
-    this.sql.exec("DELETE FROM knowledge_names WHERE name = ?", name);
+    this.db.delete(knowledgeNames).where(eq(knowledgeNames.name, name)).run();
     return ok(undefined);
   }
 
@@ -753,10 +725,12 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const head = this.enter(scope);
     if (!head.ok) return head;
     return ok(
-      this.sql
-        .exec<{ user_id: string }>("SELECT user_id FROM memory_users ORDER BY user_id")
-        .toArray()
-        .map((row) => row.user_id),
+      this.db
+        .select({ userId: memoryUsers.userId })
+        .from(memoryUsers)
+        .orderBy(asc(memoryUsers.userId))
+        .all()
+        .map((row) => row.userId),
     );
   }
 
@@ -764,11 +738,11 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   memoryUsersAdd(scope: ScopeId, user: string): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    this.sql.exec(
-      "INSERT OR IGNORE INTO memory_users (user_id, created_at) VALUES (?, ?)",
-      user,
-      this.deployment.clock.now(),
-    );
+    this.db
+      .insert(memoryUsers)
+      .values({ userId: user, createdAt: this.deployment.clock.now() })
+      .onConflictDoNothing()
+      .run();
     return ok(undefined);
   }
 
@@ -776,28 +750,26 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   memoryUsersRemove(scope: ScopeId, user: string): Outcome<void> {
     const head = this.enter(scope, false);
     if (!head.ok) return head;
-    this.sql.exec("DELETE FROM memory_users WHERE user_id = ?", user);
+    this.db.delete(memoryUsers).where(eq(memoryUsers.userId, user)).run();
     return ok(undefined);
   }
 
   userConnectionGet(scope: ScopeId, user: string, name: string): Outcome<unknown> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    const row = this.sql
-      .exec<{ value_json: string }>(
-        "SELECT value_json FROM user_connections WHERE user_id = ? AND name = ?",
-        user,
-        name,
-      )
-      .toArray()[0];
-    return ok(row ? JSON.parse(row.value_json) : undefined);
+    const row = this.db
+      .select({ value: userConnections.value })
+      .from(userConnections)
+      .where(this.userConnectionKey(user, name))
+      .get();
+    return ok(row?.value);
   }
 
   // The OAuth grants for MCP servers. This object is the only one that talks to an authorization server.
   // It holds the refresh tokens, mints and redeems pending authorizations, and hands out access tokens
   // only.
   private oauthServer(head: HeadRow, serverId: string): Outcome<OAuthServer> {
-    const config = resolveScopeConfig(this.deployment.defaults, this.document(head.current_revision));
+    const config = resolveScopeConfig(this.deployment.defaults, this.document(head.currentRevision));
     const server = config.mcp?.servers?.[serverId];
     if (!server)
       return fail(new KarmiError("mcp.server.unknown", `No MCP server "${serverId}" is registered in this Scope.`));
@@ -822,7 +794,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
 
   private grantStore(scope: ScopeId, server: OAuthServer, holder: McpHolder, pending?: PendingInput): SqlGrantStore {
     return new SqlGrantStore(
-      { sql: this.sql, clock: this.deployment.clock, secrets: this.deployment.secrets, scope },
+      { db: this.db, clock: this.deployment.clock, secrets: this.deployment.secrets, scope },
       server.id,
       holder,
       pending,
@@ -952,7 +924,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   async mcpCallback(scope: ScopeId, input: McpCallbackInput): Promise<Outcome<McpCallbackResult>> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    const pending = readPending(this.sql, input.nonce, this.deployment.clock.now());
+    const pending = readPending(this.db, input.nonce, this.deployment.clock.now());
     if (!pending)
       return fail(new KarmiError("mcp.oauth.state", "This authorization is unknown or has expired; start it again."));
     const server = this.oauthServer(head.value, pending.serverId);
@@ -986,13 +958,17 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     if (!head.ok) return head;
     const server = this.oauthServer(head.value, serverId);
     if (!server.ok) return server;
-    this.ctx.storage.transactionSync(() => {
+    this.db.transaction((tx) => {
       this.grantStore(scope, server.value, holder).dropGrant();
-      this.sql.exec(
-        "DELETE FROM mcp_catalog WHERE server_id = ? AND partition = ? AND json_extract(catalog_json, '$.cacheScope') = 'private'",
-        serverId,
-        holder,
-      );
+      tx.delete(mcpCatalog)
+        .where(
+          and(
+            eq(mcpCatalog.serverId, serverId),
+            eq(mcpCatalog.partition, holder),
+            sql`json_extract(${mcpCatalog.catalog}, '$.cacheScope') = 'private'`,
+          ),
+        )
+        .run();
     });
     return ok(undefined);
   }
@@ -1000,10 +976,20 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   connectionGet(scope: ScopeId, agentId: string, name: string): Outcome<unknown> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    const row = this.sql
-      .exec<{ value_json: string }>("SELECT value_json FROM connections WHERE agent_id = ? AND name = ?", agentId, name)
-      .toArray()[0];
-    return ok(row ? JSON.parse(row.value_json) : undefined);
+    const row = this.db
+      .select({ value: connections.value })
+      .from(connections)
+      .where(this.connectionKey(agentId, name))
+      .get();
+    return ok(row?.value);
+  }
+
+  private connectionKey(agentId: string, name: string): SQL | undefined {
+    return and(eq(connections.agentId, agentId), eq(connections.name, name));
+  }
+
+  private userConnectionKey(user: string, name: string): SQL | undefined {
+    return and(eq(userConnections.userId, user), eq(userConnections.name, name));
   }
 
   // The envelope store's rows hold ciphertext and wrapped keys only. Sealing and opening happen in the
@@ -1011,7 +997,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   credentialGet(scope: ScopeId, name: string): Outcome<StoredCredential | undefined> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    const row = this.sql.exec<CredentialRow>("SELECT * FROM provider_credentials WHERE name = ?", name).toArray()[0];
+    const row = this.db.select().from(providerCredentials).where(eq(providerCredentials.name, name)).get();
     return ok(row && decodeCredential(row));
   }
 
@@ -1023,25 +1009,23 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const head = this.enter(scope);
     if (!head.ok) return head;
     const now = this.deployment.clock.now();
-    return this.ctx.storage.transactionSync(() => {
+    return this.db.transaction((tx) => {
       const current =
-        this.sql.exec<{ version: number }>("SELECT version FROM provider_credentials WHERE name = ?", name).toArray()[0]
-          ?.version ?? 0;
+        tx
+          .select({ version: providerCredentials.version })
+          .from(providerCredentials)
+          .where(eq(providerCredentials.name, name))
+          .get()?.version ?? 0;
       if (version !== current + 1)
         return fail(
           new KarmiError("credential.conflict", `Credential "${name}" is at version ${current}; retry the put.`),
         );
-      this.sql.exec(
-        "INSERT INTO provider_credentials (name, version, kek, dek, ciphertext, created_at, updated_at, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL) ON CONFLICT (name) DO UPDATE SET version = excluded.version, kek = excluded.kek, dek = excluded.dek, ciphertext = excluded.ciphertext, updated_at = excluded.updated_at, revoked_at = NULL",
-        name,
-        version,
-        envelope.kek,
-        envelope.dek,
-        envelope.ciphertext,
-        now,
-        now,
-      );
-      return ok({ source: "scope", version, updatedAt: now });
+      const values = { version, ...envelope, updatedAt: now, revokedAt: null };
+      tx.insert(providerCredentials)
+        .values({ name, createdAt: now, ...values })
+        .onConflictDoUpdate({ target: providerCredentials.name, set: values })
+        .run();
+      return ok<CredentialInfo>({ source: "scope", version, updatedAt: now });
     });
   }
 
@@ -1052,11 +1036,11 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   credentialRevoke(scope: ScopeId, name: string): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    this.sql.exec(
-      "UPDATE provider_credentials SET kek = NULL, dek = NULL, ciphertext = NULL, revoked_at = ? WHERE name = ? AND revoked_at IS NULL",
-      this.deployment.clock.now(),
-      name,
-    );
+    this.db
+      .update(providerCredentials)
+      .set({ kek: null, dek: null, ciphertext: null, revokedAt: this.deployment.clock.now() })
+      .where(and(eq(providerCredentials.name, name), isNull(providerCredentials.revokedAt)))
+      .run();
     return ok(undefined);
   }
 
@@ -1064,7 +1048,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const head = this.enter(scope);
     if (!head.ok) return head;
     return ok(
-      this.sql.exec<CredentialRow>("SELECT * FROM provider_credentials ORDER BY name").toArray().map(decodeCredential),
+      this.db.select().from(providerCredentials).orderBy(asc(providerCredentials.name)).all().map(decodeCredential),
     );
   }
 
@@ -1074,16 +1058,20 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   credentialRewrap(scope: ScopeId, name: string, version: number, envelope: Envelope): Outcome<boolean> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    const changed = this.sql.exec(
-      "UPDATE provider_credentials SET kek = ?, dek = ?, ciphertext = ? WHERE name = ? AND version = ? AND revoked_at IS NULL AND kek != ?",
-      envelope.kek,
-      envelope.dek,
-      envelope.ciphertext,
-      name,
-      version,
-      envelope.kek,
-    ).rowsWritten;
-    return ok(changed > 0);
+    const changed = this.db
+      .update(providerCredentials)
+      .set({ kek: envelope.kek, dek: envelope.dek, ciphertext: envelope.ciphertext })
+      .where(
+        and(
+          eq(providerCredentials.name, name),
+          eq(providerCredentials.version, version),
+          isNull(providerCredentials.revokedAt),
+          ne(providerCredentials.kek, envelope.kek),
+        ),
+      )
+      .returning({ name: providerCredentials.name })
+      .all();
+    return ok(changed.length > 0);
   }
 
   // The MCP catalogue cache holds one `tools/list` per (server, Partition). The caller that holds the
@@ -1097,15 +1085,15 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     if (!head.ok) return head;
     return ok(
       keys.map(({ serverId, partition }) => {
-        const rows = this.sql
-          .exec<{ partition: string; catalog_json: string }>(
-            "SELECT partition, catalog_json FROM mcp_catalog WHERE server_id = ? ORDER BY updated_at DESC",
-            serverId,
-          )
-          .toArray();
+        const rows = this.db
+          .select({ partition: mcpCatalog.partition, catalog: mcpCatalog.catalog })
+          .from(mcpCatalog)
+          .where(eq(mcpCatalog.serverId, serverId))
+          .orderBy(desc(mcpCatalog.updatedAt))
+          .all();
         const own = rows.find((row) => row.partition === partition);
-        if (own) return decodeCatalog(own.catalog_json);
-        return rows.map((row) => decodeCatalog(row.catalog_json)).find((catalog) => catalog.cacheScope === "public");
+        if (own) return own.catalog;
+        return rows.map((row) => row.catalog).find((catalog) => catalog.cacheScope === "public");
       }),
     );
   }
@@ -1113,20 +1101,19 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   mcpCatalogPut(scope: ScopeId, key: McpCatalogKey, catalog: McpCatalog): Outcome<void> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    this.sql.exec(
-      "INSERT INTO mcp_catalog (server_id, partition, catalog_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (server_id, partition) DO UPDATE SET catalog_json = excluded.catalog_json, updated_at = excluded.updated_at",
-      key.serverId,
-      key.partition,
-      JSON.stringify(catalog),
-      this.deployment.clock.now(),
-    );
+    const updatedAt = this.deployment.clock.now();
+    this.db
+      .insert(mcpCatalog)
+      .values({ ...key, catalog, updatedAt })
+      .onConflictDoUpdate({ target: [mcpCatalog.serverId, mcpCatalog.partition], set: { catalog, updatedAt } })
+      .run();
     return ok(undefined);
   }
 
   status(scope: ScopeId): Outcome<ScopeStatus> {
     const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;
-    return ok({ state: head.value.state, configRevision: head.value.current_revision });
+    return ok({ state: head.value.state, configRevision: head.value.currentRevision });
   }
 
   suspend(scope: ScopeId): Outcome<void> {
@@ -1148,23 +1135,15 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   destroy(scope: ScopeId): Outcome<{ operationId: string }> {
     const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;
-    if (head.value.destroy_operation_id !== null) return ok({ operationId: head.value.destroy_operation_id });
+    if (head.value.destroyOperationId !== null) return ok({ operationId: head.value.destroyOperationId });
     const operationId = crypto.randomUUID();
     const now = this.deployment.clock.now();
-    this.ctx.storage.transactionSync(() => {
-      this.sql.exec(
-        "UPDATE scope_head SET state = 'destroying', destroy_operation_id = ?, updated_at = ?",
-        operationId,
-        now,
-      );
-      this.sql.exec(
-        "INSERT INTO destroy_operations (operation_id, state, started_at, updated_at, cursor_json) VALUES (?, 'destroying', ?, ?, ?)",
-        operationId,
-        now,
-        now,
-        JSON.stringify(startCursor()),
-      );
-      for (const table of TOMBSTONE_TABLES) this.sql.exec(`DELETE FROM ${table}`);
+    this.db.transaction((tx) => {
+      tx.update(scopeHead).set({ state: "destroying", destroyOperationId: operationId, updatedAt: now }).run();
+      tx.insert(destroyOperations)
+        .values({ operationId, state: "destroying", startedAt: now, updatedAt: now, cursor: startCursor() })
+        .run();
+      for (const table of TOMBSTONE_TABLES) tx.delete(table).run();
     });
     this.scheduleWalk(scope, operationId);
     return ok({ operationId });
@@ -1184,26 +1163,19 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     if (job.kind !== "scope-maintenance") return super.runJob(job);
     // This object is the only producer of the payload, so its shape is known once the kind is.
     const { scope, operationId } = job.payload as { scope: ScopeId; operationId: string };
-    const row = this.sql
-      .exec<{ state: DestroyStatus["state"]; cursor_json: string | null }>(
-        "SELECT state, cursor_json FROM destroy_operations WHERE operation_id = ?",
-        operationId,
-      )
-      .toArray()[0];
+    const row = this.destroyOperation(operationId);
     // A late alarm for an operation that has already finished has nothing left to delete.
     if (!row || row.state === "destroyed") return;
     const cursor = await destroyStep(
-      { scope, deployment: this.deployment, bindings: this.env, sql: this.sql, attempt: job.attempt },
-      decodeCursor(row.cursor_json),
+      { scope, deployment: this.deployment, bindings: this.env, db: this.db, attempt: job.attempt },
+      decodeCursor(row.cursor),
     );
     const done = cursor.progress.phase === "done";
-    this.sql.exec(
-      "UPDATE destroy_operations SET cursor_json = ?, state = ?, updated_at = ? WHERE operation_id = ?",
-      JSON.stringify(cursor),
-      done ? "destroyed" : "destroying",
-      this.deployment.clock.now(),
-      operationId,
-    );
+    this.db
+      .update(destroyOperations)
+      .set({ cursor, state: done ? "destroyed" : "destroying", updatedAt: this.deployment.clock.now() })
+      .where(eq(destroyOperations.operationId, operationId))
+      .run();
     if (done) this.setState("destroyed");
     else this.scheduleWalk(scope, operationId);
   }
@@ -1212,15 +1184,18 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   destroyStatus(scope: ScopeId, operationId: string): Outcome<DestroyStatus> {
     const head = this.enter(scope, /* refuseDestroyed */ false);
     if (!head.ok) return head;
-    const row = this.sql
-      .exec<{ state: DestroyStatus["state"]; cursor_json: string | null }>(
-        "SELECT state, cursor_json FROM destroy_operations WHERE operation_id = ?",
-        operationId,
-      )
-      .toArray()[0];
+    const row = this.destroyOperation(operationId);
     if (!row)
       return fail(new KarmiError("destroy.notFound", `No destroy operation "${operationId}" in Scope "${scope}".`));
-    const { progress, external } = decodeCursor(row.cursor_json);
+    const { progress, external } = decodeCursor(row.cursor);
     return ok({ operationId, state: row.state, progress, ...(external && { externalCleanup: external }) });
+  }
+
+  private destroyOperation(operationId: string) {
+    return this.db
+      .select({ state: destroyOperations.state, cursor: destroyOperations.cursor })
+      .from(destroyOperations)
+      .where(eq(destroyOperations.operationId, operationId))
+      .get();
   }
 }
