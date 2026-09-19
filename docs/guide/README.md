@@ -19,7 +19,18 @@ Read these pages in order.
 
 ## Topics
 
-Read a topic page when you need it. The topic pages have the numbers 07 to 16. They are not written yet.
+Read a topic page when you need it.
+
+7. [Sandbox](./07-sandbox.md) describes Scripts, isolation and the container sandbox.
+8. [Schedules](./08-schedules.md) describes Schedules, which send an Event to a Thread at a later time.
+9. [Memory](./09-memory.md) describes what the Agents of a Scope remember about a User.
+10. [Knowledge](./10-knowledge.md) describes Knowledge, retrievers, and vector and hybrid retrieval.
+11. [MCP](./11-mcp.md) describes remote MCP servers.
+12. [Credentials](./12-credentials.md) describes credential references, the credentials of a Scope and Secrets providers.
+13. [Testing](./13-testing.md) describes the tests of an agent project.
+14. [Observability](./14-observability.md) describes usage records and logging.
+15. [Doctor](./15-doctor.md) describes `karmi doctor`.
+16. [Deployment](./16-deployment.md) describes the deploy to Cloudflare, the bindings, and recovery and time.
 
 ## Reference
 
