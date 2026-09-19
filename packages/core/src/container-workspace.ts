@@ -1,5 +1,5 @@
 import { CloudflareContainerSandbox } from "./container-sandbox";
-import { decodeContainerRun, type ContainerDriver, type ContainerLimits } from "./container-types";
+import type { ContainerDriver, ContainerLimits, ContainerRun } from "./container-types";
 import { DEFAULT_MEDIA_BYTES, putMedia } from "./media";
 import type { ScopeConfigDocument } from "./scope-config";
 import type { ThreadEventData } from "./thread-events";
@@ -7,7 +7,10 @@ import { threadMayRead } from "./keys";
 
 /** The Thread resources used by a Workspace without passing any credentials into its process. */
 export interface WorkspaceHost {
-  sql: SqlStorage;
+  readRun(): ContainerRun | undefined;
+  saveRun(run: ContainerRun): void;
+  clearRun(): void;
+  hasStartedJob(jobId: string): boolean;
   scope: string;
   threadId: string;
   bucket: R2Bucket | undefined;
@@ -27,25 +30,17 @@ export function workspaceSandbox(
     driver,
     {
       now: host.now,
-      read: () => {
-        const row = host.sql.exec<{ json: string }>("SELECT json FROM container_run WHERE id = 1").toArray()[0];
-        return row ? decodeContainerRun(row.json) : undefined;
-      },
+      read: host.readRun,
       save: (run) => {
-        host.sql.exec(
-          "INSERT INTO container_run (id, json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json",
-          JSON.stringify(run),
-        );
+        host.saveRun(run);
         host.schedule();
       },
       clear: () => {
-        host.sql.exec("DELETE FROM container_run");
+        host.clearRun();
       },
       progress: (jobId, stdout) => {
-        const pending = host.sql
-          .exec("SELECT seq FROM events WHERE type = 'job.started' AND json_extract(json, '$.jobId') = ?", jobId)
-          .toArray();
-        if (pending.length) host.append({ type: "job.progress", jobId, content: [{ type: "text", text: stdout }] });
+        if (host.hasStartedJob(jobId))
+          host.append({ type: "job.progress", jobId, content: [{ type: "text", text: stdout }] });
       },
       load: async (ref) => {
         if (!threadMayRead(ref.key, host.scope, host.threadId))

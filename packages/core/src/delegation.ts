@@ -6,6 +6,9 @@ import { defineFragment } from "./fragment";
 import type { ThreadAddress } from "./thread";
 import type { Budget, ThreadEvent, TurnInput } from "./thread-events";
 import { errorResult, type Tool, type ToolResult } from "./tool";
+import { and, count, eq, sql } from "drizzle-orm";
+import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
+import { delegationChildren, delegationOrigins, delegationReservations, threadSchema } from "./db/thread/schema";
 
 /** The delegating Thread and the `delegate` call that opened a child Thread. */
 export interface ParentLink {
@@ -50,78 +53,78 @@ export interface DelegationRecord {
   /** Whether the child's reservation has been released on every ancestor. */
   released: boolean;
 }
-const decodeRecord = (json: string): DelegationRecord => JSON.parse(json);
-const decodeOrigin = (json: string): ChildOrigin => JSON.parse(json);
-
 /**
  * The parent Thread's persisted record of its children, origin and reservations. Because starts and cursors are
  * durable, a re-run of the tool Step never queues a second child Turn.
  */
 export class DelegationStore {
-  constructor(private sql: SqlStorage) {
-    sql.exec(`CREATE TABLE IF NOT EXISTS delegation_origin (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS delegation_children (id TEXT PRIMARY KEY, turn INTEGER NOT NULL, released INTEGER NOT NULL, json TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS delegation_children_outstanding ON delegation_children (released) WHERE released = 0;
-      CREATE INDEX IF NOT EXISTS delegation_children_by_turn ON delegation_children (turn);
-      CREATE TABLE IF NOT EXISTS delegation_reservations (id TEXT PRIMARY KEY, turn INTEGER NOT NULL, active INTEGER NOT NULL);
-      CREATE INDEX IF NOT EXISTS delegation_reservations_by_turn ON delegation_reservations (turn);`);
-  }
+  constructor(private db: DrizzleSqliteDODatabase<typeof threadSchema>) {}
   origin(): ChildOrigin | undefined {
-    const row = this.sql.exec<{ json: string }>("SELECT json FROM delegation_origin WHERE id = 1").toArray()[0];
-    return row && decodeOrigin(row.json);
+    return this.db.select({ origin: delegationOrigins.origin }).from(delegationOrigins).get()?.origin;
   }
   attach(origin: ChildOrigin): boolean {
     if (this.origin()) return false;
-    this.sql.exec("INSERT INTO delegation_origin (id, json) VALUES (1, ?)", JSON.stringify(origin));
+    this.db.insert(delegationOrigins).values({ id: 1, origin }).run();
     return true;
   }
   child(id: string): DelegationRecord | undefined {
-    const row = this.sql.exec<{ json: string }>("SELECT json FROM delegation_children WHERE id = ?", id).toArray()[0];
-    return row && decodeRecord(row.json);
+    return this.db
+      .select({ record: delegationChildren.record })
+      .from(delegationChildren)
+      .where(eq(delegationChildren.id, id))
+      .get()?.record;
   }
   children(turn?: number): DelegationRecord[] {
-    const rows =
-      turn === undefined
-        ? this.sql.exec<{ json: string }>("SELECT json FROM delegation_children")
-        : this.sql.exec<{ json: string }>("SELECT json FROM delegation_children WHERE turn = ?", turn);
-    return rows.toArray().map((row) => decodeRecord(row.json));
+    return this.db
+      .select({ record: delegationChildren.record })
+      .from(delegationChildren)
+      .where(turn === undefined ? undefined : eq(delegationChildren.turn, turn))
+      .all()
+      .map((row) => row.record);
   }
   outstanding(): DelegationRecord[] {
-    return this.sql
-      .exec<{ json: string }>("SELECT json FROM delegation_children WHERE released = 0")
-      .toArray()
-      .map((row) => decodeRecord(row.json));
+    return this.db
+      .select({ record: delegationChildren.record })
+      .from(delegationChildren)
+      .where(eq(delegationChildren.released, false))
+      .all()
+      .map((row) => row.record);
   }
   save(record: DelegationRecord): void {
-    this.sql.exec(
-      "INSERT INTO delegation_children (id, turn, released, json) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET json = excluded.json, released = excluded.released",
-      record.id,
-      record.turn,
-      record.released ? 1 : 0,
-      JSON.stringify(record),
-    );
+    this.db
+      .insert(delegationChildren)
+      .values({ id: record.id, turn: record.turn, released: record.released, record })
+      .onConflictDoUpdate({ target: delegationChildren.id, set: { released: record.released, record } })
+      .run();
   }
   reserve(id: string, ancestor: Ancestor): string | undefined {
-    if (this.sql.exec("SELECT id FROM delegation_reservations WHERE id = ?", id).toArray().length) return;
+    if (
+      this.db
+        .select({ id: delegationReservations.id })
+        .from(delegationReservations)
+        .where(eq(delegationReservations.id, id))
+        .get()
+    )
+      return;
     const counts = this.budget(ancestor.turn);
     if (counts.children >= (ancestor.limits.maxChildren ?? AGENT_SPEC_DEFAULTS.delegation.maxChildren))
       return "maxChildren";
     if (counts.active >= (ancestor.limits.maxConcurrent ?? AGENT_SPEC_DEFAULTS.delegation.maxConcurrent))
       return "maxConcurrent";
-    this.sql.exec("INSERT INTO delegation_reservations (id, turn, active) VALUES (?, ?, 1)", id, ancestor.turn);
+    this.db.insert(delegationReservations).values({ id, turn: ancestor.turn, active: true }).run();
   }
   release(id: string, rollback: boolean): void {
-    if (rollback) this.sql.exec("DELETE FROM delegation_reservations WHERE id = ?", id);
-    else this.sql.exec("UPDATE delegation_reservations SET active = 0 WHERE id = ?", id);
+    if (rollback) this.db.delete(delegationReservations).where(eq(delegationReservations.id, id)).run();
+    else this.db.update(delegationReservations).set({ active: false }).where(eq(delegationReservations.id, id)).run();
   }
   budget(turn: number): { children: number; active: number } {
-    const row = this.sql
-      .exec<{ children: number; active: number }>(
-        "SELECT COUNT(*) AS children, COALESCE(SUM(active), 0) AS active FROM delegation_reservations WHERE turn = ?",
-        turn,
-      )
-      .one();
-    return row;
+    return (
+      this.db
+        .select({ children: count(), active: sql<number>`coalesce(sum(${delegationReservations.active}), 0)` })
+        .from(delegationReservations)
+        .where(eq(delegationReservations.turn, turn))
+        .get() ?? { children: 0, active: 0 }
+    );
   }
 }
 

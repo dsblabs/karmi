@@ -1,4 +1,7 @@
 import * as z from "zod/mini";
+import { asc, count, eq, min } from "drizzle-orm";
+import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
+import { schedules, threadSchema } from "./db/thread/schema";
 import type { Capabilities } from "./agent";
 import { isTimeZone, nextCronTime, parseCron } from "./cron";
 import { milliseconds } from "./duration";
@@ -170,47 +173,47 @@ export function summarise(record: ScheduleRecord): ScheduleSummary {
   };
 }
 
-const decodeRecord = (json: string): ScheduleRecord => JSON.parse(json);
-
 /**
  * The pending Schedules of one Thread, stored in its SQLite. The stored row decides what fires. The
  * Alarm only wakes the Durable Object at `nextAt`.
  */
 export class ScheduleStore {
-  constructor(private sql: SqlStorage) {
-    sql.exec(`CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, next_at INTEGER NOT NULL, json TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS schedules_next ON schedules (next_at);`);
-  }
+  constructor(private db: DrizzleSqliteDODatabase<typeof threadSchema>) {}
   /** The record with `id`, or undefined when there is none. */
   get(id: string): ScheduleRecord | undefined {
-    const row = this.sql.exec<{ json: string }>("SELECT json FROM schedules WHERE id = ?", id).toArray()[0];
-    return row && decodeRecord(row.json);
+    return this.db.select({ record: schedules.record }).from(schedules).where(eq(schedules.id, id)).get()?.record;
   }
   /** Every pending record, soonest first. */
   list(): ScheduleRecord[] {
-    return this.sql
-      .exec<{ json: string }>("SELECT json FROM schedules ORDER BY next_at, id")
-      .toArray()
-      .map((row) => decodeRecord(row.json));
+    return this.db
+      .select({ record: schedules.record })
+      .from(schedules)
+      .orderBy(asc(schedules.nextAt), asc(schedules.id))
+      .all()
+      .map((row) => row.record);
   }
   count(): number {
-    return this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM schedules").one().n;
+    return this.db.select({ n: count() }).from(schedules).get()?.n ?? 0;
   }
   /** The soonest `nextAt` of any pending record, or undefined when none is pending. */
   nextAt(): number | undefined {
-    return this.sql.exec<{ at: number | null }>("SELECT MIN(next_at) AS at FROM schedules").one().at ?? undefined;
+    return (
+      this.db
+        .select({ at: min(schedules.nextAt) })
+        .from(schedules)
+        .get()?.at ?? undefined
+    );
   }
   /** Inserts the record, or replaces the one with the same id. */
   save(record: ScheduleRecord): void {
-    this.sql.exec(
-      "INSERT INTO schedules (id, next_at, json) VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET next_at = excluded.next_at, json = excluded.json",
-      record.id,
-      record.nextAt,
-      JSON.stringify(record),
-    );
+    this.db
+      .insert(schedules)
+      .values({ id: record.id, nextAt: record.nextAt, record })
+      .onConflictDoUpdate({ target: schedules.id, set: { nextAt: record.nextAt, record } })
+      .run();
   }
   delete(id: string): void {
-    this.sql.exec("DELETE FROM schedules WHERE id = ?", id);
+    this.db.delete(schedules).where(eq(schedules.id, id)).run();
   }
 }
 
