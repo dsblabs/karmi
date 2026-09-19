@@ -1,1 +1,1 @@
-export {};
+export { alarms } from "../scheduler-schema";

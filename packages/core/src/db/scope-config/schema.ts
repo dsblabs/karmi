@@ -7,6 +7,9 @@ import type { ScopeConfigDocument } from "../../scope-config";
 import type { DestroyCursor } from "../../scope-destroy";
 import type { DestroyStatus, ScopeState } from "../../scope-config-do";
 import type { ThreadIdentity } from "../../thread";
+import { alarms } from "../scheduler-schema";
+
+export { alarms } from "../scheduler-schema";
 
 /** This table stores the identity, lifecycle state and current config revision of the Scope. */
 export const scopeHead = sqliteTable("scope_head", {
@@ -168,6 +171,7 @@ export const mcpOAuthState = sqliteTable("mcp_oauth_state", {
 
 /** The complete relational schema of the Scope config Durable Object. */
 export const scopeConfigSchema = {
+  alarms,
   scopeHead,
   scopeRevisions,
   agentSpecs,

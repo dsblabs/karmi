@@ -32,7 +32,7 @@ import {
   resolveSchedule,
   resolveSchedulingLimits,
   ScheduleStore,
-  scheduleJobId,
+  scheduleAlarmId,
   schedulingTools,
   summarise,
   type ScheduleFailure,
@@ -82,7 +82,7 @@ import { MEMORY_FRAGMENT_NOTES, notesEnabled, renderMemory, type MemoryConfig } 
 import type { MemoryDurableObject } from "./memory-do";
 import type { ContentBlock, ProviderError, ProviderEvent, ProviderRequest, StopReason, Usage } from "./provider";
 import { prepareMessages, providerReplayKey } from "./replay";
-import { ScheduledDurableObject, type ScheduledJob } from "./scheduler";
+import { ScheduledDurableObject, type ScheduledAlarm } from "./scheduler";
 import { providerHosts, scopedFetch } from "./scoped-fetch";
 import type { ConnectOutcome, ScopeConfigDurableObject, ScopeState, TurnSnapshotSource } from "./scope-config-do";
 import {
@@ -123,6 +123,10 @@ import { resolveToolSet, toolDefinitions, toolsInContext, unloadedDeferred, type
 import { splitModelId, transcriptFromEvents } from "./transcript";
 import type { QueueMessage } from "./queue";
 import type { UsageAttribution, UsageRecord } from "./usage";
+import { drizzle } from "drizzle-orm/durable-sqlite";
+import { migrate } from "drizzle-orm/durable-sqlite/migrator";
+import threadMigrations from "./db/thread/migrations";
+import * as threadSchema from "./db/thread/schema";
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS container_run (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL);
@@ -148,7 +152,7 @@ const SOCKET_LIMIT = 64;
 const USAGE_BATCH = 100;
 /** How long a Step may run without progress before the alarm presumes it lost and re-enters the loop. */
 const STEP_WATCHDOG_MS = 60_000;
-/** How long a Fork's copies may run before the cleanup job treats the Fork as abandoned by an eviction. */
+/** How long a Fork's copies may run before the cleanup Alarm treats the Fork as abandoned by an eviction. */
 const FORK_CLEANUP_MS = 60_000;
 const ZERO_USAGE: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 /** What a Turn may spend before asking to continue, when the Agent has no `longRunning` grant. */
@@ -300,6 +304,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   constructor(ctx: DurableObjectState, env: KarmiBindings) {
     super(ctx, env);
+    ctx.blockConcurrencyWhile(() => migrate(drizzle(ctx.storage, { schema: threadSchema }), threadMigrations));
     ctx.storage.sql.exec(SCHEMA);
     this.delegations = new DelegationStore(ctx.storage.sql);
     this.scheduleStore = new ScheduleStore(ctx.storage.sql);
@@ -427,7 +432,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (!entered.ok) return entered;
     this.sql.exec("INSERT INTO deleted (id) VALUES (1)");
     this.turnAbort.abort();
-    this.sql.exec("DELETE FROM jobs");
+    this.sql.exec("DELETE FROM alarms");
     this.scheduler.set({
       id: "thread-cleanup",
       kind: "thread-cleanup",
@@ -478,7 +483,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         "inputs",
         "deliveries",
         "delivery_route",
-        "jobs",
+        "alarms",
         "delegation_origin",
         "delegation_children",
         "delegation_reservations",
@@ -881,7 +886,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     // The Thread exists from here on so that a second fork to the same id fails, and marking it active holds
-    // back any Turn sent to it until its log is in place. The cleanup job removes a half-made Fork if this
+    // back any Turn sent to it until its log is in place. The cleanup Alarm removes a half-made Fork if this
     // Durable Object is evicted before the copies land; it waits while the Thread is active.
     this.active = true;
     const cleanup = { id: "thread-cleanup", kind: "thread-cleanup", payload: address } as const;
@@ -1041,16 +1046,16 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     });
   }
 
-  protected override async runJob(job: ScheduledJob): Promise<void> {
-    if (job.kind === "container-idle") return this.destroyWorkspace(this.row());
-    if (job.kind === "container-watchdog") return this.pollContainer();
-    if (job.kind === "thread-cleanup") return this.cleanup(decodeCleanup(job.payload));
+  protected override async runAlarm(alarm: ScheduledAlarm): Promise<void> {
+    if (alarm.kind === "container-idle") return this.destroyWorkspace(this.row());
+    if (alarm.kind === "container-watchdog") return this.pollContainer();
+    if (alarm.kind === "thread-cleanup") return this.cleanup(decodeCleanup(alarm.payload));
     if (this.sql.exec("SELECT id FROM deleted").toArray().length) return;
-    if (job.kind === "delivery") {
+    if (alarm.kind === "delivery") {
       // Any attached Subscriber suppresses delivery. Socket tags can distinguish audiences if needed.
       if (this.ctx.getWebSockets().length > 0) return;
       const row = this.row();
-      const { toSeq } = job.payload as { toSeq: number };
+      const toSeq = decodeDeliveryAlarm(alarm.payload);
       const delivery = this.sql
         .exec<{ from_seq: number }>("SELECT from_seq FROM deliveries WHERE to_seq = ?", toSeq)
         .toArray()[0];
@@ -1072,17 +1077,17 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       });
       return;
     }
-    if (job.kind === "usage") return this.flushUsage();
-    if (job.kind === "delegation") return this.syncDelegations();
-    if (job.kind === "delegation-notify") return this.notifyParent();
-    if (job.kind === "delegation-deadline") {
+    if (alarm.kind === "usage") return this.flushUsage();
+    if (alarm.kind === "delegation") return this.syncDelegations();
+    if (alarm.kind === "delegation-notify") return this.notifyParent();
+    if (alarm.kind === "delegation-deadline") {
       const row = this.row();
       if (row.state !== "idle") await this.cancel(this.address(row));
       return;
     }
-    if (job.kind === "park-timeout") return this.expire(job.payload as { seq: number });
-    if (job.kind === "schedule") return this.fireSchedule(decodeScheduleJob(job.payload));
-    if (job.kind !== "watchdog") return super.runJob(job);
+    if (alarm.kind === "park-timeout") return this.expire(decodeParkTimeoutAlarm(alarm.payload));
+    if (alarm.kind === "schedule") return this.fireSchedule(decodeScheduleAlarm(alarm.payload));
+    if (alarm.kind !== "watchdog") return super.runAlarm(alarm);
     const row = this.sql.exec<ThreadRow>("SELECT * FROM thread").toArray()[0];
     if (!row || row.state === "parked" || (row.state === "idle" && !this.hasInputs())) {
       this.scheduler.cancel("watchdog");
@@ -2516,7 +2521,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return remote<ThreadDurableObject>(this.env.KARMI_THREADS, keys.thread(address.scope, address.threadId));
   }
 
-  // Schedules are rows in this Durable Object with one alarm job each. A firing is a plain `send`, so it
+  // Schedules are rows in this Durable Object with one Alarm each. A firing is a plain `send`, so it
   // coalesces like any other input. The scheduling built-ins address this Thread and nothing else.
   schedule(address: ThreadAddress, request: unknown): Outcome<{ scheduleId: string; nextAt: number }> {
     const entered = this.enter(address);
@@ -2572,7 +2577,12 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const { input, delay } = resolved.request;
     const record: ScheduleRecord = { id, timing: resolved.timing, input, createdAt: now, nextAt: resolved.nextAt };
     this.scheduleStore.save(record);
-    this.scheduler.set({ id: scheduleJobId(id), kind: "schedule", dueAt: record.nextAt, payload: { scheduleId: id } });
+    this.scheduler.set({
+      id: scheduleAlarmId(id),
+      kind: "schedule",
+      dueAt: record.nextAt,
+      payload: { scheduleId: id },
+    });
     this.append(
       row.turn,
       {
@@ -2592,7 +2602,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private removeSchedule(row: ThreadRow, id: string, channelRef: unknown): boolean {
     if (!this.scheduleStore.get(id)) return false;
     this.scheduleStore.delete(id);
-    this.scheduler.cancel(scheduleJobId(id));
+    this.scheduler.cancel(scheduleAlarmId(id));
     this.append(row.turn, { type: "schedule.cancelled", scheduleId: id }, channelRef);
     return true;
   }
@@ -2627,7 +2637,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (nextAt === undefined) return this.scheduleStore.delete(scheduleId);
     record.nextAt = nextAt;
     this.scheduleStore.save(record);
-    this.scheduler.set({ id: scheduleJobId(scheduleId), kind: "schedule", dueAt: nextAt, payload: { scheduleId } });
+    this.scheduler.set({ id: scheduleAlarmId(scheduleId), kind: "schedule", dueAt: nextAt, payload: { scheduleId } });
   }
 
   delegationReserve(ancestor: Ancestor, id: string): string | undefined {
@@ -2896,7 +2906,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private async releaseChild(child: DelegationRecord): Promise<void> {
-    // The delegation job is armed first so the release is retried when a remote ancestor is unavailable.
+    // The delegation Alarm is armed first so the release is retried when a remote ancestor is unavailable.
     this.scheduler.set({ id: "delegation", kind: "delegation", dueAt: this.deployment.clock.now(), payload: {} });
     await this.releaseDelegation(child.origin.chain, child.id, !child.reserved);
     child.released = true;
@@ -3296,9 +3306,21 @@ function addUsage(total: Usage, usage: Usage): Usage {
   };
 }
 
-function decodeScheduleJob(value: unknown): string {
+function decodeDeliveryAlarm(value: unknown): number {
+  if (!value || typeof value !== "object" || !("toSeq" in value) || typeof value.toSeq !== "number")
+    throw new Error("Invalid delivery Alarm.");
+  return value.toSeq;
+}
+
+function decodeParkTimeoutAlarm(value: unknown): { seq: number } {
+  if (!value || typeof value !== "object" || !("seq" in value) || typeof value.seq !== "number")
+    throw new Error("Invalid park timeout Alarm.");
+  return { seq: value.seq };
+}
+
+function decodeScheduleAlarm(value: unknown): string {
   if (!value || typeof value !== "object" || !("scheduleId" in value) || typeof value.scheduleId !== "string")
-    throw new Error("Invalid Schedule job.");
+    throw new Error("Invalid Schedule Alarm.");
   return value.scheduleId;
 }
 
@@ -3313,6 +3335,6 @@ function decodeCleanup(value: unknown): ThreadAddress {
     !("agent" in value) ||
     typeof value.agent !== "string"
   )
-    throw new Error("Invalid Thread cleanup job.");
+    throw new Error("Invalid Thread cleanup Alarm.");
   return { scope: value.scope, threadId: value.threadId, agent: value.agent, create: false };
 }

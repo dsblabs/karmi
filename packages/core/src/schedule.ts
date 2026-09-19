@@ -7,7 +7,7 @@ import type { Tool, ToolResult } from "./tool";
 import type { TurnInput } from "./thread-events";
 
 // The pure part of Schedules. It defines what a request must look like, when it first fires, the caps
-// it runs under, and the SQL rows a Thread keeps for them. Firing is the Thread Durable Object's job,
+// it runs under, and the SQL rows a Thread keeps for them. Firing belongs to the Thread Durable Object,
 // and nothing here reads a clock.
 
 /** A Turn input of kind `event`, which is the only input a Schedule can deliver. */
@@ -156,8 +156,8 @@ export function resolveSchedulingLimits(
 /** The limits the Thread API schedules under, which are the Deployment caps alone. */
 export const API_LIMITS: SchedulingLimits = Object.freeze({ ...SCHEDULE_CAPS, cron: true });
 
-/** The id of the alarm job that fires the Schedule `scheduleId`. */
-export const scheduleJobId = (scheduleId: string): string => `schedule:${scheduleId}`;
+/** The id of the Alarm that fires the Schedule `scheduleId`. */
+export const scheduleAlarmId = (scheduleId: string): string => `schedule:${scheduleId}`;
 
 /** The `ScheduleSummary` of a stored record. */
 export function summarise(record: ScheduleRecord): ScheduleSummary {
@@ -174,7 +174,7 @@ const decodeRecord = (json: string): ScheduleRecord => JSON.parse(json);
 
 /**
  * The pending Schedules of one Thread, stored in its SQLite. The stored row decides what fires. The
- * scheduler job only wakes the Durable Object at `nextAt`.
+ * Alarm only wakes the Durable Object at `nextAt`.
  */
 export class ScheduleStore {
   constructor(private sql: SqlStorage) {

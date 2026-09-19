@@ -1,7 +1,7 @@
 import { and, asc, count, desc, eq, isNull, lte, ne, sql, type SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
-import { ScheduledDurableObject, type ScheduledJob } from "./scheduler";
+import { ScheduledDurableObject, type ScheduledAlarm } from "./scheduler";
 import type { AgentSpec } from "./agent";
 import type { NormalizedAgentSpec } from "./agent-spec";
 import type { KarmiBindings } from "./bindings";
@@ -57,8 +57,8 @@ import { validateAgentSpec, type ValidationResult } from "./validate";
 // holds the config revisions, the Agent Spec versions, the credential rows, the OAuth grants and the
 // lifecycle state. The Scope handle (scope.ts) is the only caller.
 
-/** The id of the single maintenance job a destroy walk re-arms until the Scope is empty. */
-const DESTROY_JOB = "scope-maintenance";
+/** The id of the single maintenance Alarm a destroy walk re-arms until the Scope is empty. */
+const DESTROY_ALARM = "scope-maintenance";
 
 /** The number of versions kept per Agent. A put drops older ones. */
 export const AGENT_HISTORY_DEPTH = 20;
@@ -1152,22 +1152,21 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   // The walk runs on this object's alarm, one batch per firing, and re-arms itself until the Scope is empty.
   private scheduleWalk(scope: ScopeId, operationId: string): void {
     this.scheduler.set({
-      id: DESTROY_JOB,
+      id: DESTROY_ALARM,
       kind: "scope-maintenance",
       dueAt: this.deployment.clock.now(),
       payload: { scope, operationId },
     });
   }
 
-  protected override async runJob(job: ScheduledJob): Promise<void> {
-    if (job.kind !== "scope-maintenance") return super.runJob(job);
-    // This object is the only producer of the payload, so its shape is known once the kind is.
-    const { scope, operationId } = job.payload as { scope: ScopeId; operationId: string };
+  protected override async runAlarm(alarm: ScheduledAlarm): Promise<void> {
+    if (alarm.kind !== "scope-maintenance") return super.runAlarm(alarm);
+    const { scope, operationId } = decodeScopeMaintenanceAlarm(alarm.payload);
     const row = this.destroyOperation(operationId);
     // A late alarm for an operation that has already finished has nothing left to delete.
     if (!row || row.state === "destroyed") return;
     const cursor = await destroyStep(
-      { scope, deployment: this.deployment, bindings: this.env, db: this.db, attempt: job.attempt },
+      { scope, deployment: this.deployment, bindings: this.env, db: this.db, attempt: alarm.attempt },
       decodeCursor(row.cursor),
     );
     const done = cursor.progress.phase === "done";
@@ -1198,4 +1197,17 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       .where(eq(destroyOperations.operationId, operationId))
       .get();
   }
+}
+
+function decodeScopeMaintenanceAlarm(value: unknown): { scope: ScopeId; operationId: string } {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("scope" in value) ||
+    typeof value.scope !== "string" ||
+    !("operationId" in value) ||
+    typeof value.operationId !== "string"
+  )
+    throw new Error("Invalid Scope maintenance Alarm.");
+  return { scope: value.scope, operationId: value.operationId };
 }
