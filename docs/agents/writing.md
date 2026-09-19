@@ -4,6 +4,8 @@ These rules apply to all prose in karmi: docs, READMEs, JSDoc, code comments, is
 
 A prose linter (Vale) checks some of these rules. You must apply all of them, including the rules that the linter does not check.
 
+To run the linter, install [Vale](https://vale.sh/docs/install) and run `pnpm prose:check`. CI fails on errors. The linter also shows warnings for long sentences and the passive voice. Fix a warning when you change the text near it. After you change an `_Avoid_` line in `CONTEXT.md`, run `pnpm prose:terms` to update the term rule.
+
 ## Sentences
 
 - Write at most 20 words in an instruction.
@@ -37,6 +39,8 @@ Define each other technical term in the sentence that first uses it. If the term
 
 Use the simple word:
 
+<!-- vale Karmi.Wordiness = NO -->
+
 | Use   | Do not use                 |
 | ----- | -------------------------- |
 | use   | leverage, utilize          |
@@ -46,11 +50,15 @@ Use the simple word:
 | help  | empower, enable (a person) |
 | about | around (a topic)           |
 
+<!-- vale Karmi.Wordiness = YES -->
+
 The Vale style in `.vale/styles/Karmi/` has the full lists of banned words and replacement words. That style is the single source of truth for the lists. Do not copy the lists into other docs.
 
 ## AI filler
 
 Do not write text that gives the reader no information. These patterns are not permitted:
+
+<!-- vale Karmi.AIFiller = NO -->
 
 - Openers and closers. Examples: "In this guide, we will…", "In summary…", "Happy coding!".
 - Intensifiers and hedges. Examples: "simply", "just", "easily", "very", "powerful", "seamless", "robust", "it's worth noting".
@@ -62,6 +70,8 @@ Do not write text that gives the reader no information. These patterns are not p
 - Bold on phrases in the middle of the text.
 - Emoji.
 - A heading that is a slogan. A heading gives the name of the topic.
+
+<!-- vale Karmi.AIFiller = YES -->
 
 Use the `/unslop` skill on your prose before you commit it.
 

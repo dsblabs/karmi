@@ -1,0 +1,21 @@
+# Long phrases that have a short equivalent. See docs/agents/writing.md.
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: error
+ignorecase: true
+swap:
+  in order to: to
+  due to the fact that: because
+  leverage: use
+  leverages: uses
+  leveraging: using
+  utili[sz]e: use
+  utili[sz]es: uses
+  utili[sz]ing: using
+  kick off: start
+  spin up: start
+  tear down: stop
+  showcase: show
+  showcases: shows
+  empower: help
+  empowers: helps
