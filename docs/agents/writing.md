@@ -77,7 +77,7 @@ Use the `/unslop` skill on your prose before you commit it.
 
 ## Code samples
 
-- Make each sample complete. It must type-check and run as shown, with its imports.
+- Make each sample complete. It must type-check as shown, with its imports. CI type-checks each `ts` block. It does not run them.
 - Import from the public package entry, for example `@karmi/core`. Do not import from internal paths.
 - Show one point in each sample. Keep the sample as short as possible.
 - Do not put `...` gaps in code that the reader will copy.

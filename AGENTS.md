@@ -23,6 +23,27 @@ The formatter, linter and type checker enforce the mechanical rules. Run all thr
 
 Details, including persistence schema, ids and tests: `docs/agents/typescript.md`.
 
+## Docs upkeep
+
+A PR that makes one of these changes must also update the listed docs. A reviewer rejects a PR that does not.
+
+| Change | Docs to update in the same PR |
+|---|---|
+| A public export: its name, signature, options or types | Its JSDoc, the guide page for it and a changeset |
+| Behaviour that a user can see, with no API change | The guide page for it and a changeset |
+| Configuration, bindings, the CLI or `karmi doctor` | The guide page for it, the `create-karmi` template if it uses the change, and a changeset |
+| The `create-karmi` template | The template docs and `docs/guide/01-getting-started.md` |
+| Internals: data flow, invariants or test layout | The `INTERNALS.md` of the package |
+| A domain term | `CONTEXT.md` |
+| A decision that is hard to reverse | A new ADR in `docs/adr/` |
+
+- A changeset tells users what changed. The guide and the JSDoc tell how it works now. One does not replace the other.
+- A change that users cannot see needs an empty changeset. Run `pnpm changeset --empty`.
+- CI checks the mechanical part: prose lint, the API reference build, relative links, code sample types and the changeset.
+- The PR author fixes a failed check in the same PR.
+- Do not add an ignore marker to make a check pass. The only exception is the list of intentionally unexported types in the TypeDoc configuration.
+- If a code sample does not compile on purpose, do not tag it `ts`. Use `text`.
+
 ## Agent skills
 
 ### Issue tracker
