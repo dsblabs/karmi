@@ -1,13 +1,11 @@
 import { asc, eq, sql } from "drizzle-orm";
-import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import { chunks, documents, ingestDocuments, ingestJobs, knowledgeHead, knowledgeSchema } from "./db/knowledge/schema";
+import type { KnowledgeDatabase } from "./db/knowledge/database";
 import { KarmiError } from "./errors";
 import { decodeKnowledgeMetadata, KNOWLEDGE_INLINE_LIMIT, type KnowledgeChunk } from "./knowledge";
 import { ftsQuery } from "./memory";
 import type { KnowledgeDocument, Passage } from "./retriever";
 
-/** The typed database shared by internal Knowledge storage helpers. */
-export type KnowledgeDatabase = DrizzleSqliteDODatabase<typeof knowledgeSchema>;
 type ChunkRow = { doc: string; seq: number; text: string; meta: string; score: number };
 
 /** Owns the corpus ledger and its transactionally maintained FTS5 index. */

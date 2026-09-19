@@ -1,4 +1,4 @@
-import type { KnowledgeDatabase } from "./knowledge-store";
+import type { KnowledgeDatabase } from "./db/knowledge/database";
 import type { RetrieverContext } from "./retriever";
 
 const databases = new WeakMap<RetrieverContext<unknown>, KnowledgeDatabase>();

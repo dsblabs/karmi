@@ -24,6 +24,13 @@ const extensionlessImportSyntax = [
   },
 ];
 
+/** Rejects direct use of a Durable Object's raw SQL execution escape hatch. */
+export const rawSqlExecSyntax = {
+  selector:
+    "CallExpression[callee.type='MemberExpression'][callee.property.name='exec'][callee.object.type='MemberExpression'][callee.object.property.name='sql']",
+  message: "Use the owning db module instead of calling storage.sql.exec directly.",
+};
+
 export const restrictedSyntax = [
   { selector: "Decorator", message: "No decorators in karmi (ADR-0002)." },
   ...extensionlessImportSyntax,
@@ -39,6 +46,7 @@ export const restrictedSyntax = [
     selector: "TSAsExpression > CallExpression.expression[callee.object.name='JSON'][callee.property.name='parse']",
     message: `Don't cast JSON.parse inline. Decode each stored or remote shape in one function. ${see}`,
   },
+  rawSqlExecSyntax,
 ];
 
 export const extensionlessImportPattern = {

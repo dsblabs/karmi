@@ -1,5 +1,8 @@
 import * as z from "zod/mini";
+import { and, asc, eq } from "drizzle-orm";
 import type { ScopeId } from "./context";
+import { openKnowledgeDatabase, type KnowledgeDatabase } from "./db/knowledge/database";
+import { vectorizeIds } from "./db/knowledge/schema";
 import { keys } from "./keys";
 import {
   validateVectorQuery,
@@ -14,29 +17,29 @@ const queryResponseSchema = z.object({ matches: z.array(z.object({ id: z.string(
 
 /** Mirrors vectors into Vectorize, keeping its id mapping in the Knowledge ledger before each write. */
 export class VectorizeStore implements VectorStore {
+  private readonly db: KnowledgeDatabase;
+
   /** The index needs string metadata indexes on knowledge and doc; metric defaults to cosine and must match the index. */
   constructor(
     private readonly index: Vectorize,
-    private readonly sql: SqlStorage,
+    storage: SqlStorage,
     private readonly metric: EmbeddingIndex["metric"] = "cosine",
   ) {
-    sql.exec(`CREATE TABLE IF NOT EXISTS vectorize_ids (
-      ns TEXT NOT NULL, id TEXT NOT NULL, remote_id TEXT NOT NULL, knowledge TEXT NOT NULL,
-      PRIMARY KEY(ns, id), UNIQUE(ns, remote_id)
-    ); CREATE INDEX IF NOT EXISTS vectorize_ids_corpus ON vectorize_ids(ns, knowledge, id);`);
+    this.db = openKnowledgeDatabase(storage);
   }
   async upsert(ns: ScopeId, rows: VectorRow[]): Promise<void> {
     for (let offset = 0; offset < rows.length; offset += 1000) {
       const batch: VectorizeVector[] = [];
       for (const row of rows.slice(offset, offset + 1000)) {
         const id = await keys.vectorMirror(ns, row.id);
-        this.sql.exec(
-          "INSERT OR REPLACE INTO vectorize_ids VALUES (?, ?, ?, ?)",
-          ns,
-          row.id,
-          id,
-          row.metadata.knowledge,
-        );
+        this.db
+          .insert(vectorizeIds)
+          .values({ ns, id: row.id, remoteId: id, knowledge: row.metadata.knowledge })
+          .onConflictDoUpdate({
+            target: [vectorizeIds.ns, vectorizeIds.id],
+            set: { remoteId: id, knowledge: row.metadata.knowledge },
+          })
+          .run();
         batch.push({ id, namespace: ns, values: row.values, metadata: row.metadata });
       }
       await this.index.upsert(batch);
@@ -57,14 +60,17 @@ export class VectorizeStore implements VectorStore {
     );
     const hits: VectorHit[] = [];
     for (const hit of result.matches) {
-      const row = this.sql
-        .exec<{ id: string }>(
-          "SELECT id FROM vectorize_ids WHERE ns = ? AND remote_id = ? AND knowledge = ?",
-          ns,
-          hit.id,
-          options.knowledge,
+      const row = this.db
+        .select({ id: vectorizeIds.id })
+        .from(vectorizeIds)
+        .where(
+          and(
+            eq(vectorizeIds.ns, ns),
+            eq(vectorizeIds.remoteId, hit.id),
+            eq(vectorizeIds.knowledge, options.knowledge),
+          ),
         )
-        .toArray()[0];
+        .get();
       if (row) hits.push({ id: row.id, score: this.metric === "cosine" ? hit.score : -hit.score });
     }
     return hits;
@@ -73,18 +79,22 @@ export class VectorizeStore implements VectorStore {
     for (let offset = 0; offset < ids.length; offset += 1000) {
       const batch = ids.slice(offset, offset + 1000);
       await this.index.deleteByIds(await Promise.all(batch.map((id) => keys.vectorMirror(ns, id))));
-      for (const id of batch) this.sql.exec("DELETE FROM vectorize_ids WHERE ns = ? AND id = ?", ns, id);
+      for (const id of batch)
+        this.db
+          .delete(vectorizeIds)
+          .where(and(eq(vectorizeIds.ns, ns), eq(vectorizeIds.id, id)))
+          .run();
     }
   }
   async deleteAll(ns: ScopeId, knowledge: string): Promise<void> {
     while (true) {
-      const ids = this.sql
-        .exec<{ id: string }>(
-          "SELECT id FROM vectorize_ids WHERE ns = ? AND knowledge = ? ORDER BY id LIMIT 1000",
-          ns,
-          knowledge,
-        )
-        .toArray();
+      const ids = this.db
+        .select({ id: vectorizeIds.id })
+        .from(vectorizeIds)
+        .where(and(eq(vectorizeIds.ns, ns), eq(vectorizeIds.knowledge, knowledge)))
+        .orderBy(asc(vectorizeIds.id))
+        .limit(1000)
+        .all();
       if (!ids.length) return;
       await this.deleteByIds(
         ns,
