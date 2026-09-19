@@ -3,7 +3,18 @@ export default {
   journal: {
     version: "7",
     dialect: "sqlite",
-    entries: [],
+    entries: [
+      {
+        idx: 0,
+        version: "6",
+        when: 1789784085152,
+        tag: "0000_vengeful_gideon",
+        breakpoints: true,
+      },
+    ],
   },
-  migrations: {},
+  migrations: {
+    m0000:
+      "CREATE TABLE `alarms` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`kind` text NOT NULL,\n\t`dueAt` integer NOT NULL,\n\t`payload` text NOT NULL,\n\t`attempt` integer NOT NULL,\n\t`generation` text NOT NULL\n);\n--> statement-breakpoint\nCREATE INDEX `alarms_due` ON `alarms` (`dueAt`,`id`);",
+  },
 };

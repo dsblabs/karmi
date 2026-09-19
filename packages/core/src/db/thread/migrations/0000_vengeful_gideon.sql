@@ -1,4 +1,4 @@
-CREATE TABLE `jobs` (
+CREATE TABLE `alarms` (
 	`id` text PRIMARY KEY NOT NULL,
 	`kind` text NOT NULL,
 	`dueAt` integer NOT NULL,
@@ -7,4 +7,4 @@ CREATE TABLE `jobs` (
 	`generation` text NOT NULL
 );
 --> statement-breakpoint
-CREATE INDEX `jobs_due` ON `jobs` (`dueAt`,`id`);
+CREATE INDEX `alarms_due` ON `alarms` (`dueAt`,`id`);

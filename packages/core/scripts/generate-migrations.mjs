@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const databases = ["scheduler", "thread", "scope-config", "knowledge", "memory"];
+const databases = ["thread", "scope-config", "knowledge", "memory"];
 const packageRoot = resolve(import.meta.dirname, "..");
 
 const decodeJournal = (value, database) => {

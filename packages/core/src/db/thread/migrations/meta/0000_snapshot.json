@@ -1,11 +1,11 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d4cf61b6-b41e-4716-b38f-bb1ecf7fb855",
+  "id": "e19dd844-1aa8-4e26-987c-7b834e2456ae",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
-    "jobs": {
-      "name": "jobs",
+    "alarms": {
+      "name": "alarms",
       "columns": {
         "id": {
           "name": "id",
@@ -51,8 +51,8 @@
         }
       },
       "indexes": {
-        "jobs_due": {
-          "name": "jobs_due",
+        "alarms_due": {
+          "name": "alarms_due",
           "columns": [
             "dueAt",
             "id"
