@@ -1,6 +1,6 @@
 # Writing rules
 
-These rules apply to all prose in karmi: docs, READMEs, JSDoc, code comments, issue answers and changeset text. They are based on ASD-STE100 Simplified Technical English (STE). We use the STE writing rules. We do not use the STE dictionary, and we do not claim STE compliance. Rules that apply only to code comments are in `docs/agents/comments.md`.
+These rules apply to all prose in karmi: docs, READMEs, JSDoc, code comments, issue answers and changeset text. Their source is ASD-STE100 Simplified Technical English (STE). We use the STE writing rules. We do not use the STE dictionary, and we do not claim STE compliance. Rules that apply only to code comments are in `docs/agents/comments.md`.
 
 A prose linter (Vale) checks some of these rules. You must apply all of them, including the rules that the linter does not check.
 
