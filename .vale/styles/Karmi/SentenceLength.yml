@@ -1,0 +1,7 @@
+# Copied from the Microsoft Vale style (MIT, see LICENSE-Microsoft) and changed from 30 to 25 words.
+extends: occurrence
+message: "Write at most 25 words in a sentence."
+scope: sentence
+level: warning
+max: 25
+token: \b(\w+)\b

@@ -20,3 +20,16 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm test
+
+  prose:
+    runs-on: ubuntu-latest
+    env:
+      VALE_VERSION: 3.22.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - name: Install Vale
+        run: |
+          curl -sSfL "https://github.com/vale-cli/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" | tar -xz -C "$RUNNER_TEMP" vale
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - run: pnpm prose:check

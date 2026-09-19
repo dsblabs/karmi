@@ -1,0 +1,31 @@
+# Words and phrases that give the reader no information. See docs/agents/writing.md.
+extends: existence
+message: "Remove the filler '%s'. Tell the fact in plain words."
+level: error
+ignorecase: true
+tokens:
+  - additionally
+  - crucial
+  - delve
+  - delves
+  - enhance
+  - enhances
+  - fostering
+  - interplay
+  - intricate
+  - pivotal
+  - seamless
+  - seamlessly
+  - robust
+  - tapestry
+  - testament
+  - simply
+  - easily
+  - effortless(?:ly)?
+  - it's worth noting
+  - it is worth noting
+  - it is important to note
+  - in summary
+  - in conclusion
+  - happy coding
+  - in this guide,? we will

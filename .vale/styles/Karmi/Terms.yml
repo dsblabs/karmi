@@ -1,0 +1,68 @@
+# Generated from the _Avoid_ lines in CONTEXT.md by scripts/vale-terms.mjs. Do not edit.
+# Run `pnpm prose:terms` after a change to CONTEXT.md.
+extends: substitution
+message: "Use the karmi term '%s' instead of '%s'."
+level: error
+ignorecase: true
+swap:
+  'activation event': Load point
+  'agent runner': Harness
+  'api key': Provider credential
+  'api-key config': Provider profile
+  'async tool': Job
+  'background task': Job
+  'bash tool': Script
+  'billing event': Usage record
+  'billing hook': UsageHandler
+  'built-in tool': Provider Tool
+  'byok key': Provider credential
+  'cleanup job': Destroy walk
+  'code execution': Script
+  'context provider': Fragment
+  'context reset': Compaction
+  'credential value': Sensitive value
+  'cron job': Schedule
+  'definition file': Agent Spec
+  'deleted flag': Tombstone
+  'discovery cache': Catalogue cache
+  'dynamic tools': Deferred Tool
+  'end user': User
+  'fake timers': Clock
+  'feature flag': Capability
+  'file handle': MediaRef
+  'function calling': Script
+  'garbage collection': Destroy walk
+  'hidden tool': Deferred Tool
+  'hitl request': Approval
+  'hosted tool': Provider Tool
+  'key store': Secrets provider
+  'knowledge base': Knowledge
+  'lazy tool': Deferred Tool
+  'long-term memory': Memory
+  'mcp connection': MCP server
+  'native tool': Provider Tool
+  'notification service': Deliverer
+  'oauth app': Client identity
+  'outbound worker': Scoped fetch
+  'permission prompt': Approval
+  'permission rules': Permission Policy
+  'persistent volume': Workspace
+  'prompt section': Prompt entry
+  'provider config': Provider credential
+  'scheduled job': Alarm
+  'scope escalation': Step-up
+  'secret string': Sensitive value
+  'server tool': Provider Tool
+  'session filesystem': Workspace
+  'slash command': Skill
+  'soft delete': Tombstone
+  'stream chunk': Thread event
+  'test harness': Test kit
+  'test utils': Test kit
+  'tool cache': Catalogue cache
+  'tool load': Load point
+  'usage callback': UsageHandler
+  'usage log': Usage record
+  'user data': Memory
+  'virtual filesystem': Workspace
+  'workflow step': Step

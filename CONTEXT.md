@@ -93,7 +93,7 @@ The principal an Agent is acting for or with — the person chatting, or the per
 _Avoid_: end user, customer, principal, account
 
 **Thread**:
-One durable conversation between one Agent and one User, keyed (Scope, Agent, User, threadId); User may be absent for user-less Events. Driven by Turn inputs — User messages or Events. Holds the transcript and can be resumed or forked. A Thread opened by Delegation is a child of the delegating Thread, acting for the same User. Whether a User gets one Thread or many with an Agent is decided by the Channel binding, not by the Agent. A User's chat history with an Agent is simply their Threads with it.
+One durable conversation between one Agent and one User, keyed (Scope, Agent, User, threadId); User may be absent for user-less Events. Driven by Turn inputs — User messages or Events. Holds the transcript and can be resumed or forked. A Thread opened by Delegation is a child of the delegating Thread, acting for the same User. Whether a User gets one Thread or many with an Agent is decided by the Channel binding, not by the Agent. A User's chat history with an Agent is their Threads with it.
 _Avoid_: session, conversation, chat, channel
 
 **Turn**:
