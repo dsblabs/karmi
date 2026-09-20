@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - packages/create-karmi/template
+  - examples/*
 allowBuilds:
   esbuild: true
   workerd: true

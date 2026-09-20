@@ -63,6 +63,10 @@ pnpm typecheck && pnpm test
 
 [Getting started](./docs/guide/01-getting-started.md) describes the project files and the deploy.
 
+## Playground
+
+The [Playground](./examples/playground) is an example webapp in this repository. It shows the Framework through guided scenarios in a browser. It runs locally with your own Provider credential and needs no Cloudflare login.
+
 ## Packages
 
 | Package                                                    | Contents                                                      | Internals                                                   |
