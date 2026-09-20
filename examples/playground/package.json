@@ -1,0 +1,35 @@
+{
+  "name": "karmi-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "node --experimental-strip-types setup/cli.ts",
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^4.0.67",
+    "@ai-sdk/openai": "^4.0.65",
+    "@ai-sdk/openai-compatible": "^3.0.47",
+    "@karmi/ai-sdk": "workspace:*",
+    "@karmi/anthropic": "workspace:*",
+    "@karmi/core": "workspace:*",
+    "@karmi/http": "workspace:*",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.4",
+    "@cloudflare/workers-types": "^5.20260904.1",
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^22.10.2",
+    "eslint": "^10.9.1",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.129.0"
+  }
+}

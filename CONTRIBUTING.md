@@ -70,3 +70,4 @@ All `@karmi/*` packages and `create-karmi` get the same version number. The rule
 | [`packages/core/INTERNALS.md`](./packages/core/INTERNALS.md)                           | The internals of `@karmi/core`.                                    |
 | [`packages/http/INTERNALS.md`](./packages/http/INTERNALS.md)                           | The internals of `@karmi/http`.                                    |
 | [`packages/sandbox-container/INTERNALS.md`](./packages/sandbox-container/INTERNALS.md) | The internals of `@karmi/sandbox-container`.                       |
+| [`examples/playground/`](./examples/playground)                                        | The Playground, the example webapp.                                |

@@ -18,7 +18,7 @@
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,mts,js}\"",
     "format:check": "prettier --check \"**/*.{ts,mts,js}\"",
-    "prose:check": "node scripts/vale-terms.mjs --check && vale --minAlertLevel=error README.md AGENTS.md CONTRIBUTING.md CONTEXT.md docs/agents docs/guide packages/*/README.md packages/*/INTERNALS.md packages/create-karmi/template .changeset",
+    "prose:check": "node scripts/vale-terms.mjs --check && vale --minAlertLevel=error README.md AGENTS.md CONTRIBUTING.md CONTEXT.md docs/agents docs/guide packages/*/README.md packages/*/INTERNALS.md examples/*/README.md packages/create-karmi/template .changeset",
     "prose:terms": "node scripts/vale-terms.mjs",
     "test": "turbo run test",
     "changeset": "changeset",
