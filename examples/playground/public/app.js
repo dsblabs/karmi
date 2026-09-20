@@ -202,14 +202,26 @@ const describeMatch = ({ tool, annotations }) =>
     .join(" and ") || "each Tool";
 
 function stockCards({ stock, tools, policy }) {
-  const list = (title, lines, empty) =>
+  // A line is a name and optional detail. The detail shows as code, because it is data of the Framework.
+  const lines = (tag, items, empty) =>
+    items.length > 0
+      ? el(
+          tag,
+          {},
+          ...items.map(([name, detail]) =>
+            el("li", {}, name, detail && " ", detail && el("code", { textContent: detail })),
+          ),
+        )
+      : el("p", { className: "muted", textContent: empty });
+  const list = (title, items, empty) =>
+    el("div", { className: "card" }, el("h3", { textContent: title }), lines("ul", items, empty));
+  // Reference data stays closed until the operator asks for it.
+  const reference = (title, items, empty) =>
     el(
-      "div",
+      "details",
       { className: "card" },
-      el("h3", { textContent: title }),
-      lines.length > 0
-        ? el("ul", {}, ...lines.map((text) => el("li", { textContent: text })))
-        : el("p", { className: "muted", textContent: empty }),
+      el("summary", { textContent: `${title} (${items.length})` }),
+      lines("ul", items, empty),
     );
   return [
     el(
@@ -228,32 +240,34 @@ function stockCards({ stock, tools, policy }) {
     ),
     list(
       "Supplier orders",
-      stock.supplierOrders.map((order) => `${order.quantity} × ${order.sku}`),
+      stock.supplierOrders.map((order) => [`${order.quantity} × ${order.sku}`]),
       "The restock Skill made no order yet.",
     ),
     el(
       "div",
       { className: "card", id: "audit" },
       el("h3", { textContent: "Audit log of the Hook" }),
-      stock.audit.length > 0
-        ? el("ol", {}, ...stock.audit.map((text) => el("li", { textContent: text })))
-        : el("p", { className: "muted", textContent: "The stock_audit Hook wrote no line yet." }),
+      lines(
+        "ol",
+        stock.audit.map((text) => [undefined, text]),
+        "The stock_audit Hook wrote no line yet.",
+      ),
     ),
-    list(
+    reference(
       "Permission Policy",
-      policy.map((rule) => `${rule.effect}: ${describeMatch(rule.match)}`),
+      policy.map((rule) => [`${rule.effect}:`, describeMatch(rule.match)]),
       "The Agent has no rule.",
     ),
-    list(
+    reference(
       "Tool annotations",
-      tools.map((tool) => `${tool.name}: ${JSON.stringify(tool.annotations)}`),
+      tools.map((tool) => [tool.name, JSON.stringify(tool.annotations)]),
       "The Agent has no Tool.",
     ),
   ];
 }
 
 function specCards({ agent, prompt, presets, ceilings }, onSaved) {
-  const editor = el("textarea", { id: "spec", ariaLabel: "Agent Spec", spellcheck: false });
+  const editor = el("textarea", { id: "spec", className: "editor", ariaLabel: "Agent Spec", spellcheck: false });
   editor.value = JSON.stringify(agent.spec, null, 2);
   const result = el("p", { id: "spec-result", className: "fine" });
   const save = el("button", { id: "save-spec", className: "primary", textContent: "Save the Spec" });
@@ -294,7 +308,7 @@ function specCards({ agent, prompt, presets, ceilings }, onSaved) {
       el("h3", { textContent: "What the Prompt entries give now" }),
       ...prompt.flatMap((entry) => [
         el("h4", { textContent: entry.source }),
-        el("pre", { className: "open", textContent: entry.text ?? "The page cannot show this entry." }),
+        el("pre", { textContent: entry.text ?? "The page cannot show this entry." }),
       ]),
       el("p", { className: "fine", textContent: "The Harness makes the Prompt again at the start of each Turn." }),
     ),
@@ -304,7 +318,7 @@ function specCards({ agent, prompt, presets, ceilings }, onSaved) {
       el("h3", { textContent: `Agent Spec, version ${agent.version}` }),
       el(
         "div",
-        { className: "row presets" },
+        { className: "chips" },
         ...presets.map((preset) =>
           el("button", {
             textContent: preset.label,
@@ -362,7 +376,7 @@ async function renderScenario(scenario) {
           scenario.prompts.length > 1 &&
             el(
               "div",
-              { className: "row presets" },
+              { className: "chips" },
               ...scenario.prompts.map((item) =>
                 el("button", { textContent: item.label, onclick: () => (prompt.value = item.text) }),
               ),

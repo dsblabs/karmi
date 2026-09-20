@@ -46,6 +46,14 @@ A PR that makes one of these changes must also update the listed docs. A reviewe
 - Do not add an ignore marker to make a check pass. The only exception is the list of intentionally unexported types in the TypeDoc configuration.
 - If a code sample does not compile on purpose, do not tag it `ts`. Use `text`.
 
+## Rules for one area
+
+Some areas have their own rules. Read the file before you change the area. Do not read it for other work.
+
+| Area | Rules |
+|---|---|
+| `examples/playground`, which includes the Playground UI | `examples/playground/AGENTS.md` |
+
 ## Agent skills
 
 ### Issue tracker

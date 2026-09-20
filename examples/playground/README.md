@@ -93,7 +93,7 @@ The scenario needs no model feature other than text. The example code is in [`sr
 
 The `after-tool` Hook `stock_audit` writes one line to **Audit log of the Hook** for each Tool call.
 
-The **Permission Policy** card shows the rules of the Agent, and the **Tool annotations** card shows the hints of each Tool. One rule allows each Tool that has `readOnlyHint`. That rule allows `check_stock`, which no rule names.
+The **Permission Policy** card shows the rules of the Agent, and the **Tool annotations** card shows the hints of each Tool. The two cards are closed at first. Select a card to open it. One rule allows each Tool that has `readOnlyHint`. That rule allows `check_stock`, which no rule names.
 
 The scenario needs a model that supports Tool calls. A small model can call `adjust_stock` before it loads the Tool. The call then gets an error result that tells the model to use `tool_search`. The example code is in [`src/stockroom.ts`](./src/stockroom.ts).
 
@@ -163,6 +163,8 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 | Command             | What it checks                                                                               |
 | ------------------- | -------------------------------------------------------------------------------------------- |
 | `pnpm test`         | The public HTTP routes of the Worker in workerd, with the scripted Provider of the Test kit. |
-| `pnpm test:browser` | Each scenario, token access and reset in a browser, with a scripted Provider.                |
+| `pnpm test:browser` | Each scenario, token access, reset and the layout at three screen sizes, in a browser.       |
 
 Before the first browser check, run `pnpm exec playwright install chromium`. No test needs a credential.
+
+The rules for a change to the page are in [`docs/ui.md`](./docs/ui.md).
