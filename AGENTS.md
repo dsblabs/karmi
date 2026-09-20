@@ -1,5 +1,7 @@
 # AGENTS.md
 
+This file has the principles and rules. The setup, the check commands and the pull request workflow are in [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+
 ## Core principles
 
 - The goal is a working serverless agentic harness + framework, shipped as fast as possible. It is not a demonstration of what we can build ourselves. Use existing harnesses, products, and frameworks wherever they fit.
