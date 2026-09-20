@@ -16,6 +16,7 @@ swap:
   'billing hook': UsageHandler
   'built-in tool': Provider Tool
   'byok key': Provider credential
+  'channel integration': Deliverer
   'cleanup job': Destroy walk
   'code execution': Script
   'context provider': Fragment

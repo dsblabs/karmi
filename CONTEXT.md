@@ -40,8 +40,8 @@ A Channel is an external surface through which a person or an event reaches a se
 _Avoid_: integration, connector, frontend
 
 **Deliverer**:
-A Deliverer is a named Catalogue callback for the offline output of a Channel. The Thread keeps `channelRef.deliverer { name, ref }`. When no Subscriber is attached, completion and Approval events reach the callback through the Queue. Delivery is at least once, at the event granularity that the Deliverer selects.
-_Avoid_: notification service, Channel integration (for the Framework callback)
+A Deliverer is a Catalogue item. It is code with a name. It pushes the output of a Thread to a Channel when no Subscriber is attached. The last Turn input selects it for the Thread with `channelRef.deliverer { name, ref }`. The Queue invokes it at least once with completion and Approval Events, at the granularity that the Deliverer selects.
+_Avoid_: webhook, callback, notifier, sender, notification service, Channel integration
 
 **Capability**:
 A Capability is a gated ability that an Agent Spec can grant to an Agent. These are examples:
@@ -410,10 +410,6 @@ _Avoid_: lazy tool, hidden tool, tool search (for the Tool itself), dynamic tool
 **Load point**:
 A Load point is a `tools.loaded` event in the Thread log. After that event, the Deferred Tools that it names, or the Skill that it activates, are in the model context. They stay there until a Compaction cuts the log before the event. The loaded set of a Turn is the union of every Load point after the last Compaction.
 _Avoid_: activation event, tool load
-
-**Deliverer**:
-A Deliverer is a Catalogue item. It is code with a name. It pushes the output of a Thread to a Channel when no Subscriber is attached. The Framework selects it for each Thread from the last inbound input. A Queue invokes it at least once.
-_Avoid_: webhook, callback, notifier, sender
 
 **Delegation**:
 Delegation is the act in which one Agent gives a task to a second Agent in the same Scope and receives its result. The Agent Spec of the parent lists by name the Agents to which it can delegate. It cannot reach an Agent that the list does not have. The child runs under its own Agent Spec, in its own Thread, with new context and the User of the parent. The parent receives only the final reply of the child. A Capability gates Delegation. There is no "sub-agent" kind. There are only Agents and the act of Delegation.
