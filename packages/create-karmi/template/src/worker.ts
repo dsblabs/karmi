@@ -9,7 +9,7 @@ const karmi = createKarmi({
   catalogue,
   providers: { anthropic: anthropic() },
   // Every Scope inherits this layer and may only tighten it. The credential is a name, never a value:
-  // store it with `scope.credentials.put({ name: "anthropic", value })`.
+  // store it with `scope.credentials.put("anthropic", value)`.
   defaults: {
     providers: { default: { adapter: "anthropic", models: ["anthropic/*"], credential: "scope:anthropic" } },
   },
