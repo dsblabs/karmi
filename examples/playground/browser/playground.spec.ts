@@ -94,9 +94,9 @@ test("a saved Agent Spec changes the next Turn, and the Scope ceiling rejects a 
 
   await page.getByRole("button", { name: "Change the instructions" }).click();
   await page.getByRole("button", { name: "Save the Spec" }).click();
-  await expect(page.locator("#spec-result")).toContainText("The Scope stored version");
+  await expect(page.locator("#saved")).toContainText("The Scope stored version");
+  await expect(page.locator("#steps")).toBeEmpty();
   await expect(page.locator("#prompt-preview")).toContainText("pirate");
-  await page.getByLabel("Prompt").fill("And now?");
   await page.getByRole("button", { name: "Run" }).click();
   await expect(page.locator("#steps")).toContainText("Arr, ye have 30 days.");
 

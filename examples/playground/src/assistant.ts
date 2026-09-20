@@ -42,6 +42,8 @@ export const SCOPE_CONFIG: ScopeConfigDocument = { ceilings: { scheduling: { max
 
 /** A Spec change that the page offers as one button. */
 export interface SpecPreset {
+  /** The stable name of the preset. */
+  id: "instructions" | "fragment" | "inside-ceiling" | "above-ceiling";
   label: string;
   /** What the operator sees after the change. */
   expect: string;
@@ -53,21 +55,25 @@ export const presets = (model: string): SpecPreset[] => {
   const start = startingSpec(model);
   return [
     {
+      id: "instructions",
       label: "Change the instructions",
       expect: "The next Turn answers as a pirate. No deploy is necessary.",
       spec: { ...start, instructions: [role("Answer each message as a pirate."), policy(30)] },
     },
     {
+      id: "fragment",
       label: "Change the Fragment arguments",
       expect: "The Prompt and the answer use a return time of 7 days.",
       spec: { ...start, instructions: [role("You are the assistant of a small coffee equipment shop."), policy(7)] },
     },
     {
+      id: "inside-ceiling",
       label: "Grant in the ceiling",
       expect: "The Scope stores the Spec. The Agent gets the Schedule Tools.",
       spec: { ...start, capabilities: { scheduling: { maxPending: 2 } } },
     },
     {
+      id: "above-ceiling",
       label: "Grant more than the ceiling",
       expect: "The Scope rejects the Spec with capability.over-ceiling and keeps the stored version.",
       spec: { ...start, capabilities: { scheduling: { maxPending: 50 } } },

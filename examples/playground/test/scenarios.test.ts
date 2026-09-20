@@ -1,32 +1,20 @@
 import type { ThreadEvent } from "@karmi/core";
+import { z } from "zod";
 import { reply } from "@karmi/core/testing";
-import { SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { presets, startingSpec } from "../src/assistant";
 import { STARTING_STOCK, stockSchema } from "../src/stockroom";
+import { api as request, events } from "./client";
 import { provider } from "./worker";
 import { TOKEN } from "./worker-options";
 
-const BASE = "https://playground.test";
+const api = (method: string, path: string, body?: unknown) => request(TOKEN, method, path, body);
 
-function api(method: string, path: string, body?: unknown): Promise<Response> {
-  return SELF.fetch(`${BASE}${path}`, {
-    method,
-    headers: { authorization: `Bearer ${TOKEN}`, ...(body !== undefined && { "content-type": "application/json" }) },
-    ...(body !== undefined && { body: JSON.stringify(body) }),
-  });
-}
+const stateSchema = z.looseObject({ threadKey: z.string(), agent: z.looseObject({ version: z.number() }).optional() });
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
-// The test reads the JSON of a scenario state through one function.
-async function state(id: string): Promise<Record<string, unknown> & { threadKey: string }> {
-  const value: unknown = await (await api("GET", `/api/scenarios/${id}`)).json();
-  if (!isRecord(value) || typeof value.threadKey !== "string") throw new Error("Not a scenario state.");
-  return { ...value, threadKey: value.threadKey };
-}
+/** Decodes the JSON of a scenario state. Each other field stays as the Worker sent it. */
+const decodeState = (value: unknown) => stateSchema.parse(value);
+const state = async (id: string) => decodeState(await (await api("GET", `/api/scenarios/${id}`)).json());
 
 /** Sends one prompt through the public routes and returns the event log after the Turn completes. */
 async function run(id: string, text: string): Promise<ThreadEvent[]> {
@@ -40,14 +28,9 @@ async function run(id: string, text: string): Promise<ThreadEvent[]> {
   return log;
 }
 
-async function events(key: string): Promise<ThreadEvent[]> {
-  const value: unknown = await (await api("GET", `/threads/${key}/events`)).json();
-  if (!Array.isArray(value)) throw new Error("Not an event list.");
-  return value as ThreadEvent[];
-}
-
 const stock = async () => stockSchema.parse((await state("stockroom")).stock);
-const putSpec = async (spec: unknown) => (await api("PUT", "/api/scenarios/agents/spec", spec)).json();
+const putSpec = (spec: unknown) => api("PUT", "/api/scenarios/agents/spec", spec);
+const preset = (id: string) => presets("fake/model").find((item) => item.id === id)?.spec;
 
 describe("the Agent Spec scenario", () => {
   beforeEach(async () => {
@@ -61,41 +44,62 @@ describe("the Agent Spec scenario", () => {
     });
   });
 
-  it("uses a changed Spec in the next Turn with no deploy", async () => {
+  it("uses a changed Spec in a new Thread with no deploy", async () => {
     provider.script(["Hello.", "Arr."]);
     await run("agents", "Can I return a kettle?");
     expect(provider.requests.at(-1)?.system).toContain("for 30 days");
 
-    const [instructions, fragment] = presets("fake/model");
-    expect(await putSpec(fragment?.spec)).toMatchObject({ ok: true });
-    expect(await putSpec(instructions?.spec)).toMatchObject({ ok: true, version: expect.any(Number) });
-    expect(await state("agents")).toMatchObject({ prompt: [{ text: expect.stringContaining("pirate") }, {}] });
+    const before = await state("agents");
+    const saved = await putSpec(preset("instructions"));
+    expect(saved.status).toBe(200);
+    const after = decodeState(await saved.json());
+    expect(after.agent?.version).toBeGreaterThan(before.agent?.version ?? 0);
+    expect(after.threadKey).not.toBe(before.threadKey);
+    expect(after).toMatchObject({ prompt: [{ text: expect.stringContaining("pirate") }, {}] });
     await run("agents", "Can I return a kettle?");
     expect(provider.requests.at(-1)?.system).toContain("as a pirate");
+    expect(provider.requests.at(-1)?.messages.filter((message) => message.role === "user")).toHaveLength(1);
+  });
+
+  it("renders the Fragment with the arguments of the stored Spec", async () => {
+    expect((await putSpec(preset("fragment"))).status).toBe(200);
+    provider.script(["Seven days."]);
+    await run("agents", "Can I return a kettle?");
+    expect(provider.requests.at(-1)?.system).toContain("for 7 days");
   });
 
   it("stores a Capability grant in the Scope ceiling and rejects one above it", async () => {
-    const [, , inside, above] = presets("fake/model");
-    expect(await putSpec(inside?.spec)).toMatchObject({ ok: true });
-    const { version } = (await state("agents")).agent as { version: number };
-    expect(await putSpec(above?.spec)).toMatchObject({
-      ok: false,
-      issues: [
-        expect.objectContaining({ code: "capability.over-ceiling", path: "/capabilities/scheduling/maxPending" }),
-      ],
+    expect((await putSpec(preset("inside-ceiling"))).status).toBe(200);
+    const stored = (await state("agents")).agent?.version;
+    const rejected = await putSpec(preset("above-ceiling"));
+    expect(rejected.status).toBe(422);
+    expect(await rejected.json()).toMatchObject({
+      error: {
+        code: "agent.spec.invalid",
+        issues: [
+          expect.objectContaining({ code: "capability.over-ceiling", path: "/capabilities/scheduling/maxPending" }),
+        ],
+      },
     });
     expect(await state("agents")).toMatchObject({
-      agent: { version, spec: { capabilities: { scheduling: { maxPending: 2 } } } },
+      agent: { version: stored, spec: { capabilities: { scheduling: { maxPending: 2 } } } },
     });
   });
 
-  it("answers a body that is not an Agent Spec with the issues", async () => {
-    expect(await putSpec({ agentId: "shop-assistant" })).toMatchObject({ ok: false, issues: expect.any(Array) });
+  it("answers a Spec that is not valid with the issues", async () => {
+    const answer = await putSpec({ agentId: "shop-assistant" });
+    expect(answer.status).toBe(422);
+    expect(await answer.json()).toMatchObject({ error: { issues: expect.any(Array) } });
+  });
+
+  it("refuses a Spec for the Agent of a different scenario", async () => {
+    expect((await putSpec({ ...preset("instructions"), agentId: "refund" })).status).toBe(400);
+    expect((await api("PUT", "/api/scenarios/agents/spec")).status).toBe(400);
   });
 
   it("restores the starting Spec and starts a new Thread on reset", async () => {
     const before = await state("agents");
-    await putSpec(presets("fake/model")[0]?.spec);
+    await putSpec(preset("instructions"));
     const after: unknown = await (await api("POST", "/api/scenarios/agents/reset")).json();
     expect(after).toMatchObject({ agent: { spec: { instructions: startingSpec("fake/model").instructions } } });
     expect(after).not.toMatchObject({ threadKey: before.threadKey });
@@ -158,8 +162,14 @@ describe("the Tools scenario", () => {
     provider.script([[reply.toolCall("delete_product", { sku: "KET-02" }, "c1")], "I cannot delete it."]);
     const log = await run("stockroom", "Delete the kettle.");
     expect(log).toContainEvent({ type: "tool.result", id: "c1", isError: true });
+    // The model gets no definition of a denied Tool, deferred or not.
+    expect(provider.requests.at(-1)?.tools?.map((tool) => tool.name)).not.toContain("delete_product");
+    expect(provider.requests.at(-1)?.system).not.toContain("delete_product");
     expect((await stock()).products).toEqual(STARTING_STOCK.products);
-    expect(await state("stockroom")).toMatchObject({ policy: [{ effect: "deny" }, { effect: "allow" }] });
+    expect(await state("stockroom")).toMatchObject({
+      policy: [{ effect: "deny" }, { match: { annotations: { readOnlyHint: true } }, effect: "allow" }, {}],
+      tools: [{ name: "check_stock", annotations: { readOnlyHint: true } }, {}, {}],
+    });
   });
 
   it("does not change the refund scenario on reset", async () => {

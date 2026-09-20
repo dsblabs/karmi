@@ -48,12 +48,13 @@ export function decodeStock(data: string | undefined): Stock {
   }
 }
 
-const system = (scope: string) => sampleData(env.PLAYGROUND_DATA, scope, STOCKROOM);
+const stockSystem = (scope: string) => sampleData(env.PLAYGROUND_DATA, scope, STOCKROOM);
+const readStock = async (scope: string) => decodeStock((await stockSystem(scope).read()).data);
 
 // A change is one read and one write. The scenario runs one Tool call at a time, so no change is lost.
 async function change(scope: string, update: (stock: Stock) => Stock): Promise<void> {
-  const stub = system(scope);
-  await stub.write(JSON.stringify(update(decodeStock((await stub.read()).data))));
+  const stub = stockSystem(scope);
+  await stub.write(JSON.stringify(update(await readStock(scope))));
 }
 
 const sku = z.string().describe("The product code, for example MUG-01");
@@ -65,7 +66,7 @@ export const checkStock = defineTool({
   input: z.object({ sku }),
   annotations: { readOnlyHint: true },
   async execute(input, { scope }) {
-    const product = decodeStock((await system(scope).read()).data).products.find((item) => item.sku === input.sku);
+    const product = (await readStock(scope)).products.find((item) => item.sku === input.sku);
     if (!product) return errorResult(`There is no product ${input.sku}.`);
     // The model reads the text. A program reads `structuredContent`.
     return {
@@ -83,15 +84,18 @@ export const adjustStock = defineTool({
   input: z.object({ sku, change: z.number().int().min(-100).max(100).describe("Units to add. Negative removes.") }),
   annotations: { destructiveHint: false },
   async execute(input, { scope }) {
-    const stock = decodeStock((await system(scope).read()).data);
+    const stock = await readStock(scope);
     const product = stock.products.find((item) => item.sku === input.sku);
     if (!product) return errorResult(`There is no product ${input.sku}.`);
     const next = product.stock + input.change;
     if (next < 0) return errorResult(`${input.sku} has only ${product.stock} units.`);
-    await change(scope, (now) => ({
-      ...now,
-      products: now.products.map((item) => (item.sku === input.sku ? { ...item, stock: next } : item)),
-    }));
+    // The write uses the state that the checks read, thus a stale value cannot go in with a fresh one.
+    await stockSystem(scope).write(
+      JSON.stringify({
+        ...stock,
+        products: stock.products.map((item) => (item.sku === input.sku ? { ...item, stock: next } : item)),
+      } satisfies Stock),
+    );
     return {
       content: [{ type: "text", text: `${input.sku} now has ${next} units.` }],
       structuredContent: { sku: input.sku, stock: next },
@@ -158,10 +162,12 @@ export const stockroomAgent = (model: string) =>
     hooks: { "after-tool": ["stock_audit"] },
     // `always` defers each Tool that has no `alwaysLoad`, also when the definitions are small.
     context: { tools: { defer: "always" } },
+    // Rules are tried in order and the first match decides. One rule matches an annotation, the others match names.
     policy: [
       { match: { tool: ["delete_product"] }, effect: "deny" },
+      { match: { annotations: { readOnlyHint: true } }, effect: "allow" },
       {
-        match: { tool: ["check_stock", "adjust_stock", "order_supplier", "tool_search", "use_skill"] },
+        match: { tool: ["adjust_stock", "order_supplier", "tool_search", "use_skill"] },
         effect: "allow",
       },
     ],

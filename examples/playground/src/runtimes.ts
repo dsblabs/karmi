@@ -1,7 +1,7 @@
 import type { Scope } from "@karmi/core";
 import { AGENTS, ASSISTANT, presets, SCOPE_CONFIG, shopPolicy, shopPolicyArgs, startingSpec } from "./assistant";
 import { decodeOrder, REFUND } from "./refund";
-import { decodeStock, STOCKROOM, stockroomAgent } from "./stockroom";
+import { adjustStock, checkStock, decodeStock, deleteProduct, STOCKROOM, stockroomAgent } from "./stockroom";
 
 /** The sample Scope that the scenarios run in. */
 export const SCOPE = "sample-a";
@@ -10,11 +10,13 @@ export const USER = "operator";
 
 /** The server side of one scenario: its Agent and what the page shows next to the conversation. */
 export interface Runtime {
+  /** The id of the Agent that the Thread of the scenario runs. */
   agent: string;
   /** Makes what must exist before the Thread of the scenario can exist. */
   prepare?(): Promise<void>;
   /** Runs after the reset of the Thread and the sample data. */
   restore?(): Promise<void>;
+  /** Returns what the page shows next to the conversation. `data` is the stored sample data of the scenario. */
   view(data: string | undefined): Promise<Record<string, unknown>> | Record<string, unknown>;
 }
 
@@ -32,7 +34,11 @@ export function scenarioRuntimes(scope: () => Scope, model: string): Record<stri
     [REFUND]: { agent: REFUND, view: (stored) => ({ order: decodeOrder(stored) }) },
     [STOCKROOM]: {
       agent: STOCKROOM,
-      view: (stored) => ({ stock: decodeStock(stored), policy: stockroomAgent(model).spec.policy }),
+      view: (stored) => ({
+        stock: decodeStock(stored),
+        tools: [checkStock, adjustStock, deleteProduct].map(({ name, annotations }) => ({ name, annotations })),
+        policy: stockroomAgent(model).spec.policy,
+      }),
     },
     [AGENTS]: {
       agent: ASSISTANT,

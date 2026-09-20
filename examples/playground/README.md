@@ -71,12 +71,12 @@ Do these steps:
 
 1. Read **What the Prompt entries give now**. It shows the text of each Prompt entry. The Fragment text comes from the same function that the Harness calls at the start of each Turn.
 2. Select **Run**. The Agent answers with the return time of 30 days.
-3. Select **Change the instructions** or **Change the Fragment arguments**, then **Save the Spec**. The Scope stores a new version. You do not deploy or start the Worker again.
-4. Select **Run** again. The new Turn uses the new version.
+3. Select **Change the instructions** or **Change the Fragment arguments**, then **Save the Spec**. The Scope stores a new version, and the page starts a new Thread. You do not deploy or start the Worker again.
+4. Select **Run** again. The new Thread uses the new version, and earlier answers cannot change the result.
 5. Select **Grant in the ceiling**, then **Save the Spec**. The Scope config has the ceiling `scheduling.maxPending: 2`, and the grant is not larger.
 6. Select **Grant more than the ceiling**, then **Save the Spec**. The Scope rejects the Spec with the issue `capability.over-ceiling` and keeps the stored version.
 
-You can also edit the JSON. A Spec that is not valid shows each issue with its code and its path. A reset stores the starting Spec again as a new version and starts a new Thread.
+You can also edit the JSON. A Spec that is not valid shows each issue with its code and its path. The route stores only the Agent `shop-assistant`, thus the editor cannot replace the Agent of a different scenario. A reset stores the starting Spec again as a new version and starts a new Thread.
 
 The scenario needs no model feature other than text. The example code is in [`src/assistant.ts`](./src/assistant.ts).
 
@@ -91,7 +91,9 @@ The scenario needs no model feature other than text. The example code is in [`sr
 | **Skill** | The model calls `use_skill`. A `tools.loaded` event names the Skill `restock`. Only then does the model have the Skill body and the Tool `order_supplier`. |
 | **Policy deny** | The Permission Policy denies `delete_product`. The model cannot see the Tool, and a call to it runs nothing. |
 
-The `after-tool` Hook `stock_audit` writes one line to **Audit log of the Hook** for each Tool call. The **Permission Policy** card shows the rules of the Agent.
+The `after-tool` Hook `stock_audit` writes one line to **Audit log of the Hook** for each Tool call.
+
+The **Permission Policy** card shows the rules of the Agent, and the **Tool annotations** card shows the hints of each Tool. One rule allows each Tool that has `readOnlyHint`. That rule allows `check_stock`, which no rule names.
 
 The scenario needs a model that supports Tool calls. A small model can call `adjust_stock` before it loads the Tool. The call then gets an error result that tells the model to use `tool_search`. The example code is in [`src/stockroom.ts`](./src/stockroom.ts).
 

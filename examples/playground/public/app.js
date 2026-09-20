@@ -24,7 +24,10 @@ async function api(method, path, body) {
     showGate("The Playground did not accept this token.");
     throw new Error("unauthorized");
   }
-  if (!response.ok) throw new Error((await response.json()).error?.message ?? response.statusText);
+  if (!response.ok) {
+    const { error } = await response.json();
+    throw Object.assign(new Error(error?.message ?? response.statusText), { issues: error?.issues });
+  }
   return response.status === 204 ? undefined : response.json();
 }
 
@@ -193,7 +196,12 @@ function orderCard(order) {
   );
 }
 
-function stockCards({ stock, policy }) {
+const describeMatch = ({ tool, annotations }) =>
+  [tool && [tool].flat().join(", "), annotations && `each Tool with ${JSON.stringify(annotations)}`]
+    .filter(Boolean)
+    .join(" and ") || "each Tool";
+
+function stockCards({ stock, tools, policy }) {
   const list = (title, lines, empty) =>
     el(
       "div",
@@ -233,14 +241,18 @@ function stockCards({ stock, policy }) {
     ),
     list(
       "Permission Policy",
-      policy.map((rule) => `${rule.effect}: ${[rule.match.tool ?? "each Tool"].flat().join(", ")}`),
+      policy.map((rule) => `${rule.effect}: ${describeMatch(rule.match)}`),
       "The Agent has no rule.",
+    ),
+    list(
+      "Tool annotations",
+      tools.map((tool) => `${tool.name}: ${JSON.stringify(tool.annotations)}`),
+      "The Agent has no Tool.",
     ),
   ];
 }
 
-// The Spec editor of the Agent Spec scenario. `refresh` reads the state again after a Spec got a new version.
-function specCards({ agent, prompt, presets, ceilings }, refresh) {
+function specCards({ agent, prompt, presets, ceilings }, onSaved) {
   const editor = el("textarea", { id: "spec", ariaLabel: "Agent Spec", spellcheck: false });
   editor.value = JSON.stringify(agent.spec, null, 2);
   const result = el("p", { id: "spec-result", className: "fine" });
@@ -256,15 +268,17 @@ function specCards({ agent, prompt, presets, ceilings }, refresh) {
     }
     save.disabled = true;
     try {
-      const answer = await api("PUT", "/api/scenarios/agents/spec", spec);
-      if (answer.ok) return refresh(`The Scope stored version ${answer.version}. The next Turn uses it.`);
+      // The answer is the state of the scenario with a new Thread, thus the new version starts with no history.
+      const next = await api("PUT", "/api/scenarios/agents/spec", spec);
+      onSaved(next, `The Scope stored version ${next.agent.version}. A new Thread uses it.`);
+    } catch (error) {
       result.className = "error";
       result.replaceChildren(
-        "The Scope rejected the Spec and keeps the stored version.",
+        error.issues ? "The Scope rejected the Spec and keeps the stored version." : error.message,
         el(
           "ul",
           {},
-          ...answer.issues.map((issue) =>
+          ...(error.issues ?? []).map((issue) =>
             el("li", { textContent: `${issue.code} at ${issue.path}: ${issue.message}` }),
           ),
         ),
@@ -313,6 +327,9 @@ function specCards({ agent, prompt, presets, ceilings }, refresh) {
     ),
   ];
 }
+
+// The cards next to the conversation, by scenario id.
+const PANELS = { refund: (state) => [orderCard(state.order)], agents: specCards, stockroom: stockCards };
 
 async function renderScenario(scenario) {
   const mine = view;
@@ -367,26 +384,24 @@ async function renderScenario(scenario) {
   let state = await api("GET", path);
   if (mine !== view) return;
   let shownPanel;
-  const showPanel = (note) => {
+  const showPanel = () => {
     const { threadKey: _, ...data } = state;
     const next = JSON.stringify(data);
     if (next === shownPanel) return;
-    const cards =
-      scenario.id === "refund"
-        ? [orderCard(state.order)]
-        : scenario.id === "agents"
-          ? specCards(state, refreshPanel)
-          : stockCards(state);
+    // A panel that stores something gives the new state of the scenario, which has a new Thread.
+    const cards = PANELS[scenario.id](state, (saved, note) => {
+      restart(saved);
+      $("panel").append(el("p", { id: "saved", className: "outcome", textContent: note }));
+    });
     if (shownPanel !== undefined) cards[0].classList.add("changed");
     shownPanel = next;
     $("panel").replaceChildren(...cards);
-    if (note) $("spec-result").textContent = note;
   };
-  const refreshPanel = async (note) => {
+  const refreshPanel = async () => {
     const next = await api("GET", path);
     if (mine !== view) return;
     state = next;
-    showPanel(note);
+    showPanel();
   };
   showPanel();
   // One request covers a burst of events, for example the replay of the event log after a reload.
@@ -580,12 +595,18 @@ async function renderScenario(scenario) {
     busy = reset.disabled = true;
     sync();
     stream?.close();
+    let next;
     try {
-      state = await api("POST", `${path}/reset`);
+      next = await api("POST", `${path}/reset`);
     } finally {
       reset.disabled = false;
     }
-    if (mine !== view) return;
+    if (mine === view) restart(next);
+  };
+  // Shows a new Thread of the scenario with an empty conversation.
+  const restart = (next) => {
+    stream?.close();
+    state = next;
     steps.replaceChildren();
     log.replaceChildren();
     tools.clear();

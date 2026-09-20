@@ -1,22 +1,11 @@
 import type { ThreadEvent } from "@karmi/core";
-import { SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { orderSchema, STARTING_ORDER, type Order } from "../src/refund";
+import { api, events } from "./client";
 import { bare, karmi, refundScript } from "./worker";
 import { TOKEN } from "./worker-options";
 
 const BASE = "https://playground.test";
-
-function api(token: string | null, method: string, path: string, body?: unknown): Promise<Response> {
-  return SELF.fetch(`${BASE}${path}`, {
-    method,
-    headers: {
-      ...(token && { authorization: `Bearer ${token}` }),
-      ...(body !== undefined && { "content-type": "application/json" }),
-    },
-    ...(body !== undefined && { body: JSON.stringify(body) }),
-  });
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -27,13 +16,7 @@ function decodeState(value: unknown): { order: Order; threadKey: string } {
   if (!isRecord(value) || typeof value.threadKey !== "string") throw new Error("Not a scenario state.");
   return { order: orderSchema.parse(value.order), threadKey: value.threadKey };
 }
-function decodeEvents(value: unknown): ThreadEvent[] {
-  if (!Array.isArray(value)) throw new Error("Not an event list.");
-  return value as ThreadEvent[];
-}
-
 const state = async () => decodeState(await (await api(TOKEN, "GET", "/api/scenarios/refund")).json());
-const events = async (key: string) => decodeEvents(await (await api(TOKEN, "GET", `/threads/${key}/events`)).json());
 
 async function until(key: string, type: ThreadEvent["type"]): Promise<ThreadEvent[]> {
   let log: ThreadEvent[] = [];

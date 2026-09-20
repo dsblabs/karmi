@@ -172,6 +172,7 @@ export const COVERAGE: readonly CoverageRow[] = [
   tools("Validated Tool inputs", "Tools", "A change of more than 100 units gets an error result. The stock stays."),
   tools("Structured results", "Tools", "The event log shows the structuredContent of each stock result."),
   tools("Permission Policy: deny", "Tools", "The model cannot see or run delete_product."),
+  tools("Annotations in a Policy rule", "Tools", "A rule for readOnlyHint allows check_stock, which no rule names."),
   tools("Hooks", "Tools", "An after-tool Hook adds one audit line for each Tool call."),
   tools("Skills", "Tools", "use_skill adds a tools.loaded event, the Skill body and the order_supplier Tool."),
   tools("Deferred Tools", "Tools", "tool_search adds a tools.loaded event before adjust_stock can run."),
