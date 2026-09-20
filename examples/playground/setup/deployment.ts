@@ -224,10 +224,10 @@ export async function deploy(
   await createOwnedResource(manifest, "bucket", runner, store);
   await createOwnedResource(manifest, "deadLetterQueue", runner, store);
   await createOwnedResource(manifest, "queue", runner, store);
+  await runner.run(command(["secret", "bulk", "--config", configPath], manifest.account.id, JSON.stringify(secrets)));
   await runner.run(command(["deploy", "--config", configPath], manifest.account.id));
   manifest.worker.status = "created";
   await store.save(manifest);
-  await runner.run(command(["secret", "bulk", "--config", configPath], manifest.account.id, JSON.stringify(secrets)));
 }
 
 function errorMessage(error: unknown): string {
@@ -239,6 +239,27 @@ function isMissing(error: unknown): boolean {
   return message.includes("not found") || message.includes("does not exist");
 }
 
+async function removeQueueConsumer(
+  manifest: DeploymentManifest,
+  runner: CommandRunner,
+): Promise<RemovalFailure | undefined> {
+  if (
+    !manifest.worker.owned ||
+    manifest.worker.status === "pending" ||
+    manifest.worker.status === "removed" ||
+    manifest.queue.status === "pending" ||
+    manifest.queue.status === "removed"
+  )
+    return;
+  try {
+    await runner.run(
+      command(["queues", "consumer", "remove", manifest.queue.name, manifest.worker.name], manifest.account.id),
+    );
+  } catch (error) {
+    if (!isMissing(error)) return { resource: `queue consumer ${manifest.worker.name}`, message: errorMessage(error) };
+  }
+}
+
 /** Removes each owned resource and reports all resources that remain. */
 export async function remove(
   manifest: DeploymentManifest,
@@ -247,6 +268,8 @@ export async function remove(
 ): Promise<RemovalResult> {
   const preserved: string[] = [];
   const failures: RemovalFailure[] = [];
+  const consumerFailure = await removeQueueConsumer(manifest, runner);
+  if (consumerFailure) failures.push(consumerFailure);
   const operations: Array<{ key: "worker" | "queue" | "deadLetterQueue" | "bucket"; args: string[] }> = [
     {
       key: "worker",
@@ -273,6 +296,7 @@ export async function remove(
       continue;
     }
     if (current.status === "removed" || current.status === "pending") continue;
+    if (operation.key === "worker" && consumerFailure) continue;
     try {
       await runner.run(command(operation.args, manifest.account.id));
       current.status = "removed";

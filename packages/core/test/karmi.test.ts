@@ -34,6 +34,16 @@ describe("createKarmi", () => {
       new KarmiError("scope.id.invalid", 'ScopeId "bad/id" must match [A-Za-z0-9_-]{1,64}.'),
     );
   });
+
+  it("does not read runtime bindings while Cloudflare validates the Worker module", () => {
+    const karmi = createKarmi({
+      catalogue: {},
+      bindings() {
+        throw new Error("Runtime bindings are not available during module validation.");
+      },
+    });
+    expect(() => karmi.scope("tenant_1")).toThrow("Runtime bindings are not available during module validation.");
+  });
 });
 
 describe("bindings", () => {

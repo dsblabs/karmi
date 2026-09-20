@@ -28,7 +28,7 @@ The package has three public entries: `src/index.ts`, `src/testing/index.ts` and
 
 ## The flow of a Turn
 
-1. `createKarmi` in `karmi.ts` builds a Deployment. `makeDurableObjects` in `durable-objects.ts` makes the four Durable Object classes from that Deployment.
+1. `createKarmi` in `karmi.ts` builds a Deployment. It reads runtime bindings when an entry point first uses them. `makeDurableObjects` makes the four Durable Object classes from that Deployment.
 2. `karmi.scope(id)` calls `openScope` in `scope.ts`. `scope.thread(target)` calls `openThread` in `thread.ts`.
 3. `openThread` decodes the key or the identity and builds a `ThreadAddress`. It gets the Durable Object stub from the name that `keys.ts` makes.
 4. `thread.send()` calls `send` on the Thread Durable Object in `thread-do.ts`. Each entry point first checks the address and the identity.

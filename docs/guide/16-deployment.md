@@ -64,6 +64,8 @@ The consumer of the karmi Queue must call `karmi.queueHandler`. If the Worker al
 
 [Doctor](./15-doctor.md) checks the bindings, the exports and the migrations before you deploy.
 
+Call `createKarmi` at module evaluation. It checks code configuration then and reads Worker bindings when an entry point first uses them. This order lets Cloudflare validate a new Worker before its same-Worker Durable Object namespaces exist.
+
 ### Other binding names
 
 If the Worker cannot use these names, give `createKarmi` a `bindings` function. It maps your `env` to the karmi names. This sample uses two namespaces that have other names:
