@@ -1,89 +1,28 @@
 # karmi
 
-A code-first TypeScript framework for building agent harnesses that run natively on Cloudflare. See [`packages/core`](./packages/core), the Anthropic Provider in [`packages/anthropic`](./packages/anthropic), the REST/SSE/WebSocket routes in [`packages/http`](./packages/http), the project scaffolder in [`packages/create-karmi`](./packages/create-karmi), and the glossary in [`CONTEXT.md`](./CONTEXT.md).
+karmi is a TypeScript framework that runs agents on Cloudflare Workers. You write Agents and Tools in code, and karmi runs them in Threads that keep their state in Durable Objects.
 
-```sh
-pnpm install
-pnpm typecheck && pnpm lint && pnpm test
-```
+To build a project with karmi, read the [karmi guide](./docs/guide/README.md). To work on karmi, read [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
-## Zero to deployed
+## Packages
 
-```sh
-pnpm create karmi my-agent
-cd my-agent && pnpm install
-pnpm typecheck && pnpm test
-```
+| Package                                                    | Contents                                                      | Internals                                                   |
+| ---------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------- |
+| [`@karmi/core`](./packages/core)                           | The Harness, the Thread API, `karmi doctor` and the test kit. | [`INTERNALS.md`](./packages/core/INTERNALS.md)              |
+| [`@karmi/anthropic`](./packages/anthropic)                 | The Provider for the Anthropic Messages API.                  |                                                             |
+| [`@karmi/ai-sdk`](./packages/ai-sdk)                       | The Provider for AI SDK model packages.                       |                                                             |
+| [`@karmi/http`](./packages/http)                           | The REST, Server-Sent Events and WebSocket routes.            | [`INTERNALS.md`](./packages/http/INTERNALS.md)              |
+| [`@karmi/sandbox-container`](./packages/sandbox-container) | The container image and the local runtime for Scripts.        | [`INTERNALS.md`](./packages/sandbox-container/INTERNALS.md) |
+| [`create-karmi`](./packages/create-karmi)                  | The command that creates a project, and the project template. |                                                             |
 
-`pnpm create karmi` writes the wrangler baseline, a sample Agent and Tool, the
-HTTP routes, a cron and a Queue consumer over the Thread API, a test suite and
-CI. The template is [`packages/create-karmi/template`](./packages/create-karmi/template),
-a workspace package of this repository, so it is typechecked, doctored and
-tested on every change.
+## Docs
 
-`karmi doctor` checks a project before `wrangler deploy` does: the compatibility
-date, the `KARMI_*` bindings, the Durable Object re-exports and migrations, which
-Script tiers are reachable, a bound Vectorize index, an AI Gateway in front of
-deferred Tools, the MCP pre-registration checklist with the exact callback URL,
-and Agent Specs that name Catalogue items nobody defines. See
-[`packages/core`](./packages/core#karmi-doctor).
-
-## Isolate scripts
-
-Add `"worker_loaders": [{ "binding": "KARMI_LOADER" }]` to your Wrangler config,
-then grant an Agent `capabilities.scripts`:
-
-```ts
-capabilities: {
-  scripts: {
-    tier: "isolate",
-    tools: "allowed", // or a subset of the Agent's Tool names
-    limits: { cpuMs: 1000, wallMs: 60000, maxToolCalls: 100 },
-  },
-}
-```
-
-The model receives `run_script({ code, description? })` and a usage Fragment with
-TypeScript input declarations. Code is a JavaScript module, for example:
-
-```js
-export default async () => {
-  const results = await Promise.all([
-    tools.weather({ city: "Paris" }),
-    tools.weather({ city: "London" }),
-  ]);
-  console.log("Looked up two cities");
-  return results;
-};
-```
-
-Each call runs in a new Dynamic Worker with outbound access disabled and no
-filesystem, secrets or storage bindings. Only allow-resolved Tools are exposed;
-`ask`, denied and provider-executed Tools are excluded, as are recursive
-`run_script` and parking `delegate` calls. Other allow-resolved built-ins remain reachable.
-Deferral and Skill activation do not restrict script reachability. Tools requiring
-a User are omitted from user-less Threads and named in the usage Fragment.
-Bridge calls run serially, pass through input validation and before/after-tool
-Hooks, and cannot park for approval, consent or a Job.
-
-A Tool returns its `structuredContent` when present, otherwise its text. Tool
-failures throw inside the script. `__result(callId)` reads a prior Tool result on
-the same Thread; stable call IDs are `{threadId}:{tool.call seq}`. Child calls and
-results carry `parentCallId` and stay out of model context, including compaction.
-The script result contains `value` or `error: { message, stack? }`, captured `logs`,
-a compact `toolCalls` summary and `artifacts: []`. Console capture is bounded to
-30,000 characters. A `usage.recorded { kind: "script", tier, wallMs, callId }`
-event reserves the accounting hook point.
-
-Omitted limits use the values above, lowered by Scope ceilings. An explicit
-over-ask fails validation; a missing Loader produces `capability.unavailable`.
-Limit errors name `cpuMs`, `wallMs` or `maxToolCalls`. Cancellation and completion
-revoke the bridge and dispose the Worker handles. A Tool that has already made
-an external change cannot be rolled back by cancellation.
-
-`Sandbox` is the exported execution seam; `CloudflareIsolateSandbox` implements
-it. The integration tests use the real Worker Loader in Miniflare. Local workerd
-does not enforce CPU quotas, so the CPU-exhaustion test is explicitly skipped;
-`cpuMs` is passed to Cloudflare's native [resource limits](https://developers.cloudflare.com/dynamic-workers/usage/limits/).
-The narrow Codemode adaptation and its MIT license are under
-`packages/core/src/vendor/codemode/`.
+| Path                                | Contents                                                                            |
+| ----------------------------------- | ----------------------------------------------------------------------------------- |
+| [`docs/guide/`](./docs/guide)       | The user docs for the public API.                                                   |
+| `docs/reference/`                   | The API reference. CI builds it from the JSDoc. The repository does not contain it. |
+| [`CONTEXT.md`](./CONTEXT.md)        | The glossary of karmi terms.                                                        |
+| [`docs/adr/`](./docs/adr)           | The architecture decision records.                                                  |
+| [`docs/agents/`](./docs/agents)     | The rules for writing, comments, TypeScript and the issue tracker.                  |
+| [`docs/research/`](./docs/research) | The research notes that the decisions use.                                          |
+| [`AGENTS.md`](./AGENTS.md)          | The principles and rules for all contributors.                                      |

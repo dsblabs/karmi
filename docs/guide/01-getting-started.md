@@ -26,6 +26,8 @@ pnpm typecheck && pnpm test
 | `<directory>`   | The project directory. `create-karmi` creates it if necessary. It must be empty.      |
 | `--name <name>` | The name of the package, Worker, Queue and bucket. The default is the directory name. |
 
+The package also exports `scaffold()`. Use it in a tool that creates its own projects.
+
 ## The project files
 
 | File               | Contents                                                                        |

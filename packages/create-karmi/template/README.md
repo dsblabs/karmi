@@ -53,7 +53,7 @@ pnpm typecheck && pnpm test
 4. Give the `demo` Scope an Anthropic key. Its Agents cannot run without the key:
 
    ```ts
-   await karmi.scope("demo").credentials.put({ name: "anthropic", value: process.env.ANTHROPIC_API_KEY });
+   await karmi.scope("demo").credentials.put("anthropic", process.env.ANTHROPIC_API_KEY);
    ```
 
 ## Send a message to an Agent
