@@ -7,23 +7,27 @@
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
+    <p id="loading" class="muted">Opening the Playground…</p>
     <form id="gate" hidden>
-      <h1>karmi Playground</h1>
-      <p>Enter the access token that <code>pnpm setup</code> printed.</p>
-      <input id="token" type="password" autocomplete="off" aria-label="Access token" required />
-      <button>Open</button>
+      <h1><span class="mark">k</span> karmi Playground</h1>
+      <p class="muted">Enter the access token that <code>pnpm setup</code> printed.</p>
+      <input id="token" type="password" autocomplete="off" aria-label="Access token" placeholder="Access token" required />
+      <button id="open" class="primary">Open</button>
       <p id="gate-error" class="error" role="alert"></p>
     </form>
     <div id="app" hidden>
       <header>
-        <strong>karmi Playground</strong>
-        <span id="provider"></span>
+        <button id="menu" class="quiet" aria-label="Scenarios">☰</button>
+        <strong><span class="mark">k</span> karmi Playground</strong>
+        <span id="provider" class="chip"></span>
         <button id="forget" class="quiet">Forget token</button>
       </header>
       <nav>
         <h2>Scenarios</h2>
         <ul id="scenarios"></ul>
-        <a href="#coverage">Feature coverage</a>
+        <h2>Planned</h2>
+        <ul id="planned"></ul>
+        <a id="coverage-link" href="#coverage">Feature coverage</a>
       </nav>
       <main id="main"></main>
     </div>
