@@ -41,3 +41,4 @@ jobs:
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - run: pnpm prose:check
       - run: pnpm docs:links
+      - run: pnpm docs:llms --check

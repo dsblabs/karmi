@@ -1,0 +1,28 @@
+# karmi
+
+> karmi is a code-first TypeScript framework. You use it to build agent harnesses that run natively on a serverless runtime.
+
+The guide shows the public API only. The terms with capitals, for example Thread and Scope, are in the glossary.
+
+## Guide
+
+- [Getting started](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/01-getting-started.md): Getting started creates a project, runs its tests and deploys it.
+- [Agents](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/02-agents.md): Agents describes `defineAgent`, instructions, models and Agent Specs as data.
+- [Tools](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/03-tools.md): Tools describes `defineTool`, annotations, Provider Tools, Skills and deferred Tools.
+- [Threads](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/04-threads.md): Threads describes Turns, Approvals, Compaction, forks and offline delivery.
+- [Providers](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/05-providers.md): Providers describes the Anthropic Provider, the AI SDK Provider and Cloudflare AI Gateway.
+- [HTTP](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/06-http.md): HTTP describes the REST routes and the event streams.
+- [Sandbox](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/07-sandbox.md): Sandbox describes Scripts, isolation and the container sandbox.
+- [Schedules](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/08-schedules.md): Schedules describes Schedules, which send an Event to a Thread at a later time.
+- [Memory](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/09-memory.md): Memory describes what the Agents of a Scope remember about a User.
+- [Knowledge](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/10-knowledge.md): Knowledge describes Knowledge, retrievers, and vector and hybrid retrieval.
+- [MCP](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/11-mcp.md): MCP describes remote MCP servers.
+- [Credentials](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/12-credentials.md): Credentials describes credential references, the credentials of a Scope and Secrets providers.
+- [Testing](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/13-testing.md): Testing describes the tests of an agent project.
+- [Observability](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/14-observability.md): Observability describes usage records and logging.
+- [Doctor](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/15-doctor.md): Doctor describes `karmi doctor`.
+- [Deployment](https://raw.githubusercontent.com/dsblabs/karmi/main/docs/guide/16-deployment.md): Deployment describes the deploy to Cloudflare, the bindings, and recovery and time.
+
+## Glossary
+
+- [Glossary](https://raw.githubusercontent.com/dsblabs/karmi/main/CONTEXT.md): The glossary defines each karmi term that the guide uses.

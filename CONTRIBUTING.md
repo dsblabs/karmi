@@ -28,6 +28,7 @@ CI runs these commands on each pull request. Run them before you push. The comma
 | `pnpm test`         | The tests in all packages.                                                |
 | `pnpm docs:api`     | The API reference build. It fails when an export has a JSDoc problem.     |
 | `pnpm docs:links`   | Checks the relative links and anchors in Markdown files.                  |
+| `pnpm docs:llms`    | Writes `llms.txt` from the guide index. CI fails when the file is old.    |
 | `pnpm docs:samples` | Checks the types in each `ts` code block in the guide.                    |
 | `pnpm prose:check`  | The writing rules in the docs. The rules are in `docs/agents/writing.md`. |
 

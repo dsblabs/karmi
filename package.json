@@ -11,6 +11,7 @@
     "build": "turbo run build",
     "db:generate": "pnpm --filter @karmi/core db:generate",
     "docs:api": "typedoc",
+    "docs:llms": "node scripts/llms-txt.mjs",
     "docs:links": "lychee --offline --include-fragments --no-progress --exclude-path '(^|/)node_modules/' '**/*.md' '.changeset/*.md'",
     "docs:samples": "pnpm build && node scripts/check-doc-samples.mjs",
     "typecheck": "turbo run typecheck",
