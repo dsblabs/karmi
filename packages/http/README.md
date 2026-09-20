@@ -2,6 +2,10 @@
 
 `@karmi/http` adds REST, Server-Sent Events and WebSocket routes to the karmi Thread API.
 
+The Server-Sent Events stream and the WebSocket stream send the same JSON. Each frame is one `ThreadEvent`, the same object that `thread.events()` returns. A browser `EventSource` continues after a disconnect with no code of your own. The WebSocket hibernates while it is idle.
+
+karmi has no authentication scheme. Your `authenticate` function reads the request and returns the Scope and the User.
+
 Install the package:
 
 ```sh

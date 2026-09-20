@@ -1,6 +1,6 @@
 # @karmi/anthropic
 
-`@karmi/anthropic` is the karmi Provider for the Anthropic Messages API.
+`@karmi/anthropic` is the karmi Provider for the Anthropic Messages API. It maps Provider Tools, for example web search, to their Anthropic definitions. A Provider profile can delegate Compaction to Anthropic.
 
 Install the package:
 

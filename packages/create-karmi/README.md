@@ -1,6 +1,13 @@
 # create-karmi
 
-`create-karmi` creates a karmi project.
+`create-karmi` creates a karmi project. The project is a full Deployment that you can test and deploy. It contains these parts:
+
+- One sample Tool and one sample Agent.
+- REST, Server-Sent Events and WebSocket routes.
+- A cron and a Queue consumer.
+- A test suite that runs the full Deployment with a scripted model.
+
+`create-karmi` only writes the project files. It does not install packages, run git or use the network.
 
 Run the package:
 

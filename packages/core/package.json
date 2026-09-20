@@ -1,7 +1,7 @@
 {
   "name": "@karmi/core",
   "version": "0.0.0",
-  "description": "A code-first TypeScript framework for building agent harnesses that run natively on Cloudflare.",
+  "description": "A TypeScript framework for agent products that serve many customers. It runs on Cloudflare Workers.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
