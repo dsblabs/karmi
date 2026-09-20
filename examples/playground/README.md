@@ -2,7 +2,13 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has one browser scenario, **Approve or deny a refund**. It also has Cloudflare deployment and removal commands.
+This version has three browser scenarios:
+
+- **Approve or deny a refund**
+- **Change an Agent at runtime**
+- **Tools, Skills and a Hook**
+
+It also has Cloudflare deployment and removal commands.
 
 ## Run it locally
 
@@ -57,9 +63,43 @@ The state stays until you select **Reset scenario**. A reset cancels a Turn that
 
 The example code is in [`src/refund.ts`](./src/refund.ts). The routes are in [`src/app.ts`](./src/app.ts).
 
+## The Agent Spec scenario
+
+**Change an Agent at runtime** has no Agent in the code. The Worker stores the Agent Spec of `shop-assistant` in the sample Scope with `scope.agents.put`. The Prompt of the Agent has one text entry and the Fragment `shop_policy`.
+
+Do these steps:
+
+1. Read **What the Prompt entries give now**. It shows the text of each Prompt entry. The Fragment text comes from the same function that the Harness calls at the start of each Turn.
+2. Select **Run**. The Agent answers with the return time of 30 days.
+3. Select **Change the instructions** or **Change the Fragment arguments**, then **Save the Spec**. The Scope stores a new version, and the page starts a new Thread. You do not deploy or start the Worker again.
+4. Select **Run** again. The new Thread uses the new version, and earlier answers cannot change the result.
+5. Select **Grant in the ceiling**, then **Save the Spec**. The Scope config has the ceiling `scheduling.maxPending: 2`, and the grant is not larger.
+6. Select **Grant more than the ceiling**, then **Save the Spec**. The Scope rejects the Spec with the issue `capability.over-ceiling` and keeps the stored version.
+
+You can also edit the JSON. A Spec that is not valid shows each issue with its code and its path. The route stores only the Agent `shop-assistant`, thus the editor cannot replace the Agent of a different scenario. A reset stores the starting Spec again as a new version and starts a new Thread.
+
+The scenario needs no model feature other than text. The example code is in [`src/assistant.ts`](./src/assistant.ts).
+
+## The Tools scenario
+
+**Tools, Skills and a Hook** has an Agent that changes a sample stock system. The buttons above the prompt put one suggested prompt in the editor. You can edit each prompt.
+
+| Prompt | What you see |
+| --- | --- |
+| **Deferred Tool** | The model sees only the name of `adjust_stock`. It calls `tool_search`, a `tools.loaded` event appears, and the stock changes. The result has `structuredContent`. |
+| **Input that is not valid** | The schema of `adjust_stock` permits a change of 100 units at most. The Harness refuses a larger change with an error result, and the stock stays. |
+| **Skill** | The model calls `use_skill`. A `tools.loaded` event names the Skill `restock`. Only then does the model have the Skill body and the Tool `order_supplier`. |
+| **Policy deny** | The Permission Policy denies `delete_product`. The model cannot see the Tool, and a call to it runs nothing. |
+
+The `after-tool` Hook `stock_audit` writes one line to **Audit log of the Hook** for each Tool call.
+
+The **Permission Policy** card shows the rules of the Agent, and the **Tool annotations** card shows the hints of each Tool. One rule allows each Tool that has `readOnlyHint`. That rule allows `check_stock`, which no rule names.
+
+The scenario needs a model that supports Tool calls. A small model can call `adjust_stock` before it loads the Tool. The call then gets an error result that tells the model to use `tool_search`. The example code is in [`src/stockroom.ts`](./src/stockroom.ts).
+
 ## Model limits
 
-The scenario needs a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint, so the scenario shows a note before you run it. A model without Tool calls answers in text only, and no Approval appears.
+The refund scenario and the Tools scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint, so each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
 A custom endpoint must have a public address. The Worker refuses requests to a private address such as `localhost`.
 
@@ -123,6 +163,6 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 | Command             | What it checks                                                                               |
 | ------------------- | -------------------------------------------------------------------------------------------- |
 | `pnpm test`         | The public HTTP routes of the Worker in workerd, with the scripted Provider of the Test kit. |
-| `pnpm test:browser` | Allow, deny, token access and reset in a browser, with a scripted Provider.                  |
+| `pnpm test:browser` | Each scenario, token access and reset in a browser, with a scripted Provider.                |
 
 Before the first browser check, run `pnpm exec playwright install chromium`. No test needs a credential.

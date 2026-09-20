@@ -1,6 +1,7 @@
-import { defineAgent, defineTool, type CatalogueInput, type ToolOutputResult } from "@karmi/core";
+import { defineAgent, defineTool } from "@karmi/core";
 import { env } from "cloudflare:workers";
 import { z } from "zod";
+import { errorResult } from "./results";
 import { sampleData } from "./sample-data";
 
 /** The id of the refund scenario. It is also the id of its Agent. */
@@ -42,8 +43,6 @@ export function decodeOrder(data: string | undefined): Order {
     return STARTING_ORDER;
   }
 }
-
-const errorResult = (text: string): ToolOutputResult => ({ content: [{ type: "text", text }], isError: true });
 
 const orders = (scope: string) => sampleData(env.PLAYGROUND_DATA, scope, REFUND);
 
@@ -95,9 +94,3 @@ export const refundAgent = (model: string) =>
     // Rules are tried in order and the first match decides. No rule matches `refund_order`, so it waits for an Approval.
     policy: [{ match: { annotations: { readOnlyHint: true } }, effect: "allow" }],
   });
-
-/** The Catalogue of the Playground for the model that setup selected. */
-export const catalogue = (model: string): CatalogueInput => ({
-  tools: [getOrder, refundOrder],
-  agents: [refundAgent(model)],
-});

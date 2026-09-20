@@ -8,3 +8,22 @@ export const refundReplies: ReplyScript = ({ request }) => {
     return [reply.toolCall("refund_order", { orderId: "A-1042", amount: 48, reason: "Arrived broken" })];
   return results.at(-1)?.isError ? "I did not make the refund." : "The refund is complete.";
 };
+
+/** The script of the restock prompt: activate the Skill, order from the supplier, then tell the outcome. */
+const restockReplies: ReplyScript = ({ request }) => {
+  // The Turn is the part of the conversation after the last message of the operator.
+  const turn = request.messages.slice(request.messages.findLastIndex((message) => message.role === "user"));
+  const results = turn.filter((message) => message.role === "toolResult").length;
+  if (results === 0) return [reply.toolCall("use_skill", { name: "restock" })];
+  if (results === 1) return [reply.toolCall("order_supplier", { sku: "KET-02", quantity: 24 })];
+  return "I ordered 24 kettles from the supplier.";
+};
+
+/** The script of the browser checks. It selects the replies from the Prompt, thus one Provider serves each scenario. */
+export const playgroundReplies: ReplyScript = (ctx) => {
+  const system = ctx.request.system ?? "";
+  if (system.includes("refund desk")) return refundReplies(ctx);
+  if (system.includes("stock system")) return restockReplies(ctx);
+  const days = /for (\d+) days/.exec(system)?.[1];
+  return system.includes("pirate") ? `Arr, ye have ${days} days.` : `You can return it for ${days} days.`;
+};

@@ -1,10 +1,19 @@
+import { AGENTS, ASSISTANT_PROMPTS } from "./assistant";
 import type { ProviderSetup } from "./provider-options";
 import { REFUND, REFUND_PROMPT } from "./refund";
+import { STOCKROOM, STOCKROOM_PROMPTS } from "./stockroom";
 
 const CODE = "https://github.com/dsblabs/karmi/blob/main/examples/playground";
 
 /** A model feature that a scenario needs. */
 export type ModelFeature = "toolCalls";
+
+/** A prompt that a scenario suggests. The operator can edit it before the run. */
+export interface SuggestedPrompt {
+  /** The feature that the prompt shows. */
+  label: string;
+  text: string;
+}
 
 /** One guided scenario, or one that the Playground does not have yet. */
 export interface Scenario {
@@ -20,8 +29,8 @@ export interface Scenario {
   prerequisites: string[];
   /** The model features that the scenario needs. */
   needs: ModelFeature[];
-  /** The prompt that the scenario suggests. */
-  prompt?: string;
+  /** The prompts that the scenario suggests. The page puts the first one in the editor. */
+  prompts?: SuggestedPrompt[];
   /** The link to the example code. */
   code?: string;
 }
@@ -47,11 +56,34 @@ export const SCENARIOS: readonly Scenario[] = [
     built: true,
     prerequisites: [],
     needs: ["toolCalls"],
-    prompt: REFUND_PROMPT,
+    prompts: [{ label: "Approval", text: REFUND_PROMPT }],
     code: `${CODE}/src/refund.ts`,
   },
-  notBuilt("agents", "Agents", "Agent Specs, Prompts and Capability ceilings"),
-  notBuilt("tools", "Tools", "Hooks, Skills, deferred Tools and Provider Tools"),
+  {
+    id: AGENTS,
+    group: "Agents",
+    title: "Change an Agent at runtime",
+    summary:
+      "The Scope stores the Agent Spec of this Agent as data. Change the instructions, the Fragment arguments or a Capability grant, and the next Turn uses the new version. The Scope rejects a grant above its ceiling.",
+    built: true,
+    prerequisites: [],
+    needs: [],
+    prompts: ASSISTANT_PROMPTS,
+    code: `${CODE}/src/assistant.ts`,
+  },
+  {
+    id: STOCKROOM,
+    group: "Tools",
+    title: "Tools, Skills and a Hook",
+    summary:
+      "An Agent changes a sample stock system. One Tool is deferred until the model finds it. A Skill adds a procedure and a Tool. The Permission Policy denies one Tool, and a Hook writes each call to an audit log.",
+    built: true,
+    prerequisites: [],
+    needs: ["toolCalls"],
+    prompts: STOCKROOM_PROMPTS,
+    code: `${CODE}/src/stockroom.ts`,
+  },
+  notBuilt("provider-tools", "Tools", "Provider Tools"),
   notBuilt("threads", "Threads", "Steering, cancellation, budgets, Jobs, Compaction and forks"),
   notBuilt("delegation", "Delegation", "Child Threads and their Approvals"),
   notBuilt("schedules", "Schedules and delivery", "Schedules, external triggers and offline delivery"),
@@ -99,7 +131,7 @@ export function viewScenario(scenario: Scenario, setup: ProviderSetup | undefine
   const modelNotes =
     scenario.needs.includes("toolCalls") && !setup.option.toolCalls
       ? [
-          `This scenario needs a model that supports Tool calls. The Playground cannot check that for ${setup.model}. A model without Tool calls answers in text only, and no Approval appears.`,
+          `This scenario needs a model that supports Tool calls. The Playground cannot check that for ${setup.model}. A model without Tool calls answers in text only, and no Tool call appears.`,
         ]
       : [];
   return { ...scenario, status: "ready", modelNotes };
@@ -117,17 +149,33 @@ export interface CoverageRow {
   verification?: string;
 }
 
-const shown = (feature: string, group: string, observable: string): CoverageRow => ({
-  group,
-  feature,
-  scenario: REFUND,
-  observable,
-  verification: "Worker tests with the scripted Provider, and browser checks.",
-});
+const row =
+  (scenario: string) =>
+  (feature: string, group: string, observable: string): CoverageRow => ({
+    group,
+    feature,
+    scenario,
+    observable,
+    verification: "Worker tests with the scripted Provider, and browser checks.",
+  });
+
+const shown = row(REFUND);
+const agents = row(AGENTS);
+const tools = row(STOCKROOM);
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
   shown("Instructions and model selection", "Agents", "The Agent runs on the model that setup selected."),
+  agents("Agent Specs stored at runtime", "Agents", "Save a changed Spec. The next Turn uses the new version."),
+  agents("Prompts and Fragments", "Agents", "The page shows the text that each Prompt entry gives to the model."),
+  agents("Capability ceilings", "Agents", "A grant in the Scope ceiling gets a version. A larger grant gets an issue."),
+  tools("Validated Tool inputs", "Tools", "A change of more than 100 units gets an error result. The stock stays."),
+  tools("Structured results", "Tools", "The event log shows the structuredContent of each stock result."),
+  tools("Permission Policy: deny", "Tools", "The model cannot see or run delete_product."),
+  tools("Annotations in a Policy rule", "Tools", "A rule for readOnlyHint allows check_stock, which no rule names."),
+  tools("Hooks", "Tools", "An after-tool Hook adds one audit line for each Tool call."),
+  tools("Skills", "Tools", "use_skill adds a tools.loaded event, the Skill body and the order_supplier Tool."),
+  tools("Deferred Tools", "Tools", "tool_search adds a tools.loaded event before adjust_stock can run."),
   shown("Tool inputs and results", "Tools", "The event log shows each Tool call and its result."),
   shown("Annotations and Permission Policy", "Tools", "The read-only lookup runs. The refund waits for an Approval."),
   shown("Approvals", "Threads", "Allow changes the sample order. Deny leaves it unchanged."),

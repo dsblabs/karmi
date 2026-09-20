@@ -24,7 +24,10 @@ async function api(method, path, body) {
     showGate("The Playground did not accept this token.");
     throw new Error("unauthorized");
   }
-  if (!response.ok) throw new Error((await response.json()).error?.message ?? response.statusText);
+  if (!response.ok) {
+    const { error } = await response.json();
+    throw Object.assign(new Error(error?.message ?? response.statusText), { issues: error?.issues });
+  }
   return response.status === 204 ? undefined : response.json();
 }
 
@@ -99,7 +102,7 @@ function render() {
   $("main").scrollTop = 0;
   scrollTo(0, 0);
   if (current === "coverage") renderCoverage();
-  else if (scenario?.id === "refund") void renderRefund(scenario);
+  else if (scenario?.built) void renderScenario(scenario);
   else if (scenario) $("main").replaceChildren(intro(scenario));
 }
 
@@ -193,12 +196,147 @@ function orderCard(order) {
   );
 }
 
-async function renderRefund(scenario) {
+const describeMatch = ({ tool, annotations }) =>
+  [tool && [tool].flat().join(", "), annotations && `each Tool with ${JSON.stringify(annotations)}`]
+    .filter(Boolean)
+    .join(" and ") || "each Tool";
+
+function stockCards({ stock, tools, policy }) {
+  const list = (title, lines, empty) =>
+    el(
+      "div",
+      { className: "card" },
+      el("h3", { textContent: title }),
+      lines.length > 0
+        ? el("ul", {}, ...lines.map((text) => el("li", { textContent: text })))
+        : el("p", { className: "muted", textContent: empty }),
+    );
+  return [
+    el(
+      "div",
+      { className: "card", id: "stock" },
+      el("h3", { textContent: "Stock system" }),
+      el(
+        "dl",
+        {},
+        ...stock.products.flatMap((product) => [
+          el("dt", { textContent: product.sku }),
+          el("dd", { textContent: `${product.name}: ${product.stock}` }),
+        ]),
+      ),
+      el("p", { className: "fine", textContent: "This is sample data. Reset restores it." }),
+    ),
+    list(
+      "Supplier orders",
+      stock.supplierOrders.map((order) => `${order.quantity} × ${order.sku}`),
+      "The restock Skill made no order yet.",
+    ),
+    el(
+      "div",
+      { className: "card", id: "audit" },
+      el("h3", { textContent: "Audit log of the Hook" }),
+      stock.audit.length > 0
+        ? el("ol", {}, ...stock.audit.map((text) => el("li", { textContent: text })))
+        : el("p", { className: "muted", textContent: "The stock_audit Hook wrote no line yet." }),
+    ),
+    list(
+      "Permission Policy",
+      policy.map((rule) => `${rule.effect}: ${describeMatch(rule.match)}`),
+      "The Agent has no rule.",
+    ),
+    list(
+      "Tool annotations",
+      tools.map((tool) => `${tool.name}: ${JSON.stringify(tool.annotations)}`),
+      "The Agent has no Tool.",
+    ),
+  ];
+}
+
+function specCards({ agent, prompt, presets, ceilings }, onSaved) {
+  const editor = el("textarea", { id: "spec", ariaLabel: "Agent Spec", spellcheck: false });
+  editor.value = JSON.stringify(agent.spec, null, 2);
+  const result = el("p", { id: "spec-result", className: "fine" });
+  const save = el("button", { id: "save-spec", className: "primary", textContent: "Save the Spec" });
+  save.onclick = async () => {
+    let spec;
+    try {
+      spec = JSON.parse(editor.value);
+    } catch (error) {
+      result.className = "error";
+      result.textContent = `The text is not JSON: ${error.message}`;
+      return;
+    }
+    save.disabled = true;
+    try {
+      // The answer is the state of the scenario with a new Thread, thus the new version starts with no history.
+      const next = await api("PUT", "/api/scenarios/agents/spec", spec);
+      onSaved(next, `The Scope stored version ${next.agent.version}. A new Thread uses it.`);
+    } catch (error) {
+      result.className = "error";
+      result.replaceChildren(
+        error.issues ? "The Scope rejected the Spec and keeps the stored version." : error.message,
+        el(
+          "ul",
+          {},
+          ...(error.issues ?? []).map((issue) =>
+            el("li", { textContent: `${issue.code} at ${issue.path}: ${issue.message}` }),
+          ),
+        ),
+      );
+    } finally {
+      save.disabled = false;
+    }
+  };
+  return [
+    el(
+      "div",
+      { className: "card", id: "prompt-preview" },
+      el("h3", { textContent: "What the Prompt entries give now" }),
+      ...prompt.flatMap((entry) => [
+        el("h4", { textContent: entry.source }),
+        el("pre", { className: "open", textContent: entry.text ?? "The page cannot show this entry." }),
+      ]),
+      el("p", { className: "fine", textContent: "The Harness makes the Prompt again at the start of each Turn." }),
+    ),
+    el(
+      "div",
+      { className: "card" },
+      el("h3", { textContent: `Agent Spec, version ${agent.version}` }),
+      el(
+        "div",
+        { className: "row presets" },
+        ...presets.map((preset) =>
+          el("button", {
+            textContent: preset.label,
+            title: preset.expect,
+            onclick: () => {
+              editor.value = JSON.stringify(preset.spec, null, 2);
+              result.className = "fine";
+              result.textContent = `After you save: ${preset.expect}`;
+            },
+          }),
+        ),
+      ),
+      editor,
+      el("div", { className: "row" }, save),
+      result,
+      el("p", {
+        className: "fine",
+        textContent: `Scope ceiling: ${JSON.stringify(ceilings)}. The editor shows the Spec with the defaults that the Framework added.`,
+      }),
+    ),
+  ];
+}
+
+// The cards next to the conversation, by scenario id.
+const PANELS = { refund: (state) => [orderCard(state.order)], agents: specCards, stockroom: stockCards };
+
+async function renderScenario(scenario) {
   const mine = view;
   const ready = scenario.status === "ready";
   const prompt = el("textarea", {
     id: "prompt",
-    value: scenario.prompt,
+    value: scenario.prompts[0].text,
     ariaLabel: "Prompt",
     placeholder: "Write a message to the Agent.",
   });
@@ -218,37 +356,59 @@ async function renderRefund(scenario) {
         "section",
         { className: "chat" },
         steps,
-        el("div", { className: "composer" }, prompt, el("div", { className: "row" }, run, status)),
+        el(
+          "div",
+          { className: "composer" },
+          scenario.prompts.length > 1 &&
+            el(
+              "div",
+              { className: "row presets" },
+              ...scenario.prompts.map((item) =>
+                el("button", { textContent: item.label, onclick: () => (prompt.value = item.text) }),
+              ),
+            ),
+          prompt,
+          el("div", { className: "row" }, run, status),
+        ),
       ),
       el(
         "aside",
         { className: "side" },
-        el("div", { className: "card", id: "order" }, el("p", { className: "muted", textContent: "Loading…" })),
+        el("div", { id: "panel" }, el("p", { className: "card muted", textContent: "Loading…" })),
         el("details", { className: "card events" }, el("summary", {}, "Event log (", logCount, " events)"), log),
       ),
     ),
   );
 
-  let state = await api("GET", "/api/scenarios/refund");
+  const path = `/api/scenarios/${scenario.id}`;
+  let state = await api("GET", path);
   if (mine !== view) return;
-  let shownOrder;
-  const showOrder = (order) => {
-    const next = JSON.stringify(order);
-    if (next === shownOrder) return;
-    const card = orderCard(order);
-    if (shownOrder !== undefined) card.classList.add("changed");
-    shownOrder = next;
-    $("order").replaceWith(card);
+  let shownPanel;
+  const showPanel = () => {
+    const { threadKey: _, ...data } = state;
+    const next = JSON.stringify(data);
+    if (next === shownPanel) return;
+    // A panel that stores something gives the new state of the scenario, which has a new Thread.
+    const cards = PANELS[scenario.id](state, (saved, note) => {
+      restart(saved);
+      $("panel").append(el("p", { id: "saved", className: "outcome", textContent: note }));
+    });
+    if (shownPanel !== undefined) cards[0].classList.add("changed");
+    shownPanel = next;
+    $("panel").replaceChildren(...cards);
   };
-  showOrder(state.order);
+  const refreshPanel = async () => {
+    const next = await api("GET", path);
+    if (mine !== view) return;
+    state = next;
+    showPanel();
+  };
+  showPanel();
   // One request covers a burst of events, for example the replay of the event log after a reload.
-  let orderTimer;
-  const refreshOrder = () => {
-    clearTimeout(orderTimer);
-    orderTimer = setTimeout(async () => {
-      const { order } = await api("GET", "/api/scenarios/refund");
-      if (mine === view) showOrder(order);
-    }, 60);
+  let panelTimer;
+  const refreshSoon = () => {
+    clearTimeout(panelTimer);
+    panelTimer = setTimeout(refreshPanel, 60);
   };
 
   let live;
@@ -324,13 +484,30 @@ async function renderRefund(scenario) {
         card.state.textContent = event.isError ? "error" : "done";
         card.append(
           el("h4", { textContent: "Result" }),
-          el("pre", { textContent: event.content.map((block) => block.text ?? "").join("\n") }),
+          el("pre", {
+            textContent: event.content.map((block) => block.text ?? `Loaded the Tool ${block.name}.`).join("\n"),
+          }),
         );
+        if (event.structuredContent !== undefined)
+          card.append(
+            el("h4", { textContent: "Structured result" }),
+            el("pre", { textContent: json(event.structuredContent) }),
+          );
         // A finished call gives its id back, because a Provider can use the same id in a later Step.
         tools.delete(event.id);
-        refreshOrder();
+        refreshSoon();
         break;
       }
+      case "tools.loaded":
+        add(
+          el("p", {
+            className: "outcome",
+            textContent: event.skill
+              ? `The Skill ${event.skill.name} is active. The model now has its body and these Tools: ${event.names.join(", ") || "none"}.`
+              : `The model loaded these deferred Tools: ${event.names.join(", ")}.`,
+          }),
+        );
+        break;
       case "approval.requested": {
         if (event.kind !== "tool") break;
         const card = toolCard(event.id, event.tool, event.input);
@@ -382,7 +559,7 @@ async function renderRefund(scenario) {
             }),
           );
         busy = false;
-        refreshOrder();
+        refreshSoon();
         break;
     }
     sync();
@@ -418,12 +595,18 @@ async function renderRefund(scenario) {
     busy = reset.disabled = true;
     sync();
     stream?.close();
+    let next;
     try {
-      state = await api("POST", "/api/scenarios/refund/reset");
+      next = await api("POST", `${path}/reset`);
     } finally {
       reset.disabled = false;
     }
-    if (mine !== view) return;
+    if (mine === view) restart(next);
+  };
+  // Shows a new Thread of the scenario with an empty conversation.
+  const restart = (next) => {
+    stream?.close();
+    state = next;
     steps.replaceChildren();
     log.replaceChildren();
     tools.clear();
@@ -431,8 +614,8 @@ async function renderRefund(scenario) {
     live = undefined;
     busy = false;
     waiting = 0;
-    prompt.value = scenario.prompt;
-    showOrder(state.order);
+    prompt.value = scenario.prompts[0].text;
+    showPanel();
     listen();
     sync();
   };
