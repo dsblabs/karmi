@@ -18,6 +18,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm docs:api
+      - run: pnpm docs:samples
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm test
@@ -25,6 +26,7 @@ jobs:
   prose:
     runs-on: ubuntu-latest
     env:
+      LYCHEE_VERSION: 0.24.2
       VALE_VERSION: 3.22.0
     steps:
       - uses: actions/checkout@v4
@@ -33,4 +35,9 @@ jobs:
         run: |
           curl -sSfL "https://github.com/vale-cli/vale/releases/download/v${VALE_VERSION}/vale_${VALE_VERSION}_Linux_64-bit.tar.gz" | tar -xz -C "$RUNNER_TEMP" vale
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Install lychee
+        run: |
+          curl -sSfL "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz" | tar -xz --strip-components=1 -C "$RUNNER_TEMP" "lychee-x86_64-unknown-linux-gnu/lychee"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - run: pnpm prose:check
+      - run: pnpm docs:links
