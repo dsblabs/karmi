@@ -38,8 +38,8 @@ A PR that makes one of these changes must also update the listed docs. A reviewe
 | A decision that is hard to reverse | A new ADR in `docs/adr/` |
 
 - A changeset tells users what changed. The guide and the JSDoc tell how it works now. One does not replace the other.
-- A change that users cannot see needs an empty changeset. Run `pnpm changeset --empty`.
-- CI checks the mechanical part: prose lint, the API reference build, relative links, code sample types and the changeset.
+- A change that users cannot see gets no changeset. Do not add an empty one.
+- CI checks the mechanical part: prose lint, the API reference build, relative links and code sample types. A reviewer checks that a change users can see has a changeset.
 - The PR author fixes a failed check in the same PR.
 - Do not add an ignore marker to make a check pass. The only exception is the list of intentionally unexported types in the TypeDoc configuration.
 - If a code sample does not compile on purpose, do not tag it `ts`. Use `text`.
