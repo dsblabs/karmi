@@ -1,6 +1,6 @@
 # @karmi/ai-sdk
 
-`@karmi/ai-sdk` is the karmi Provider for AI SDK model packages.
+`@karmi/ai-sdk` is the karmi Provider for AI SDK model packages. With it, an Agent can use each model that has an AI SDK model package. Install the model packages that you use, for example `@ai-sdk/openai`.
 
 Install the package:
 

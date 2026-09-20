@@ -2,6 +2,8 @@
 
 `@karmi/sandbox-container` has the container image and the local runtime for the shell and Python Scripts of karmi.
 
+Install this package only when an Agent runs shell or Python Scripts. JavaScript Scripts run in the isolate tier of `@karmi/core` and need no container. `LocalProcessSandbox` runs the same Scripts on your computer.
+
 Install the package:
 
 ```sh
