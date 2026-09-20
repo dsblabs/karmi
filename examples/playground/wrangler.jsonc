@@ -1,11 +1,9 @@
-// The Playground Worker. Local development uses the Cloudflare emulation of wrangler and needs no Cloudflare login.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "karmi-playground",
   "main": "src/worker.ts",
   "compatibility_date": "2026-08-04",
   "compatibility_flags": ["global_fetch_strictly_public"],
-  // The browser files. The Worker answers `/api` and `/threads`, where it checks the access token.
   "assets": { "directory": "./public", "run_worker_first": ["/api/*", "/threads", "/threads/*"] },
   "durable_objects": {
     "bindings": [
