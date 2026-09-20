@@ -1,11 +1,11 @@
 import type { Karmi } from "@karmi/core";
 import { createHttpHandler, type Principal } from "@karmi/http";
-import { PROVIDER_OPTIONS, type ProviderSetup } from "./provider-options";
+import type { ProviderSetup } from "./provider-options";
 import { decodeOrder, REFUND } from "./refund";
 import { sampleData, type SampleDataDO } from "./sample-data";
 import { COVERAGE, SCENARIOS, viewScenario } from "./scenarios";
 
-/** The first sample Scope. Each scenario of this slice runs in it. */
+/** The sample Scope that the scenarios run in. */
 export const SCOPE = "sample-a";
 /** The User of the one operator. */
 export const USER = "operator";
@@ -72,7 +72,6 @@ export function createPlayground({ karmi, setup, token, data }: PlaygroundOption
         provider: setup
           ? { id: setup.option.id, label: setup.option.label, model: setup.model, baseUrl: setup.baseUrl }
           : null,
-        providers: PROVIDER_OPTIONS.map((option) => option.label),
         scenarios: SCENARIOS.map((scenario) => viewScenario(scenario, setup)),
         coverage: COVERAGE,
       });

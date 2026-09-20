@@ -6,13 +6,16 @@ import { PROVIDER_OPTIONS, type ProviderOption } from "../src/provider-options.t
 export interface SetupAnswers {
   option: ProviderOption;
   model: string;
+  /** The Provider credential. */
   apiKey: string;
   baseUrl?: string;
 }
 
 /** The secrets that setup makes one time and keeps in later runs, so stored state stays readable. */
 export interface Generated {
+  /** The operator access token. */
   token: string;
+  /** The `KARMI_KEYRING` JSON document. */
   keyring: string;
 }
 
@@ -33,17 +36,15 @@ export function parseDevVars(text: string): Record<string, string> {
     const match = /^([A-Z_]+)=(.*)$/.exec(line.trim());
     if (!match?.[1] || match[2] === undefined) continue;
     const raw = match[2];
-    try {
-      const value: unknown = raw.startsWith('"') ? JSON.parse(raw) : raw;
-      vars[match[1]] = typeof value === "string" ? value : raw;
-    } catch {
-      vars[match[1]] = raw;
-    }
+    vars[match[1]] = raw.length > 1 && raw.startsWith("'") && raw.endsWith("'") ? raw.slice(1, -1) : raw;
   }
   return vars;
 }
 
-/** Writes the content of `.dev.vars`. It keeps the token and the key ring of `previous` when they exist. */
+/**
+ * Writes the content of `.dev.vars`. It keeps the token and the key ring of `previous` when they exist. Throws when a
+ * value contains a single quote or a line break.
+ */
 export function buildDevVars(answers: SetupAnswers, previous: Record<string, string>, fresh: Generated): string {
   const vars: Record<string, string> = {
     PLAYGROUND_PROVIDER: answers.option.id,
@@ -53,7 +54,11 @@ export function buildDevVars(answers: SetupAnswers, previous: Record<string, str
     PLAYGROUND_TOKEN: previous.PLAYGROUND_TOKEN || fresh.token,
     KARMI_KEYRING: previous.KARMI_KEYRING || fresh.keyring,
   };
-  const lines = Object.entries(vars).map(([name, value]) => `${name}=${JSON.stringify(value)}`);
+  // wrangler reads a value in single quotes with no change. In double quotes, it would keep each `\"` of the key ring.
+  const lines = Object.entries(vars).map(([name, value]) => {
+    if (/['\n\r]/.test(value)) throw new Error(`${name} cannot contain a single quote or a line break.`);
+    return `${name}='${value}'`;
+  });
   return `# Written by \`pnpm setup\`. Do not commit this file.\n${lines.join("\n")}\n`;
 }
 
@@ -65,7 +70,7 @@ export function chooseOption(answer: string): ProviderOption | undefined {
 
 async function main(): Promise<void> {
   const { createInterface } = await import("node:readline/promises");
-  const { readFile, writeFile } = await import("node:fs/promises");
+  const { chmod, readFile, writeFile } = await import("node:fs/promises");
   const file = new URL("../.dev.vars", import.meta.url);
   const terminal = createInterface({ input: process.stdin });
   // The line iterator also works when the answers come from a pipe, which `question` does not.
@@ -91,6 +96,8 @@ async function main(): Promise<void> {
     const previous = parseDevVars(await readFile(file, "utf8").catch(() => ""));
     const content = buildDevVars({ option, model, apiKey, ...(baseUrl && { baseUrl }) }, previous, generate());
     await writeFile(file, content, { mode: 0o600 });
+    // The mode of `writeFile` applies to a new file only.
+    await chmod(file, 0o600);
     console.log(`\nWrote examples/playground/.dev.vars for ${option.label} with the model ${model}.`);
     console.log(`Your access token: ${parseDevVars(content).PLAYGROUND_TOKEN}`);
     console.log("Start the Playground with `pnpm dev`, open the URL that it prints and enter the token.");

@@ -1,4 +1,4 @@
-import { defineAgent, defineTool, type ToolOutputResult } from "@karmi/core";
+import { defineAgent, defineTool, type CatalogueInput, type ToolOutputResult } from "@karmi/core";
 import { env } from "cloudflare:workers";
 import { z } from "zod";
 import { sampleData } from "./sample-data";
@@ -6,7 +6,8 @@ import { sampleData } from "./sample-data";
 /** The id of the refund scenario. It is also the id of its Agent. */
 export const REFUND = "refund";
 
-const orderSchema = z.object({
+/** The schema of the sample order. */
+export const orderSchema = z.object({
   id: z.string(),
   customer: z.string(),
   item: z.string(),
@@ -94,3 +95,9 @@ export const refundAgent = (model: string) =>
     // Rules are tried in order and the first match decides. No rule matches `refund_order`, so it waits for an Approval.
     policy: [{ match: { annotations: { readOnlyHint: true } }, effect: "allow" }],
   });
+
+/** The Catalogue of the Playground for the model that setup selected. */
+export const catalogue = (model: string): CatalogueInput => ({
+  tools: [getOrder, refundOrder],
+  agents: [refundAgent(model)],
+});

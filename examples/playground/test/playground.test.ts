@@ -1,7 +1,7 @@
 import type { ThreadEvent } from "@karmi/core";
 import { SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { STARTING_ORDER, type Order } from "../src/refund";
+import { orderSchema, STARTING_ORDER, type Order } from "../src/refund";
 import { bare, karmi, refundScript } from "./worker";
 import { TOKEN } from "./worker-options";
 
@@ -24,9 +24,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 // The test reads each JSON shape of the Worker through one function.
 function decodeState(value: unknown): { order: Order; threadKey: string } {
-  if (!isRecord(value) || !isRecord(value.order) || typeof value.threadKey !== "string")
-    throw new Error("Not a scenario state.");
-  return { order: value.order as Order, threadKey: value.threadKey };
+  if (!isRecord(value) || typeof value.threadKey !== "string") throw new Error("Not a scenario state.");
+  return { order: orderSchema.parse(value.order), threadKey: value.threadKey };
 }
 function decodeEvents(value: unknown): ThreadEvent[] {
   if (!Array.isArray(value)) throw new Error("Not an event list.");

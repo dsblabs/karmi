@@ -27,14 +27,17 @@ export function buildProvider(setup: ProviderSetup): Provider {
       return aiSdk((input) => createGoogleGenerativeAI({ apiKey: apiKeyOf(input), fetch: input.fetch })(input.modelId));
     case "openrouter":
       return aiSdk((input) => createOpenRouter({ apiKey: apiKeyOf(input), fetch: input.fetch })(input.modelId));
-    case "custom":
+    case "custom": {
+      const baseURL = setup.baseUrl;
+      if (!baseURL) throw new Error("The custom Provider has no base URL. Run `pnpm setup`.");
       return aiSdk((input) =>
         createOpenAICompatible({
           name: "custom",
-          baseURL: setup.baseUrl ?? "",
+          baseURL,
           apiKey: apiKeyOf(input),
           fetch: input.fetch,
         })(input.modelId),
       );
+    }
   }
 }

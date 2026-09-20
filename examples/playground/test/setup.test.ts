@@ -19,12 +19,18 @@ describe("setup", () => {
   it("writes a file that the Worker reads back as the same selection", () => {
     const option = chooseOption("custom");
     if (!option) throw new Error("The custom option is missing.");
-    const answers = { option, model: "llama-4", apiKey: 'k"ey#1', baseUrl: "https://host.example/v1" };
+    const answers = { option, model: "llama-4", apiKey: 'k"ey\\#1', baseUrl: "https://host.example/v1" };
     const vars = parseDevVars(buildDevVars(answers, {}, generate()));
     expect(readSetup(vars)).toEqual({ option, model: "llama-4", baseUrl: "https://host.example/v1" });
-    expect(vars.PROVIDER_API_KEY).toBe('k"ey#1');
+    expect(vars.PROVIDER_API_KEY).toBe('k"ey\\#1');
     expect(vars.PLAYGROUND_TOKEN).toMatch(/^[\w-]{32}$/);
     expect(JSON.parse(vars.KARMI_KEYRING ?? "")).toMatchObject({ active: "v1" });
+  });
+
+  it("refuses a value that the file cannot hold", () => {
+    const option = chooseOption("openai");
+    if (!option) throw new Error("The openai option is missing.");
+    expect(() => buildDevVars({ option, model: "m", apiKey: "it's" }, {}, generate())).toThrow(/single quote/);
   });
 
   it("keeps the access token and the key ring of an earlier run", () => {

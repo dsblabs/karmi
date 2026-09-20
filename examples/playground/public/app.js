@@ -187,6 +187,7 @@ async function renderRefund(scenario) {
     const json = (value) => JSON.stringify(value, null, 2);
     switch (event.type) {
       case "turn.started":
+        run.disabled = true;
         steps.append(
           el("div", { className: "you" }, el("strong", { textContent: "You: " }), event.input.parts?.[0]?.text ?? ""),
         );

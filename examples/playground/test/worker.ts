@@ -3,14 +3,11 @@ import { env } from "cloudflare:workers";
 import { createPlayground } from "../src/app";
 import { refundReplies } from "./script";
 import { setup, TOKEN } from "./worker-options";
-import { getOrder, refundAgent, refundOrder } from "../src/refund";
+import { catalogue } from "../src/refund";
 
 // The test Worker runs the same routes, Tools and Agent as src/worker.ts against a scripted Provider, so no
 // test needs a credential or a network.
-export const { karmi, provider } = createTestKarmi({
-  tools: [getOrder, refundOrder],
-  agents: [refundAgent("fake/model")],
-});
+export const { karmi, provider } = createTestKarmi(catalogue("fake/model"));
 
 /** Starts the script of the guided refund again. */
 export const refundScript = () => provider.script(refundReplies);
