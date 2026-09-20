@@ -8,9 +8,33 @@ importers:
 
   .:
     devDependencies:
+      '@ai-sdk/openai':
+        specifier: ^4.0.65
+        version: 4.0.65(zod@4.5.4)
       '@changesets/cli':
         specifier: ^3.0.1
         version: 3.0.1
+      '@cloudflare/workers-types':
+        specifier: ^5.20260904.1
+        version: 5.20260904.1
+      '@karmi/ai-sdk':
+        specifier: workspace:*
+        version: link:packages/ai-sdk
+      '@karmi/anthropic':
+        specifier: workspace:*
+        version: link:packages/anthropic
+      '@karmi/core':
+        specifier: workspace:*
+        version: link:packages/core
+      '@karmi/http':
+        specifier: workspace:*
+        version: link:packages/http
+      '@karmi/sandbox-container':
+        specifier: workspace:*
+        version: link:packages/sandbox-container
+      ai-gateway-provider:
+        specifier: ^4.0.0
+        version: 4.0.0(@ai-sdk/openai-compatible@3.0.47(zod@4.5.4))(@ai-sdk/provider-utils@5.0.39(zod@4.5.4))(@ai-sdk/provider@4.0.13)(ai@7.0.97(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4)
       eslint-plugin-jsdoc:
         specifier: ^64.3.10
         version: 64.3.10(eslint@10.9.1(supports-color@10.2.2))(supports-color@10.2.2)(typescript@5.9.3)
@@ -32,6 +56,12 @@ importers:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@26.5.1)(vite@8.2.2(@types/node@26.5.1)(esbuild@0.28.1)(tsx@4.23.13)(yaml@2.9.0))
+      zod:
+        specifier: ^4.5.4
+        version: 4.5.4
 
   packages/ai-sdk:
     dependencies:

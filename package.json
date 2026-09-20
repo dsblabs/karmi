@@ -11,6 +11,8 @@
     "build": "turbo run build",
     "db:generate": "pnpm --filter @karmi/core db:generate",
     "docs:api": "typedoc",
+    "docs:links": "lychee --offline --include-fragments --no-progress --exclude-path '(^|/)node_modules/' '**/*.md' '.changeset/*.md'",
+    "docs:samples": "pnpm build && node scripts/check-doc-samples.mjs",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,mts,js}\"",
@@ -23,13 +25,23 @@
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
+    "@ai-sdk/openai": "^4.0.65",
     "@changesets/cli": "^3.0.1",
+    "@cloudflare/workers-types": "^5.20260904.1",
+    "@karmi/ai-sdk": "workspace:*",
+    "@karmi/anthropic": "workspace:*",
+    "@karmi/core": "workspace:*",
+    "@karmi/http": "workspace:*",
+    "@karmi/sandbox-container": "workspace:*",
     "eslint-plugin-jsdoc": "^64.3.10",
+    "ai-gateway-provider": "^4.0.0",
     "prettier": "^3.9.6",
     "tsc-alias": "^1.9.4",
     "turbo": "^2.10.12",
     "typedoc": "0.28.20",
     "typedoc-plugin-markdown": "4.13.1",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.11",
+    "zod": "^4.5.4"
   }
 }

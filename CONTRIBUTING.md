@@ -4,7 +4,9 @@ This file tells you how to set up the repository, run the checks and open a pull
 
 ## Setup
 
-You need Node.js 22 or later and the pnpm version in the `packageManager` field of `package.json`. The prose check also needs [Vale](https://vale.sh/docs/install).
+You need Node.js 22 or later and the pnpm version in the `packageManager` field of `package.json`.
+
+Install [Vale](https://vale.sh/docs/install) for the prose check. Install [lychee](https://github.com/lycheeverse/lychee#installation) for the link check.
 
 Clone the repository and install the dependencies:
 
@@ -25,6 +27,8 @@ CI runs these commands on each pull request. Run them before you push. The comma
 | `pnpm format:check` | The code format. Run `pnpm format` to fix the format.                     |
 | `pnpm test`         | The tests in all packages.                                                |
 | `pnpm docs:api`     | The API reference build. It fails when an export has a JSDoc problem.     |
+| `pnpm docs:links`   | Checks the relative links and anchors in Markdown files.                  |
+| `pnpm docs:samples` | Checks the types in each `ts` code block in the guide.                    |
 | `pnpm prose:check`  | The writing rules in the docs. The rules are in `docs/agents/writing.md`. |
 
 To run one command for one package, add a filter. This command runs the tests of `@karmi/core` only:

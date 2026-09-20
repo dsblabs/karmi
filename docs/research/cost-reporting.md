@@ -138,7 +138,7 @@ Rules that fall out: (1) `cost` is written exactly once, at `message_end`, from 
 
 ## 10. References
 
-[PS]: docs/research/provider-seam.md (§2 candidate list, §4 `Usage` sketch)
+[PS]: ./provider-seam.md (§2 candidate list, §4 `Usage` sketch)
 [P18]: https://github.com/dsblabs/karmi/issues/18 (cost present only when reported; no price table)
 [AIG-custom-cost]: https://developers.cloudflare.com/ai-gateway/configuration/custom-costs/ (last updated 2026-04-20; source `src/content/docs/ai-gateway/configuration/custom-costs.mdx`, commit 3feb9a4)
 [AIG-costs]: https://developers.cloudflare.com/ai-gateway/observability/costs/ (source `observability/costs.mdx`)
