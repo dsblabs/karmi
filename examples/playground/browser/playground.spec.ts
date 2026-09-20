@@ -122,3 +122,38 @@ test("a Skill adds its Tool, and the Hook writes the audit log", async ({ page }
   await page.getByRole("button", { name: "Reset scenario" }).click();
   await expect(page.locator("#audit")).toContainText("wrote no line yet");
 });
+
+// The layout rules of docs/ui.md. A new view or card must pass at each size without a change to this check.
+const VIEWPORTS = { desktop: [1440, 900], tablet: [820, 1180], mobile: [390, 844] } as const;
+for (const [name, [width, height]] of Object.entries(VIEWPORTS))
+  test(`each view fits a ${name} screen`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.goto(`/#token=${TOKEN}`);
+    await expect(page.locator("#provider")).toContainText("Model");
+    const views = await page
+      .locator("#scenarios a")
+      .evaluateAll((links) => links.map((link) => link.getAttribute("href")));
+    for (const view of [...views, "#coverage"]) {
+      await page.goto(`/${view}`);
+      await expect(page.locator("main h1")).toBeVisible();
+      if (view !== "#coverage") {
+        await page.getByRole("button", { name: "Reset scenario" }).click();
+        await page.getByRole("button", { name: "Run" }).click();
+        await expect(page.locator("#steps .agent, #steps .approval").first()).toBeVisible();
+      }
+      // Nothing is wider than the page, and no card is cut off by the container that holds it.
+      const overflow = await page.locator("html").evaluate((root) => {
+        const wide = [...root.querySelectorAll("main .card, main .chat, main .table, main .intro")]
+          .filter((node) => node.getBoundingClientRect().right > root.clientWidth + 1)
+          .map((node) => node.id || node.className);
+        return { scroll: root.scrollWidth - root.clientWidth, wide };
+      });
+      expect(overflow, `${view} at ${name}`).toEqual({ scroll: 0, wide: [] });
+      // A control that the operator presses on a phone is at least 40 CSS pixels high.
+      if (name === "mobile")
+        for (const button of await page.locator("main button:visible").all())
+          expect((await button.boundingBox())?.height, `${view}: ${await button.textContent()}`).toBeGreaterThanOrEqual(
+            40,
+          );
+    }
+  });

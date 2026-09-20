@@ -1,0 +1,73 @@
+# Playground UI
+
+This page gives the design of the Playground page. The page is three files in `public/` with no build step and no UI library. Keep it that way.
+
+## Goals
+
+- The page feels fast. Each action shows a result at once, before the Worker answers.
+- The page is obvious. The operator finds each control in the zone where it belongs.
+- The page works on a desktop, a tablet and a phone, in light and in dark colours.
+
+## Zones
+
+A scenario view has four zones. Put new content in one of them. Do not add a zone.
+
+| Zone | Element | What belongs there |
+|---|---|---|
+| Title bar | `.intro` | The title, the status, the summary, notes, the link to the example code and **Reset scenario** |
+| Conversation | `#steps` | What the operator and the Agent did, in the sequence of the Thread events |
+| Composer | `.composer` | The prompt, the suggested prompts, **Run** and the status line |
+| Side column | `.side` | The state of the sample system, the controls that change the scenario and the event log |
+
+- An action on the full scenario goes in the title bar.
+- An action that sends a Turn goes in the composer.
+- An action on the sample system or the Agent goes in the card that shows that data.
+- The function in `PANELS` gives the cards of the side column for a scenario. The first card is the data that the scenario changes. It moves above the conversation on a phone.
+
+## Components
+
+Use these classes. Add a component only when none of them fits, and add it to this list in the same change.
+
+| Class | Use |
+|---|---|
+| `.card` | One group of data in the side column. It has an `h3` title. Use `h4` for a label and `pre` for text of the Framework. |
+| `details.card` | Reference data that the operator does not watch, for example the Permission Policy. It stays closed. Write the number of items in the summary. |
+| `.chips` | A row of small buttons that fill an editor, for example suggested prompts. A chip does not send a request. |
+| `.editor` | A `textarea` for code or JSON. |
+| `.row` | A primary button with its related controls. Each group has at most one `button.primary`. |
+| `.badge`, `.dot` | A status word, and a status colour in the navigation. |
+| `.note` | A limit that the operator must know before a run. |
+| `.fine`, `.muted` | A small explanation, and an empty state. |
+| `.error`, `.outcome` | A failure, and the result of an action. |
+| `.you`, `.agent`, `.tool` | The items of the conversation. One `.tool` card holds the input, the Approval and the result of one Tool call. |
+
+An empty list shows a `.muted` sentence that tells what fills it. Do not show an empty card.
+
+## States
+
+- Set a button to `disabled` while its request runs. Set it back in a `finally` block.
+- The `sync` function owns the **Run** button, the status line and the typing indicator. Change the `busy` and `waiting` values, then call `sync`. Do not set them from a second place.
+- The `add` function appends to the conversation. It scrolls only when the operator is at the end.
+- A card gets the `changed` class when its data changes. The operator then sees the effect of a Tool call.
+- Check `mine === view` after each `await` in a render function. The operator can open a different view during the request.
+- Handle a new Thread event in the `switch` of `onEvent`. Show it as an item of the conversation, not as raw JSON. The event log has the raw JSON.
+
+## Layout and sizes
+
+- At 1100 px and less, the navigation becomes a drawer.
+- At 760 px and less, the zones stack in one column and a table becomes a list.
+- Each grid column uses `minmax(0, …)`, and each flex child that holds text has `min-width: 0`. Long text then wraps.
+- Do not give an element a fixed width in `px`. Use `rem`, `fr` or a percentage.
+- A button on a phone is at least 40 CSS pixels high. The mobile media query sets this value.
+- Use the variables of `:root` for each colour. Use `light-dark()` when you add a variable.
+- Keep an animation below 200 ms. The `prefers-reduced-motion` rule stops each animation.
+
+## Text
+
+The text of the page follows [`docs/agents/writing.md`](../../../docs/agents/writing.md). Write each term as `CONTEXT.md` writes it. Name a button with a verb.
+
+## Checks
+
+Run `pnpm test:browser`. It includes the layout test for the three sizes. A new scenario needs no change to that test, because the test reads the scenarios from the navigation.
+
+To look at the page, add a temporary file in `browser/` that calls `page.setViewportSize` and `page.screenshot` for 1440, 820 and 390 px. Use `page.emulateMedia({ colorScheme: "dark" })` for the dark colours. Delete the file before you commit.
