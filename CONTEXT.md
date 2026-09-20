@@ -4,6 +4,9 @@ karmi is a code-first TypeScript framework. You use it to build agent harnesses 
 
 ## Language
 
+**Playground**:
+The Playground is the example webapp that demonstrates the Framework through guided scenarios. Each scenario explains what to try, shows the result and links to the relevant example code.
+
 **Framework**:
 The Framework is karmi. It is the code-first library that a developer uses to define and deploy agents on a serverless runtime.
 _Avoid_: platform, SDK (when referring to karmi as a whole)
