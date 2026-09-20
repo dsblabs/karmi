@@ -137,7 +137,14 @@ export const COVERAGE: readonly CoverageRow[] = [
   shown("REST operations and SSE", "HTTP and media", "The browser uses the routes of @karmi/http only."),
   shown("Errors", "HTTP and media", "A request without the access token gets a 401 answer."),
   shown("Provider selection", "Providers and MCP", "Setup selects one of five Providers. The header shows it."),
-  ...SCENARIOS.filter((scenario) => !scenario.built).map((scenario): CoverageRow => ({
+  {
+    group: "Development and operations",
+    feature: "Deployment, recovery and removal",
+    scenario: "operations",
+    observable: "Terminal commands deploy, retry and remove resources from one recorded Cloudflare account.",
+    verification: "Command-boundary tests cover interruption, retry, account selection and external resources.",
+  },
+  ...SCENARIOS.filter((scenario) => !scenario.built && scenario.id !== "operations").map((scenario): CoverageRow => ({
     group: scenario.group,
     feature: scenario.title,
   })),

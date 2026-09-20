@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has one scenario, **Approve or deny a refund**. The other scenarios are in the list with the status `incomplete`.
+This version has one browser scenario, **Approve or deny a refund**. It also has Cloudflare deployment and removal commands.
 
 ## Run it locally
 
@@ -67,10 +67,60 @@ A custom endpoint must have a public address. The Worker refuses requests to a p
 
 The **Feature coverage** page in the browser lists each feature group of karmi, the scenario that shows it and the check that verified it. The list is in [`src/scenarios.ts`](./src/scenarios.ts). A row without a scenario is not built yet.
 
+## Deploy to Cloudflare
+
+Run setup first.
+
+Start the guided deployment command:
+
+```sh
+pnpm deploy
+```
+
+The command checks your Cloudflare login and lists your accounts. It then creates these resources in the account that you select:
+
+- One Worker with a distinct deployment name.
+- Two Queues for work and failed messages.
+- One R2 bucket for media.
+
+The command stores the Provider credential, access token and key ring as Worker secrets. It writes non-secret Provider settings as Worker variables.
+
+The command records ownership in `.deployments/<name>/manifest.json` before it creates resources. Git ignores this directory. Keep the manifest until removal finishes.
+
+Run the same command with the deployment name to recover from an interruption:
+
+```sh
+pnpm deploy karmi-playground-a1b2c3d4
+```
+
+You can supply existing resources. The manifest marks them as external, and removal preserves them:
+
+```sh
+pnpm deploy karmi-playground-a1b2c3d4 --bucket existing-media --queue existing-queue --dead-letter-queue existing-dlq
+```
+
+The base deployment does not create optional services. Future optional integrations can add owned or external resources to the same manifest.
+
+## Remove a Cloudflare deployment
+
+Give the exact deployment name to the removal command:
+
+```sh
+pnpm remove karmi-playground-a1b2c3d4
+```
+
+The command removes the owned Worker, Queues and R2 bucket. Worker deletion removes its Durable Object storage. The command preserves each external resource in the manifest.
+
+If cleanup fails, the command lists each remaining resource and keeps its ownership record. Fix the reported problem. Then run the command again. A repeated removal skips resources that a prior attempt removed.
+
 ## Local limits
 
 - The state is in the local emulation, in `.wrangler/`. It is not in a Cloudflare account.
-- This version has no deploy command and no removal command.
+- Local development and a deployed Worker use separate state.
+
+## Live verification
+
+The automated tests cover account selection, interrupted setup, retry, cleanup failures and external resources. A live deployment needs a designated Cloudflare account and a Provider credential. No such credentials are available in automated checks, so live deployment and model interaction remain unverified.
 
 ## Tests
 

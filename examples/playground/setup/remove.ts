@@ -1,0 +1,21 @@
+import { FileManifestStore, readManifest, WranglerRunner } from "./cloudflare.ts";
+import { remove } from "./deployment.ts";
+
+async function main(): Promise<void> {
+  const name = process.argv[2];
+  if (!name) throw new Error("Give the deployment name: `pnpm remove <name>`. ");
+  const manifestFile = new URL(`../.deployments/${name}/manifest.json`, import.meta.url);
+  const manifest = await readManifest(manifestFile);
+  const result = await remove(manifest, new WranglerRunner(), new FileManifestStore(manifestFile));
+  for (const resource of result.preserved) console.log(`Preserved supplied ${resource}.`);
+  if (!result.complete) {
+    console.error("Removal is incomplete. These owned resources remain:");
+    for (const failure of result.failures) console.error(`- ${failure.resource}: ${failure.message}`);
+    console.error(`Fix the errors and run \`pnpm remove ${name}\` again.`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`Removed all resources owned by ${name}.`);
+}
+
+await main();
