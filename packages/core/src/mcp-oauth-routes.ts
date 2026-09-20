@@ -28,7 +28,7 @@ export interface OAuthRoutes {
 /**
  * Builds the OAuth routes for `deployment`. The callback reaches ScopeConfig and Threads through `bindings`.
  */
-export function oauthRoutes(deployment: Deployment, bindings: KarmiBindings): OAuthRoutes {
+export function oauthRoutes(deployment: Deployment, bindings: () => KarmiBindings): OAuthRoutes {
   const identity = deployment.oauth;
   const document = identity && clientDocument(identity);
   return {
@@ -43,7 +43,7 @@ export function oauthRoutes(deployment: Deployment, bindings: KarmiBindings): OA
       }
       if (url.pathname !== OAUTH_CALLBACK_PATH) return undefined;
       if (request.method !== "GET") return new Response("Method not allowed", { status: 405 });
-      return callback(deployment, bindings, url.searchParams);
+      return callback(deployment, bindings(), url.searchParams);
     },
   };
 }

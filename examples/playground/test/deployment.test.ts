@@ -93,8 +93,8 @@ describe("Cloudflare deployment", () => {
     );
     expect(retryCalls.map((request) => request.args)).toEqual([
       ["queues", "create", manifest.queue.name],
-      ["deploy", "--config", ".deployments/test/wrangler.jsonc"],
       ["secret", "bulk", "--config", ".deployments/test/wrangler.jsonc"],
+      ["deploy", "--config", ".deployments/test/wrangler.jsonc"],
     ]);
     expect(retryCalls.every((request) => request.env?.CLOUDFLARE_ACCOUNT_ID === account.id)).toBe(true);
     expect(manifest.worker.status).toBe("created");
@@ -165,7 +165,12 @@ describe("Cloudflare deployment", () => {
       },
     );
     expect(result).toEqual({ complete: true, preserved: ["bucket shared-media"] });
-    expect(calls.map((request) => request.args[0])).toEqual(["delete", "queues", "queues"]);
+    expect(calls.map((request) => request.args)).toEqual([
+      ["queues", "consumer", "remove", manifest.queue.name, manifest.worker.name],
+      ["delete", manifest.worker.name, "--force"],
+      ["queues", "delete", manifest.queue.name],
+      ["queues", "delete", manifest.deadLetterQueue.name],
+    ]);
   });
 
   it("reports leftovers and a later removal retries only those resources", async () => {
@@ -178,7 +183,7 @@ describe("Cloudflare deployment", () => {
       manifest,
       {
         run(request) {
-          return request.args.includes(manifest.queue.name)
+          return request.args[1] === "delete" && request.args.includes(manifest.queue.name)
             ? Promise.reject(new Error("Queue is not empty"))
             : Promise.resolve("");
         },
@@ -213,5 +218,27 @@ describe("Cloudflare deployment", () => {
     ).toEqual({ complete: true, preserved: [] });
     expect(retried).toHaveLength(1);
     expect(retried[0]?.args).toContain(manifest.queue.name);
+  });
+
+  it("keeps the Worker retryable when Queue consumer removal fails", async () => {
+    const manifest = createManifest("karmi-playground-test-consumer", account, { queue: "shared-queue" });
+    manifest.worker.status = "created";
+    const calls: CommandRequest[] = [];
+    const result = await remove(
+      manifest,
+      {
+        run(request) {
+          calls.push(request);
+          return Promise.reject(new Error("Consumer removal failed"));
+        },
+      },
+      { save: () => Promise.resolve() },
+    );
+    expect(result).toMatchObject({
+      complete: false,
+      failures: [{ resource: `queue consumer ${manifest.worker.name}` }],
+    });
+    expect(calls).toHaveLength(1);
+    expect(manifest.worker.status).toBe("created");
   });
 });

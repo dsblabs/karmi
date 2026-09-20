@@ -106,7 +106,7 @@ The base deployment does not create optional services. Future optional integrati
 Give the exact deployment name to the removal command:
 
 ```sh
-pnpm remove karmi-playground-a1b2c3d4
+pnpm run remove karmi-playground-a1b2c3d4
 ```
 
 The command removes the owned Worker, Queues and R2 bucket. Worker deletion removes its Durable Object storage. The command preserves each external resource in the manifest.
@@ -117,10 +117,6 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 
 - The state is in the local emulation, in `.wrangler/`. It is not in a Cloudflare account.
 - Local development and a deployed Worker use separate state.
-
-## Live verification
-
-The automated tests cover account selection, interrupted setup, retry, cleanup failures and external resources. A live deployment needs a designated Cloudflare account and a Provider credential. No such credentials are available in automated checks, so live deployment and model interaction remain unverified.
 
 ## Tests
 

@@ -8,7 +8,15 @@ import {
   WranglerRunner,
   writeCloudflareConfig,
 } from "./cloudflare.ts";
-import { createManifest, decodeAccounts, deploy, parseDeploymentArguments, selectAccount } from "./deployment.ts";
+import {
+  createManifest,
+  decodeAccounts,
+  deploy,
+  parseDeploymentArguments,
+  selectAccount,
+  type DeploymentManifest,
+  type SuppliedResources,
+} from "./deployment.ts";
 import { parseDevVars } from "./cli.ts";
 
 function validName(value: string): boolean {
@@ -18,6 +26,33 @@ function validName(value: string): boolean {
 function requireLocalSetup(local: Record<string, string>): void {
   const required = ["PLAYGROUND_PROVIDER", "PLAYGROUND_MODEL", "PROVIDER_API_KEY", "PLAYGROUND_TOKEN", "KARMI_KEYRING"];
   if (required.some((name) => !local[name])) throw new Error("Run `pnpm setup` before you deploy.");
+}
+
+async function createNewManifest(
+  name: string,
+  supplied: SuppliedResources,
+  terminal: ReturnType<typeof createInterface>,
+  runner: WranglerRunner,
+): Promise<DeploymentManifest> {
+  let whoami: string;
+  try {
+    whoami = await runner.run({ args: ["whoami", "--json"] });
+  } catch (loginError) {
+    console.log("Cloudflare login is required. Follow the Wrangler login instructions.");
+    await runner.run({ args: ["login"], interactive: true });
+    whoami = await runner.run({ args: ["whoami", "--json"] }).catch((error: unknown) => {
+      throw new Error("Cloudflare login did not complete.", { cause: error ?? loginError });
+    });
+  }
+  const accounts = decodeAccounts(JSON.parse(whoami));
+  if (accounts.length === 0) throw new Error("Your Cloudflare login has no accounts.");
+  console.log("\nSelect the Cloudflare account that will own this deployment:");
+  accounts.forEach((account, index) => console.log(`  ${String(index + 1)}. ${account.name} (${account.id})`));
+  let account;
+  while (!account) account = selectAccount(accounts, await terminal.question("Account: "));
+  console.log("\nThe base deployment creates one Worker, two Queues and one R2 bucket.");
+  console.log("It does not create optional services.");
+  return createManifest(name, account, supplied);
 }
 
 async function main(): Promise<void> {
@@ -40,25 +75,7 @@ async function main(): Promise<void> {
       console.log(`Resume ${name} in ${manifest.account.name}.`);
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("ENOENT")) throw error;
-      let whoami: string;
-      try {
-        whoami = await runner.run({ args: ["whoami", "--json"] });
-      } catch (loginError) {
-        console.log("Cloudflare login is required. Follow the Wrangler login instructions.");
-        await runner.run({ args: ["login"], interactive: true });
-        whoami = await runner.run({ args: ["whoami", "--json"] }).catch((error: unknown) => {
-          throw new Error("Cloudflare login did not complete.", { cause: error ?? loginError });
-        });
-      }
-      const accounts = decodeAccounts(JSON.parse(whoami));
-      if (accounts.length === 0) throw new Error("Your Cloudflare login has no accounts.");
-      console.log("\nSelect the Cloudflare account that will own this deployment:");
-      accounts.forEach((account, index) => console.log(`  ${String(index + 1)}. ${account.name} (${account.id})`));
-      let account;
-      while (!account) account = selectAccount(accounts, await terminal.question("Account: "));
-      console.log("\nThe base deployment creates one Worker, two Queues and one R2 bucket.");
-      console.log("It does not create optional services.");
-      manifest = createManifest(name, account, arguments_.supplied);
+      manifest = await createNewManifest(name, arguments_.supplied, terminal, runner);
     }
     const variables = {
       PLAYGROUND_PROVIDER: local.PLAYGROUND_PROVIDER ?? "",

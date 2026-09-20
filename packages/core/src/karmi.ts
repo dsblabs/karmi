@@ -1,7 +1,7 @@
 import type { ContainerDriver } from "./container-types";
 import { mediaUrls, type MediaUrlOptions } from "./media-url";
 import { env } from "cloudflare:workers";
-import { resolveBindings, type BindingsResolver } from "./bindings";
+import { resolveBindings, type BindingsResolver, type KarmiBindings } from "./bindings";
 import { assembleCatalogue, type Catalogue, type CatalogueInput } from "./catalogue";
 import { wallClock, type Clock } from "./clock";
 import { assertCompatibilityBaseline } from "./compat";
@@ -17,7 +17,7 @@ import { openScope, type Scope } from "./scope";
 import { envelopeSecrets } from "./envelope-secrets";
 import type { McpClientIdentity } from "./mcp-auth";
 import { oauthRoutes, type OAuthRoutes } from "./mcp-oauth-routes";
-import { layerDeploymentCredentials, type SecretsProvider } from "./secrets";
+import { layerDeploymentCredentials, markInternalStore, type SecretsProvider } from "./secrets";
 
 /** The options `createKarmi` takes to assemble a Deployment. */
 export interface KarmiOptions<Env = unknown> {
@@ -77,26 +77,65 @@ export interface Karmi {
   scope(id: string): Scope;
 }
 
+function lazyEnvelopeSecrets(bindings: () => KarmiBindings): SecretsProvider {
+  let store: SecretsProvider | undefined;
+  const get = () => {
+    if (store) return store;
+    const resolved = bindings();
+    store = envelopeSecrets({
+      scopes: resolved.KARMI_SCOPES,
+      ...(resolved.KARMI_KEYRING !== undefined && { keyring: resolved.KARMI_KEYRING }),
+    });
+    return store;
+  };
+  return markInternalStore({
+    resolve: (ref) => get().resolve(ref),
+    describe: (ref) => get().describe(ref),
+    put: (ref, value) => {
+      const current = get();
+      const method = current.put;
+      if (!method) throw new Error("The default Secrets provider cannot store credentials.");
+      return method.call(current, ref, value);
+    },
+    revoke: (ref) => {
+      const current = get();
+      const method = current.revoke;
+      if (!method) throw new Error("The default Secrets provider cannot revoke credentials.");
+      return method.call(current, ref);
+    },
+    rewrap: (scope) => {
+      const current = get();
+      const method = current.rewrap;
+      if (!method) throw new Error("The default Secrets provider cannot rewrap credentials.");
+      return method.call(current, scope);
+    },
+    list: (scope) => {
+      const current = get();
+      const method = current.list;
+      if (!method) throw new Error("The default Secrets provider cannot list credentials.");
+      return method.call(current, scope);
+    },
+  });
+}
+
 /**
- * Assembles a Deployment from `options`. Call it at module evaluation so every boot error is a
- * startup error.
+ * Assembles a Deployment from `options`. Call it at module evaluation; it reads Worker bindings when an
+ * entry point first uses them.
  */
 export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
   assertCompatibilityBaseline();
   const providers = options.providers ?? {};
-  const bindings = resolveBindings(env as Env, options.bindings);
-  const store =
-    options.secrets ??
-    envelopeSecrets({
-      scopes: bindings.KARMI_SCOPES,
-      ...(bindings.KARMI_KEYRING !== undefined && { keyring: bindings.KARMI_KEYRING }),
-    });
   const catalogue = assembleCatalogue(options.catalogue);
-  if (catalogue.usageHandler && !bindings.KARMI_QUEUE)
-    throw new KarmiError(
-      "bindings.missing",
-      "A UsageHandler needs KARMI_QUEUE; see @karmi/core/wrangler.baseline.jsonc.",
-    );
+  const bindings = () => {
+    const resolved = resolveBindings(env as Env, options.bindings);
+    if (catalogue.usageHandler && !resolved.KARMI_QUEUE)
+      throw new KarmiError(
+        "bindings.missing",
+        "A UsageHandler needs KARMI_QUEUE; see @karmi/core/wrangler.baseline.jsonc.",
+      );
+    return resolved;
+  };
+  const store = options.secrets ?? lazyEnvelopeSecrets(bindings);
   const deployment: Deployment = {
     ...(options.sandbox && { sandbox: options.sandbox }),
     clock: options.clock ?? wallClock,
@@ -113,8 +152,8 @@ export function createKarmi<Env = unknown>(options: KarmiOptions<Env>): Karmi {
     media: mediaUrls(options.media),
     durableObjects,
     catalogue: deployment.catalogue,
-    queueHandler: queueHandler(deployment, bindings),
+    queueHandler: (batch, runtimeEnv, context) => queueHandler(deployment, bindings())(batch, runtimeEnv, context),
     oauth: oauthRoutes(deployment, bindings),
-    scope: (id) => openScope(deployment, bindings, id),
+    scope: (id) => openScope(deployment, bindings(), id),
   };
 }

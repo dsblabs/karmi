@@ -3,7 +3,7 @@ import { remove } from "./deployment.ts";
 
 async function main(): Promise<void> {
   const name = process.argv[2];
-  if (!name) throw new Error("Give the deployment name: `pnpm remove <name>`. ");
+  if (!name) throw new Error("Give the deployment name: `pnpm run remove <name>`. ");
   const manifestFile = new URL(`../.deployments/${name}/manifest.json`, import.meta.url);
   const manifest = await readManifest(manifestFile);
   const result = await remove(manifest, new WranglerRunner(), new FileManifestStore(manifestFile));
@@ -11,7 +11,7 @@ async function main(): Promise<void> {
   if (!result.complete) {
     console.error("Removal is incomplete. These owned resources remain:");
     for (const failure of result.failures) console.error(`- ${failure.resource}: ${failure.message}`);
-    console.error(`Fix the errors and run \`pnpm remove ${name}\` again.`);
+    console.error(`Fix the errors and run \`pnpm run remove ${name}\` again.`);
     process.exitCode = 1;
     return;
   }
