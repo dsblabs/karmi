@@ -10,6 +10,7 @@
   "scripts": {
     "build": "turbo run build",
     "db:generate": "pnpm --filter @karmi/core db:generate",
+    "docs:api": "typedoc",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,mts,js}\"",
@@ -27,6 +28,8 @@
     "prettier": "^3.9.6",
     "tsc-alias": "^1.9.4",
     "turbo": "^2.10.12",
+    "typedoc": "0.28.20",
+    "typedoc-plugin-markdown": "4.13.1",
     "typescript": "~5.9.3"
   }
 }
