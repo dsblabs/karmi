@@ -36,6 +36,20 @@ describe("Thread event log", () => {
     });
   });
 
+  it("seeds and reads more rows than one SQL statement can bind", async () => {
+    await withLog("bound-source", (open) => {
+      const log = open();
+      for (let n = 0; n < 250; n++) log.append(1, delta, undefined, n);
+      const rows = log.copyThrough(250);
+      const seqs = rows.map((row) => row.seq);
+      expect(log.usageRecords(seqs)).toEqual([]);
+      log.clear();
+      log.seed(rows);
+      expect(log.head).toBe(250);
+      expect(log.copyThrough(250)).toEqual(rows);
+    });
+  });
+
   it("reads a range without the event types that the granularity omits", async () => {
     await withLog("read", (open) => {
       const log = open();

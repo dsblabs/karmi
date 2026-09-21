@@ -129,6 +129,7 @@ import { drizzle } from "drizzle-orm/durable-sqlite";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
+import { MAX_BOUND_VALUES } from "./db/bound-values";
 import threadMigrations from "./db/thread/migrations";
 import * as threadSchema from "./db/thread/schema";
 
@@ -137,8 +138,8 @@ export const SNAPSHOT_LIMIT = 256 * 1024;
 const MAX_STEP_ATTEMPTS = 3;
 const REPLAY_LIMIT = 256;
 const SOCKET_LIMIT = 64;
-/** How many Usage records one Queue message carries at most. */
-const USAGE_BATCH = 100;
+/** How many Usage records one Queue message carries at most. One statement reads them, so it binds each `seq`. */
+const USAGE_BATCH = MAX_BOUND_VALUES;
 /** How long a Step may run without progress before the alarm presumes it lost and re-enters the loop. */
 const STEP_WATCHDOG_MS = 60_000;
 /** How long a Fork's copies may run before the cleanup Alarm treats the Fork as abandoned by an eviction. */

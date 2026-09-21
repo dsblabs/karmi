@@ -31,6 +31,23 @@ export const rawSqlExecSyntax = {
   message: "Use the owning db module instead of calling storage.sql.exec directly.",
 };
 
+const boundValues =
+  "One SQL statement of a Durable Object binds at most 100 values. Split the list with boundBatches() from db/bound-values.ts.";
+
+/** A list of unknown length must not reach one SQL statement, because each entry binds a value. */
+export const boundValuesSyntax = [
+  {
+    selector:
+      "CallExpression[callee.property.name='values'] > :matches(ArrayExpression:has(SpreadElement), CallExpression[callee.property.name=/^(map|slice|filter|flatMap)$/]).arguments",
+    message: boundValues,
+  },
+  {
+    selector:
+      "CallExpression[callee.name=/^(inArray|notInArray)$/] > :matches(ArrayExpression:has(SpreadElement), CallExpression[callee.property.name=/^(map|slice|filter|flatMap)$/]).arguments",
+    message: boundValues,
+  },
+];
+
 export const restrictedSyntax = [
   { selector: "Decorator", message: "No decorators in karmi (ADR-0002)." },
   ...extensionlessImportSyntax,
@@ -47,6 +64,7 @@ export const restrictedSyntax = [
     message: `Don't cast JSON.parse inline. Decode each stored or remote shape in one function. ${see}`,
   },
   rawSqlExecSyntax,
+  ...boundValuesSyntax,
 ];
 
 export const extensionlessImportPattern = {
