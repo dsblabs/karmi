@@ -44,6 +44,7 @@ The package has three public entries: `src/index.ts`, `src/testing/index.ts` and
 ## Rules that the code cannot show
 
 - Only `EventLog` in `event-log.ts` reads or writes the `events` table. It assigns each `seq`, decodes the `json` column and has one named read for each question about the log. The Thread Durable Object does not query the table. The `append` of the Durable Object calls `EventLog.append` first. Then it fills the outboxes, sends the event to the Subscribers and tells the parent Thread, in that order and in the same synchronous write.
+- One SQL statement of a Durable Object binds at most 100 values. A statement that takes a list of unknown length splits the list with `boundBatches` in `db/bound-values.ts`. `EventLog.seed` and `EventLog.usageRecords` are examples. The linter refuses the list forms that skip it.
 - A module that owns Thread tables takes only the database in its constructor. `openThreadDatabase` in `db/thread/database.ts` opens that database for a direct test. `test/event-log.test.ts`, `test/input-queue.test.ts`, `test/usage-outbox.test.ts` and `test/delivery-outbox.test.ts` are examples. Such a test contains only the rules of the module. The Turn-level tests show that the modules work together.
 - Each module that owns Thread tables has a `clear()`. The delete of a Thread calls each `clear()` in one transaction. Thus a new table of a module cannot stay behind after a delete.
 - `UsageOutbox` in `usage.ts` owns the `usage_outbox` table. It holds only the `seq` of each Usage record. The record is in the event log.

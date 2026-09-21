@@ -43,6 +43,8 @@ These operations are pure functions of plain data: to fold events, to calculate 
 
 The schema file of each Durable Object is the source of truth. Run `pnpm db:generate` to generate versioned migrations from it. Each migration runs one time. Do not edit or combine a generated migration after you merge it. Do not examine the live schema on each startup.
 
+One SQL statement of a Durable Object binds at most 100 values. A statement above the limit fails with `too many SQL variables`. An inserted row binds one value for each column, and an `IN` list binds one value for each entry. When the length of a list comes from data, split the list with `boundBatches()` from `packages/core/src/db/bound-values.ts` and run one statement for each batch. Take a limit on a batch from `MAX_BOUND_VALUES`. The linter refuses a spread, `map`, `slice` or `filter` result as the argument of `.values()`, `inArray()` or `notInArray()`. Test a list statement with more than 100 entries, because a short list hides the failure.
+
 ## Ids and keys
 
 Build every storage key, job id and cache key in one function. The code that creates an id must call the same helper as the code that finds or cancels it.

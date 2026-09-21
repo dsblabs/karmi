@@ -15,6 +15,7 @@ import {
   notInArray,
   sql,
 } from "drizzle-orm";
+import { boundBatches } from "./db/bound-values";
 import type { ThreadDatabase } from "./db/thread/database";
 import { events } from "./db/thread/schema";
 import { excludedEventTypes } from "./thread-sockets";
@@ -22,8 +23,8 @@ import type { Granularity, ThreadEvent, ThreadEventData, TurnInput } from "./thr
 import type { LoggedEvent } from "./turn-state";
 import type { UsageRecord } from "./usage";
 
-// A Durable Object refuses a statement with more than 100 bound values, and each seeded row binds one per column.
-const SEED_ROWS = Math.floor(100 / Object.keys(getTableColumns(events)).length);
+// Each seeded row binds one value per column.
+const EVENT_COLUMNS = Object.keys(getTableColumns(events)).length;
 
 /** One stored row of the Thread event log, as a Fork copies it. */
 export type EventRow = typeof events.$inferSelect;
@@ -185,13 +186,9 @@ export class EventLog {
 
   /** The Usage records at `seqs`, in `seq` order. A `seq` that holds no Usage record gives nothing. */
   usageRecords(seqs: readonly number[]): UsageRecord[] {
-    if (seqs.length === 0) return [];
-    const rows = this.db
-      .select()
-      .from(events)
-      .where(inArray(events.seq, [...seqs]))
-      .orderBy(asc(events.seq))
-      .all();
+    const rows = boundBatches(seqs.toSorted((a, b) => a - b)).flatMap((batch) =>
+      this.db.select().from(events).where(inArray(events.seq, batch)).orderBy(asc(events.seq)).all(),
+    );
     const records: UsageRecord[] = [];
     for (const row of rows) {
       const event = toEvent(row);
@@ -207,11 +204,7 @@ export class EventLog {
 
   /** Takes `rows` as the whole log of a new Fork. Call it only on an empty log. */
   seed(rows: readonly EventRow[]): void {
-    for (let from = 0; from < rows.length; from += SEED_ROWS)
-      this.db
-        .insert(events)
-        .values(rows.slice(from, from + SEED_ROWS))
-        .run();
+    for (const batch of boundBatches(rows, EVENT_COLUMNS)) this.db.insert(events).values(batch).run();
     this.last = rows.at(-1)?.seq ?? 0;
   }
 
