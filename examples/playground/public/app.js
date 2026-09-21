@@ -440,8 +440,9 @@ async function renderScenario(scenario) {
         : busy
           ? "The Agent works…"
           : "Ctrl + Enter runs the prompt.";
-    if (busy && waiting === 0 && !live) steps.append(typing);
-    else typing.remove();
+    // A node that moves restarts its animation, so the line moves only when it is not the last one.
+    if (!(busy && waiting === 0 && !live)) typing.remove();
+    else if (steps.lastChild !== typing) steps.append(typing);
   };
   const add = (node) => {
     // The view follows new content only when the operator is already at the end.
