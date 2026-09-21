@@ -49,6 +49,8 @@ An empty list shows a `.muted` sentence that tells what fills it. Do not show an
 
 - Set a button to `disabled` while its request runs. Set it back in a `finally` block.
 - The `sync` function owns the **Run** button, the Turn controls, the status line and the typing indicator. Change the `busy`, `waiting` and `parked` values, then call `sync`. Do not set them from a second place.
+- A scenario with `upload` gets a `.row` with the file input, **Attach the sample file** and **Remove the file**. A sent message clears the file.
+- A scenario that compares Threads gets a `select` next to **Run**. It selects the Thread that the conversation shows and that receives each Turn. The `syncTarget` function owns its options.
 - A scenario with `controls` gets a second `.row` in the composer: **Add to this Turn**, **Queue for the next Turn** and **Cancel the Turn**. These buttons work only while a Turn runs or is parked.
 - The `add` function appends to the conversation. It scrolls only when the operator is at the end.
 - A card gets the `changed` class when its data changes. The operator then sees the effect of a Tool call.
