@@ -80,8 +80,11 @@ const ScheduleRequestSchema = z.object({
 /** A request to create a Schedule, as `thread.schedule()` and the `schedule` Tool accept it. */
 export type ScheduleRequest = z.output<typeof ScheduleRequestSchema>;
 
-/** Why a Schedule was not created: the request was invalid, or it broke a limit. */
-export type ScheduleFailure = { code: Extract<KarmiErrorCode, "schedule.invalid" | "schedule.limit">; message: string };
+/**
+ * Why a Schedule was not created. The code is `schedule.invalid` for a bad request and `schedule.limit` for a broken
+ * limit. A `channelRef` that `send` refuses gives the code that `send` gives.
+ */
+export type ScheduleFailure = { code: KarmiErrorCode; message: string };
 /** A decoded request with its timing and first firing, or the failure that rejected it. */
 export type ScheduleResolution =
   { ok: true; timing: ScheduleTiming; nextAt: number; request: ScheduleRequest } | ({ ok: false } & ScheduleFailure);

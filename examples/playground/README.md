@@ -2,13 +2,14 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has five browser scenarios:
+This version has six browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
 - **Tools, Skills and a Hook**
 - **Control a Turn and its parked work**
 - **Media and independent Thread Forks**
+- **Schedules, external triggers and offline delivery**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -75,7 +76,7 @@ Do these steps:
 2. Select **Run**. The Agent answers with the return time of 30 days.
 3. Select **Change the instructions** or **Change the Fragment arguments**, then **Save the Spec**. The Scope stores a new version, and the page starts a new Thread. You do not deploy or start the Worker again.
 4. Select **Run** again. The new Thread uses the new version, and earlier answers cannot change the result.
-5. Select **Grant in the ceiling**, then **Save the Spec**. The Scope config has the ceiling `scheduling.maxPending: 2`, and the grant is not larger.
+5. Select **Grant in the ceiling**, then **Save the Spec**. The Scope config has the ceiling `scheduling.maxPending: 5`, and the grant is not larger.
 6. Select **Grant more than the ceiling**, then **Save the Spec**. The Scope rejects the Spec with the issue `capability.over-ceiling` and keeps the stored version.
 
 You can also edit the JSON. A Spec that is not valid shows each issue with its code and its path. The route stores only the Agent `shop-assistant`, thus the editor cannot replace the Agent of a different scenario. A reset stores the starting Spec again as a new version and starts a new Thread.
@@ -148,9 +149,50 @@ Images, audio, video and PDF can reach a compatible model. Other files stay stor
 
 The Agent is in [`src/media-forks.ts`](./src/media-forks.ts). The Fork, delete and download routes are in [`src/fork-routes.ts`](./src/fork-routes.ts).
 
+## The Schedules and offline delivery scenario
+
+**Schedules, external triggers and offline delivery** has an Agent at a sample reminder desk. The Agent has the `scheduling` grant, thus it has the built-in Tools `schedule`, `cancel_schedule` and `list_schedules`. Its Tool `send_reminder` has no Policy rule, thus each call waits for an Approval.
+
+The **Pending Schedules** card creates a Schedule with one of three timing modes:
+
+| Mode | What you do | What you see |
+| --- | --- | --- |
+| **Delayed** | Give a duration, for example `1m`. | The Schedule fires one time after the delay. Then the Thread deletes it. |
+| **Timed** | Give a time as ISO 8601 text. The page suggests a time two minutes from now. | The Schedule fires one time at that time. A time in the past fires immediately. |
+| **Recurring** | Give a cron expression with five fields. The zone is UTC. | The Schedule fires on each tick and stays in the list. The suggested `* * * * *` fires each minute. |
+
+Do these steps:
+
+1. Create a **Delayed** Schedule. The card lists it with the time of its next firing. The conversation shows `schedule.created`.
+2. Wait for the delay. The conversation shows `schedule.fired`, then a Turn that starts with the Event `reminder.due`. The Agent asks to call `send_reminder`. Select **Allow**. The **Reminder system** card shows the reminder.
+3. Create a **Recurring** Schedule, then select **Cancel the Schedule**. The conversation shows `schedule.cancelled`. Each tick of a recurring Schedule calls the model, so do not leave one active.
+4. Select **Run** with the **Agent Schedule** prompt. The Agent calls the `schedule` Tool. Its Schedule appears in the same card with the Event `schedule.fired`. The **List** and **Agent cancel** prompts make the Agent call `list_schedules` and `cancel_schedule`. A Schedule of the Agent names no Deliverer. The Thread keeps the last one, so its Turn goes to the same inbox.
+5. Select **Send the supplier Event**. You play the part of a different system. A Turn starts with the Event `supplier.delivery`.
+6. Select **Detach the Subscriber**. The page closes its WebSocket and reads new events with plain requests. A plain read of the event log is not a Subscriber.
+7. Create a **Delayed** Schedule again. About one second after the Approval request, the **Sample inbox** card shows it. Select **Allow** in the inbox. The inbox then shows the completed Turn.
+8. Select **Attach the Subscriber** and send the supplier Event again. The inbox gets no message, because an attached Subscriber stops offline delivery. A second browser tab with this scenario is also a Subscriber, so close it before you detach.
+
+The sample inbox is sample data, not an email account. The Deliverer `sample_inbox` writes to it. Each Event of the scenario names the Deliverer in `channelRef.deliverer`, and the Thread keeps the last one. Delivery is at-least-once, thus the inbox ignores an event with a Thread key and `seq` that it has already.
+
+In this scenario the page attaches with the WebSocket route, not with SSE. The Thread learns of a closed WebSocket at once. In local development, the Thread can learn of a closed SSE stream much later, and offline delivery stays off until then.
+
+### The external trigger from a terminal
+
+A trigger from a different system is your code: it finds the Thread and sends an Event. The Worker has a `scheduled` handler that calls the same function as **Send the supplier Event**. `wrangler.jsonc` has no cron, so no deployment calls the model on a timer. To call the handler in local development, run this command while `pnpm dev` runs. Use the port that `pnpm dev` printed:
+
+```sh
+curl "http://localhost:8787/cdn-cgi/handler/scheduled"
+```
+
+The page then shows a Turn with the Event `supplier.delivery`. To run the handler on a timer in your own deployment, add `"triggers": { "crons": ["0 9 * * *"] }` to `wrangler.jsonc`.
+
+A reset cancels each pending Schedule, deletes the Thread and empties the inbox and the reminder system. No recurring Schedule stays active. It does not change another scenario or a Provider credential.
+
+The scenario needs a model that supports Tool calls. The Agent, the Tool and the Deliverer are in [`src/reminders.ts`](./src/reminders.ts). The routes and the trigger function are in [`src/schedule-routes.ts`](./src/schedule-routes.ts). The `scheduled` handler is in [`src/worker.ts`](./src/worker.ts).
+
 ## Model limits
 
-The refund scenario, the Tools scenario and the Turn control scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
+The refund scenario, the Tools scenario, the Turn control scenario and the Schedules scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
 The media scenario shows a separate note about the media types that models can receive. Storage and download do not depend on model support.
 
@@ -210,6 +252,7 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 
 - The state is in the local emulation, in `.wrangler/`. It is not in a Cloudflare account.
 - Local development and a deployed Worker use separate state.
+- Local development does not run a cron trigger on its own. Call the `scheduled` handler as the Schedules scenario describes.
 
 ## Tests
 

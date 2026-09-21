@@ -3,6 +3,7 @@ import { DISPATCH_PROMPTS, MAX_STEPS, TURNS } from "./dispatch";
 import { FORKS, FORKS_PROMPT } from "./media-forks";
 import type { ProviderSetup } from "./provider-options";
 import { REFUND, REFUND_PROMPT } from "./refund";
+import { REMINDER_PROMPTS, SCHEDULES } from "./reminders";
 import { STOCKROOM, STOCKROOM_PROMPTS } from "./stockroom";
 
 const CODE = "https://github.com/dsblabs/karmi/blob/main/examples/playground";
@@ -117,7 +118,18 @@ export const SCENARIOS: readonly Scenario[] = [
     upload: true,
   },
   notBuilt("delegation", "Delegation", "Child Threads and their Approvals"),
-  notBuilt("schedules", "Schedules and delivery", "Schedules, external triggers and offline delivery"),
+  {
+    id: SCHEDULES,
+    group: "Schedules and delivery",
+    title: "Schedules, external triggers and offline delivery",
+    summary:
+      "Create delayed, timed and recurring Schedules, or let the Agent create one. Each Schedule that fires starts a Turn. Detach the Subscriber of the page, and a Deliverer writes each completed Turn and each Approval request to a sample inbox.",
+    built: true,
+    prerequisites: [],
+    needs: ["toolCalls"],
+    prompts: REMINDER_PROMPTS,
+    code: `${CODE}/src/reminders.ts`,
+  },
   notBuilt("memory", "Memory and Knowledge", "User Memory and document search", [
     "Vector retrieval needs a Cloudflare Vectorize index.",
   ]),
@@ -201,6 +213,7 @@ const agents = row(AGENTS);
 const tools = row(STOCKROOM);
 const turns = row(TURNS);
 const forks = row(FORKS);
+const schedules = row(SCHEDULES);
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
@@ -236,6 +249,41 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Upload a file with multipart HTTP and download its stored bytes.",
   ),
   forks("Thread and Scope media access", "HTTP and media", "A media route refuses a Thread outside this scenario."),
+  schedules(
+    "Delayed, timed and recurring Schedules",
+    "Schedules and delivery",
+    "Create a Schedule with each timing. The card lists it with the time of its next firing.",
+  ),
+  schedules(
+    "Schedules of an Agent",
+    "Schedules and delivery",
+    "The scheduling grant gives the Agent the schedule Tool. Its Schedule appears in the same list.",
+  ),
+  schedules(
+    "Schedule firing",
+    "Schedules and delivery",
+    "A schedule.fired event starts a Turn with the Event of the Schedule. A recurring Schedule stays in the list.",
+  ),
+  schedules(
+    "Schedule cancellation",
+    "Schedules and delivery",
+    "Cancel removes the Schedule. Reset cancels each pending Schedule.",
+  ),
+  schedules(
+    "External triggers",
+    "Schedules and delivery",
+    "The trigger route and the scheduled handler of the Worker send the same Event to the Thread.",
+  ),
+  schedules(
+    "Offline delivery",
+    "Schedules and delivery",
+    "With the Subscriber detached, the sample inbox gets each completed Turn and each Approval request.",
+  ),
+  schedules(
+    "Delivery and an attached Subscriber",
+    "Schedules and delivery",
+    "With the Subscriber attached, the inbox gets nothing. The detached page reads events without a stream.",
+  ),
   shown("Provider selection", "Providers and MCP", "Setup selects one of five Providers. The header shows it."),
   {
     group: "Development and operations",

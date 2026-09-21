@@ -26,4 +26,9 @@ const playground = createPlayground({
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;
 export { SampleDataDO } from "../src/sample-data";
 
-export default { fetch: playground.fetch, queue: karmi.queueHandler };
+export default {
+  fetch: playground.fetch,
+  queue: karmi.queueHandler,
+  scheduled: (controller: ScheduledController, _env: unknown, ctx: ExecutionContext) =>
+    ctx.waitUntil(playground.supplierDelivery(controller.scheduledTime)),
+};

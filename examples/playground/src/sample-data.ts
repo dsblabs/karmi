@@ -27,6 +27,17 @@ export class SampleDataDO extends DurableObject {
     await this.ctx.storage.put("data", data);
   }
 
+  /**
+   * Adds one item to the sample data, which is a JSON list. It adds nothing when the list has an item with the
+   * same `id`. One call is atomic, thus two callers at the same time lose no item.
+   */
+  async append(id: string, item: string): Promise<void> {
+    const list = decodeSample(itemList, [], await this.ctx.storage.get<string>("data"));
+    if (list.some((entry) => entry.id === id)) return;
+    const added: unknown = JSON.parse(item);
+    await this.ctx.storage.put("data", JSON.stringify([...list, added]));
+  }
+
   /** Deletes the sample data and returns the next generation. */
   async reset(): Promise<number> {
     const generation = ((await this.ctx.storage.get<number>("generation")) ?? 0) + 1;
@@ -35,6 +46,9 @@ export class SampleDataDO extends DurableObject {
     return generation;
   }
 }
+
+// The list that `append` keeps. It checks only the id, because the scenario decodes each other part of an item.
+const itemList = z.array(z.looseObject({ id: z.string() }));
 
 /**
  * Decodes the stored sample data of one scenario with its schema. Data that is absent or not valid gives the

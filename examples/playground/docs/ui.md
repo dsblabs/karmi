@@ -52,6 +52,7 @@ An empty list shows a `.muted` sentence that tells what fills it. Do not show an
 - A scenario with `upload` gets a `.row` with the file input, **Attach the sample file** and **Remove the file**. A sent message clears the file.
 - A scenario that compares Threads gets a `select` next to **Run**. It selects the Thread that the conversation shows and that receives each Turn. The `syncTarget` function owns its options.
 - A scenario with `controls` gets a second `.row` in the composer: **Add to this Turn**, **Queue for the next Turn** and **Cancel the Turn**. These buttons work only while a Turn runs or is parked.
+- The Schedules scenario gets a **Subscriber of this page** card. **Detach the Subscriber** closes the socket of the page. The page then reads new events and the scenario state on a timer. The `setAttached` function owns this state.
 - The `add` function appends to the conversation. It scrolls only when the operator is at the end.
 - A card gets the `changed` class when its data changes. The operator then sees the effect of a Tool call.
 - Check `mine === view` after each `await` in a render function. The operator can open a different view during the request.

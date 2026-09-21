@@ -44,4 +44,11 @@ const playground = createPlayground({
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;
 export { SampleDataDO } from "./sample-data";
 
-export default { fetch: playground.fetch, queue: karmi.queueHandler };
+export default {
+  fetch: playground.fetch,
+  queue: karmi.queueHandler,
+  // The external trigger of the Schedules scenario. wrangler.jsonc has no cron, thus no deployment calls the model
+  // on a timer. The README tells how to call this handler.
+  scheduled: (controller: ScheduledController, _env: unknown, ctx: ExecutionContext) =>
+    ctx.waitUntil(playground.supplierDelivery(controller.scheduledTime)),
+};

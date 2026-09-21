@@ -260,3 +260,59 @@ for (const [name, [width, height]] of Object.entries(VIEWPORTS))
           );
     }
   });
+
+async function openSchedules(page: Page): Promise<void> {
+  await openScenario(page, "schedules");
+  await expect(page.locator("#schedules")).toContainText("Create a Schedule here");
+}
+
+async function createSchedule(page: Page, mode: string, value: string): Promise<void> {
+  await page.getByLabel("Timing mode").selectOption(mode);
+  await page.getByLabel("Timing value").fill(value);
+  await page.getByRole("button", { name: "Create the Schedule" }).click();
+}
+
+test("a Schedule fires into the conversation, and a cancel removes a recurring Schedule", async ({ page }) => {
+  await openSchedules(page);
+  await createSchedule(page, "cron", "0 9 * * *");
+  await expect(page.locator("#schedules")).toContainText("Recurring");
+  await page.getByRole("button", { name: "Cancel the Schedule" }).click();
+  await expect(page.locator("#schedules")).toContainText("Create a Schedule here");
+  await expect(page.locator("#steps")).toContainText("The Thread cancelled a Schedule.");
+
+  await createSchedule(page, "delay", "1s");
+  await expect(page.locator("#steps")).toContainText("A Schedule fired.");
+  await expect(page.locator("#steps")).toContainText("reminder.due");
+  // The Subscriber is attached, thus the Approval request shows in the conversation and the inbox stays empty.
+  await page.locator("#steps").getByRole("button", { name: "Allow" }).click();
+  await expect(page.locator("#steps")).toContainText("I sent the reminder.");
+  await expect(page.locator("#reminders")).toContainText("Sam Rivera");
+  await expect(page.locator("#inbox")).toContainText("wrote no message yet");
+});
+
+test("the Agent makes a Schedule with its scheduling grant", async ({ page }) => {
+  await openSchedules(page);
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps")).toContainText("I made the Schedule.");
+  await expect(page.locator("#schedules")).toContainText("schedule.fired");
+});
+
+test("a detached page gets the Approval request and the completed Turn in the sample inbox", async ({ page }) => {
+  await openSchedules(page);
+  await page.getByRole("button", { name: "Detach the Subscriber" }).click();
+  await expect(page.locator("#subscriber")).toContainText("detached");
+  await createSchedule(page, "delay", "1s");
+  await expect(page.locator("#inbox")).toContainText("The Agent wants to call send_reminder.", { timeout: 15_000 });
+  // The detached page reads the events with plain requests, thus the conversation still shows the Turn.
+  await expect(page.locator("#steps")).toContainText("A Schedule fired.");
+  await page.locator("#inbox").getByRole("button", { name: "Allow" }).click();
+  await expect(page.locator("#inbox")).toContainText("I sent the reminder.", { timeout: 15_000 });
+  await expect(page.locator("#reminders")).toContainText("Sam Rivera");
+
+  await page.getByRole("button", { name: "Send the supplier Event" }).click();
+  await expect(page.locator("#inbox")).toContainText("The supplier delivered 24 kettles.", { timeout: 15_000 });
+
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#inbox")).toContainText("wrote no message yet");
+  await expect(page.locator("#schedules")).toContainText("Create a Schedule here");
+});

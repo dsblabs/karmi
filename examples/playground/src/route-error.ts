@@ -8,7 +8,10 @@ export type RouteErrorCode =
   | "playground.forkMissing"
   | "playground.forkPosition"
   | "playground.noJob"
-  | "playground.originalDeleted";
+  | "playground.originalDeleted"
+  | "schedule.invalid"
+  | "schedule.limit"
+  | "schedule.notFound";
 
 /** Returns a Playground application error as a JSON response. */
 export function routeError(status: number, code: RouteErrorCode, message: string): Response {

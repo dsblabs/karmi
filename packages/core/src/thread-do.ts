@@ -454,18 +454,25 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     });
   }
 
-  send(address: ThreadAddress, input: TurnInput, steer = false): Outcome<{ turn: number; seq: number }> {
-    let binding: DeliveryBinding | undefined;
+  /** The Deliverer route that `channelRef` names, or the failure that refuses an input with this `channelRef`. */
+  private deliveryRoute(channelRef: unknown): Outcome<DeliveryBinding | undefined> {
     try {
-      binding = deliveryBinding(input.channelRef);
+      const binding = deliveryBinding(channelRef);
       if (binding && !this.deployment.catalogue.deliverers.has(binding.name))
         throw new KarmiError("deliverer.notFound", `Unknown Deliverer "${binding.name}".`);
       if (binding && !this.env.KARMI_QUEUE)
         throw new KarmiError("bindings.missing", "Offline delivery requires KARMI_QUEUE.");
+      return ok(binding);
     } catch (error) {
       if (error instanceof KarmiError) return fail(error);
       throw error;
     }
+  }
+
+  send(address: ThreadAddress, input: TurnInput, steer = false): Outcome<{ turn: number; seq: number }> {
+    const route = this.deliveryRoute(input.channelRef);
+    if (!route.ok) return route;
+    const binding = route.value;
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     const row = entered.value;
@@ -2390,6 +2397,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const limit = overScheduleLimit(limits, resolved.timing, this.scheduleStore.count(), resolved.nextAt, now);
     if (limit) return { ok: false, code: "schedule.limit", message: `limit_exceeded: ${limit}` };
     const { input, delay } = resolved.request;
+    // A firing sets the route as `send` does, thus the same check refuses the Schedule now and not at each firing.
+    const route = this.deliveryRoute(input.channelRef);
+    if (!route.ok) return { ok: false, code: route.code, message: route.message };
     const record: ScheduleRecord = { id, timing: resolved.timing, input, createdAt: now, nextAt: resolved.nextAt };
     this.scheduleStore.save(record);
     this.scheduler.set({
@@ -2439,6 +2449,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       const entered = this.enter(this.address(row));
       if (!entered.ok) this.logger(row).warn("Schedule firing refused", { scheduleId, code: entered.code });
       else {
+        const route = this.deliveryRoute(record.input.channelRef);
+        if (route.ok && route.value) this.deliveries.route(route.value);
+        // The Deliverer can leave the Catalogue after the Schedule was created. The Turn still runs.
+        else if (!route.ok) this.logger(row).warn("Schedule firing kept the route", { scheduleId, code: route.code });
         record.pendingInput = this.enqueue(entered.value, record.input, false).id;
         this.append(
           row.turn,

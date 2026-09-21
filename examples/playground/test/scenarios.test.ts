@@ -82,7 +82,7 @@ describe("the Agent Spec scenario", () => {
       },
     });
     expect(await state("agents")).toMatchObject({
-      agent: { version: stored, spec: { capabilities: { scheduling: { maxPending: 2 } } } },
+      agent: { version: stored, spec: { capabilities: { scheduling: { maxPending: 5 } } } },
     });
   });
 
