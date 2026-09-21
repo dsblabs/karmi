@@ -65,7 +65,7 @@ import type { Logger } from "./context";
 import type { FragmentContext } from "./fragment";
 import { foldLoaded, type Loaded } from "./loading";
 import { EventLog, type EventRow } from "./event-log";
-import { deliveryBinding, type DeliveryBinding } from "./deliverer";
+import { DeliveryOutbox, deliveryBinding, type DeliveryBinding } from "./deliverer";
 import type { Deployment } from "./deployment";
 import { errorMessage, KarmiError } from "./errors";
 import type { Compacted, HookContextBase, HookContexts, HookResults, TurnEnd } from "./hook";
@@ -126,7 +126,7 @@ import type { QueueMessage } from "./queue";
 import { UsageOutbox, type UsageAttribution } from "./usage";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
-import { and, asc, eq, lte, max } from "drizzle-orm";
+import { and, asc, eq, lte } from "drizzle-orm";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import threadMigrations from "./db/thread/migrations";
 import * as threadSchema from "./db/thread/schema";
@@ -244,7 +244,6 @@ const decodeSnapshot = (value: TurnSnapshot): TurnSnapshot => {
   const legacy = value as TurnSnapshot & { context?: TurnSnapshot["context"] };
   return { ...legacy, context: legacy.context ?? resolveContext({}, {}) };
 };
-const decodeBinding = (value: DeliveryBinding): DeliveryBinding => value;
 const decodeInput = (value: TurnInput): TurnInput => value;
 const decodeForkEvent = (json: string): ThreadEventData => JSON.parse(json);
 
@@ -260,6 +259,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private readonly scheduleStore: ScheduleStore;
   private readonly log: EventLog;
   private readonly usageOutbox: UsageOutbox;
+  private readonly deliveries: DeliveryOutbox;
   private readonly db: DrizzleSqliteDODatabase<typeof threadSchema.threadSchema>;
   private syncWork: Promise<void> | undefined;
   private syncAgain = false;
@@ -282,6 +282,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     this.scheduleStore = new ScheduleStore(this.db);
     this.log = new EventLog(this.db);
     this.usageOutbox = new UsageOutbox(this.db);
+    this.deliveries = new DeliveryOutbox(this.db);
     ctx.blockConcurrencyWhile(async () => {
       await migrate(this.db, threadMigrations);
     });
@@ -430,8 +431,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       this.log.clear();
       this.usageOutbox.clear();
       tx.delete(threadSchema.inputs).run();
-      tx.delete(threadSchema.deliveries).run();
-      tx.delete(threadSchema.deliveryRoutes).run();
+      this.deliveries.clear();
       tx.delete(threadSchema.alarms).run();
       tx.delete(threadSchema.delegationOrigins).run();
       tx.delete(threadSchema.delegationChildren).run();
@@ -467,12 +467,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     const row = entered.value;
-    if (binding)
-      this.db
-        .insert(threadSchema.deliveryRoutes)
-        .values({ id: 1, binding })
-        .onConflictDoUpdate({ target: threadSchema.deliveryRoutes.id, set: { binding } })
-        .run();
+    if (binding) this.deliveries.route(binding);
     const { turn } = this.enqueue(row, input, steer);
     return ok({ turn, seq: this.log.head });
   }
@@ -631,13 +626,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     if (this.ctx.getWebSockets().length > 0) return ok(null);
-    const delivery = this.db
-      .select({ binding: threadSchema.deliveries.binding })
-      .from(threadSchema.deliveries)
-      .where(and(eq(threadSchema.deliveries.fromSeq, fromSeq), eq(threadSchema.deliveries.toSeq, toSeq)))
-      .get();
-    if (!delivery) return ok(null);
-    const binding = decodeBinding(delivery.binding);
+    const binding = this.deliveries.binding(fromSeq, toSeq);
+    if (!binding) return ok(null);
     const deliverer = this.deployment.catalogue.deliverers.get(binding.name);
     if (!deliverer) return fail(new KarmiError("deliverer.notFound", `Unknown Deliverer "${binding.name}".`));
     const events = this.log.read(fromSeq - 1, deliverer.granularity ?? "part", toSeq - fromSeq + 1, toSeq);
@@ -873,29 +863,12 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       this.usageOutbox.enqueue(seq);
       this.scheduleUsageFlush(at);
     }
-    if (data.type === "turn.completed" || data.type === "approval.requested") {
-      const route = this.db
-        .select({ binding: threadSchema.deliveryRoutes.binding })
-        .from(threadSchema.deliveryRoutes)
-        .where(eq(threadSchema.deliveryRoutes.id, 1))
-        .get();
-      if (route) {
-        const previous =
-          this.db
-            .select({ seq: max(threadSchema.deliveries.toSeq) })
-            .from(threadSchema.deliveries)
-            .where(eq(threadSchema.deliveries.turn, turn))
-            .get()?.seq ?? null;
-        const first = previous === null ? this.log.firstSeq(turn) : previous + 1;
-        if (first === undefined) throw new Error(`Turn ${turn} has no first event.`);
-        this.db
-          .insert(threadSchema.deliveries)
-          .values({ toSeq: seq, fromSeq: first, turn, binding: route.binding })
-          .run();
-        // Wait a second to let a reconnecting client reattach. The Queue checks attachment again.
-        this.scheduler.set({ id: `delivery:${seq}`, kind: "delivery", dueAt: at + 1000, payload: { toSeq: seq } });
-      }
-    }
+    if (
+      (data.type === "turn.completed" || data.type === "approval.requested") &&
+      this.deliveries.enqueue(turn, seq, () => this.log.firstSeq(turn))
+    )
+      // Wait a second to let a reconnecting client reattach. The Queue checks attachment again.
+      this.scheduler.set({ id: `delivery:${seq}`, kind: "delivery", dueAt: at + 1000, payload: { toSeq: seq } });
     this.broadcast(event);
     if (
       data.type === "approval.requested" ||
@@ -961,34 +934,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (alarm.kind === "container-watchdog") return this.pollContainer();
     if (alarm.kind === "thread-cleanup") return this.cleanup(decodeCleanup(alarm.payload));
     if (this.db.select({ id: threadSchema.deletedThreads.id }).from(threadSchema.deletedThreads).get()) return;
-    if (alarm.kind === "delivery") {
-      // Any attached Subscriber suppresses delivery. Socket tags can distinguish audiences if needed.
-      if (this.ctx.getWebSockets().length > 0) return;
-      const row = this.row();
-      const toSeq = decodeDeliveryAlarm(alarm.payload);
-      const delivery = this.db
-        .select({ from_seq: threadSchema.deliveries.fromSeq })
-        .from(threadSchema.deliveries)
-        .where(eq(threadSchema.deliveries.toSeq, toSeq))
-        .get();
-      if (!delivery) return;
-      const status = await this.scopeStub(row).status(row.scope_id);
-      if (!status.ok) throw new KarmiError(status.code, status.message);
-      if (status.value.state === "destroying" || status.value.state === "destroyed") return;
-      if (!this.env.KARMI_QUEUE) throw new KarmiError("bindings.missing", "Offline delivery requires KARMI_QUEUE.");
-      await this.env.KARMI_QUEUE.send({
-        kind: "delivery",
-        scope: row.scope_id,
-        threadKey: encodeKey({
-          agent: row.agent_id,
-          threadId: row.thread_id,
-          ...(row.user_id !== null && { user: row.user_id }),
-        }),
-        fromSeq: delivery.from_seq,
-        toSeq,
-      });
-      return;
-    }
+    if (alarm.kind === "delivery") return this.queueDelivery(decodeDeliveryAlarm(alarm.payload));
     if (alarm.kind === "usage") return this.flushUsage();
     if (alarm.kind === "delegation") return this.syncDelegations();
     if (alarm.kind === "delegation-notify") return this.notifyParent();
@@ -1839,6 +1785,30 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       }),
       ...(started.fallback && { fallback: started.fallback }),
     };
+  }
+
+  /** Hands the range that ends at `toSeq` to the Queue, unless a Subscriber is attached or the Scope is going away. */
+  private async queueDelivery(toSeq: number): Promise<void> {
+    // Any attached Subscriber suppresses delivery. Socket tags can distinguish audiences if needed.
+    if (this.ctx.getWebSockets().length > 0) return;
+    const fromSeq = this.deliveries.fromSeq(toSeq);
+    if (fromSeq === undefined) return;
+    const row = this.row();
+    const status = await this.scopeStub(row).status(row.scope_id);
+    if (!status.ok) throw new KarmiError(status.code, status.message);
+    if (status.value.state === "destroying" || status.value.state === "destroyed") return;
+    if (!this.env.KARMI_QUEUE) throw new KarmiError("bindings.missing", "Offline delivery requires KARMI_QUEUE.");
+    await this.env.KARMI_QUEUE.send({
+      kind: "delivery",
+      scope: row.scope_id,
+      threadKey: encodeKey({
+        agent: row.agent_id,
+        threadId: row.thread_id,
+        ...(row.user_id !== null && { user: row.user_id }),
+      }),
+      fromSeq,
+      toSeq,
+    });
   }
 
   /**
