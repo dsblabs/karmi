@@ -123,7 +123,7 @@ import { foldTurn, type Plan, type Request, type TurnState } from "./turn-state"
 import { resolveToolSet, toolDefinitions, toolsInContext, unloadedDeferred, type ToolSet } from "./tools";
 import { splitModelId, transcriptFromEvents } from "./transcript";
 import type { QueueMessage } from "./queue";
-import type { UsageAttribution } from "./usage";
+import { UsageOutbox, type UsageAttribution } from "./usage";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
 import { and, asc, eq, lte, max } from "drizzle-orm";
@@ -259,6 +259,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private readonly delegations: DelegationStore;
   private readonly scheduleStore: ScheduleStore;
   private readonly log: EventLog;
+  private readonly usageOutbox: UsageOutbox;
   private readonly db: DrizzleSqliteDODatabase<typeof threadSchema.threadSchema>;
   private syncWork: Promise<void> | undefined;
   private syncAgain = false;
@@ -280,6 +281,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     this.delegations = new DelegationStore(this.db);
     this.scheduleStore = new ScheduleStore(this.db);
     this.log = new EventLog(this.db);
+    this.usageOutbox = new UsageOutbox(this.db);
     ctx.blockConcurrencyWhile(async () => {
       await migrate(this.db, threadMigrations);
     });
@@ -426,6 +428,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       tx.delete(threadSchema.containerWorkspaces).run();
       tx.delete(threadSchema.threads).run();
       this.log.clear();
+      this.usageOutbox.clear();
       tx.delete(threadSchema.inputs).run();
       tx.delete(threadSchema.deliveries).run();
       tx.delete(threadSchema.deliveryRoutes).run();
@@ -867,7 +870,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     // A record is queued for the UsageHandler in the same write as the event, so an eviction never loses
     // one. Without a handler or a Queue the record only stays in the log.
     if (data.type === "usage.recorded" && this.deployment.catalogue.usageHandler && this.env.KARMI_QUEUE) {
-      this.db.insert(threadSchema.usageOutbox).values({ seq }).run();
+      this.usageOutbox.enqueue(seq);
       this.scheduleUsageFlush(at);
     }
     if (data.type === "turn.completed" || data.type === "approval.requested") {
@@ -1844,20 +1847,12 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
    */
   private async flushUsage(): Promise<void> {
     if (!this.env.KARMI_QUEUE) throw new KarmiError("bindings.missing", "Usage delivery requires KARMI_QUEUE.");
-    const rows = this.db
-      .select({ seq: threadSchema.usageOutbox.seq })
-      .from(threadSchema.usageOutbox)
-      .orderBy(asc(threadSchema.usageOutbox.seq))
-      .limit(USAGE_BATCH + 1)
-      .all();
-    const batch = rows.slice(0, USAGE_BATCH);
-    const records = this.log.usageRecords(batch.map((row) => row.seq));
+    const batch = this.usageOutbox.batch(USAGE_BATCH);
+    const records = this.log.usageRecords(batch.seqs);
     if (records.length > 0) await this.env.KARMI_QUEUE.send({ kind: "usage", records } satisfies QueueMessage);
-    this.db
-      .delete(threadSchema.usageOutbox)
-      .where(lte(threadSchema.usageOutbox.seq, batch.at(-1)?.seq ?? 0))
-      .run();
-    if (rows.length > USAGE_BATCH) this.scheduleUsageFlush(this.deployment.clock.now());
+    const last = batch.seqs.at(-1);
+    if (last !== undefined) this.usageOutbox.settle(last);
+    if (batch.more) this.scheduleUsageFlush(this.deployment.clock.now());
   }
 
   private scheduleUsageFlush(dueAt: number): void {

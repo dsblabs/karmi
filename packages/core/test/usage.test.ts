@@ -1,8 +1,11 @@
-import { createExecutionContext, createMessageBatch, getQueueResult } from "cloudflare:test";
+import { createExecutionContext, createMessageBatch, getQueueResult, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { bindLogger, consoleLogger, type Logger, type UsageRecord } from "../src/index";
 import { reply } from "../src/testing/index";
+import { openThreadDatabase } from "../src/db/thread/database";
+import { keys } from "../src/keys";
+import { UsageOutbox } from "../src/usage";
 import { sensitive } from "../src/secrets";
 import { clock, karmi, logs, provider, scope, secrets, usage } from "./worker";
 
@@ -165,6 +168,21 @@ describe("usage.recorded", () => {
     expect(await consume()).toMatchObject({ explicitAcks: ["usage"] });
     expect(await consume()).toMatchObject({ explicitAcks: ["usage"] });
     expect(usage.records).toHaveLength(1);
+  });
+
+  it("removes the waiting records of a deleted Thread from the Outbox", async () => {
+    provider.script(["Hi"]);
+    const thread = fresh();
+    await thread.send(message("Hello"));
+    const stub = env.KARMI_THREADS.getByName(keys.thread("test", `u${n}`));
+    const waiting = () =>
+      runInDurableObject(stub, (_, state) => new UsageOutbox(openThreadDatabase(state.storage.sql)).batch(10).seqs);
+    // The usage Alarm of the Turn has fired already. This record stands for one that the Queue refused.
+    await runInDurableObject(stub, (_, state) => new UsageOutbox(openThreadDatabase(state.storage.sql)).enqueue(1));
+    expect(await waiting()).toEqual([1]);
+    await thread.delete();
+    await clock.advance("1m");
+    expect(await waiting()).toEqual([]);
   });
 
   it("lets a Delegation child record its own spend with parent set, never counted on the parent", async () => {
