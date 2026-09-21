@@ -13,7 +13,14 @@ export const { karmi, provider, clock } = createTestKarmi(catalogue("fake/model"
 export const refundScript = () => provider.script(refundReplies);
 refundScript();
 
-const playground = createPlayground({ karmi, model: "fake/model", setup, token: TOKEN, data: env.PLAYGROUND_DATA });
+const playground = createPlayground({
+  karmi,
+  model: "fake/model",
+  setup,
+  token: TOKEN,
+  data: env.PLAYGROUND_DATA,
+  media: env.KARMI_MEDIA,
+});
 /** The same routes before `pnpm setup` ran: no Provider and no access token. */
 export const bare = createPlayground({
   karmi,
@@ -21,6 +28,7 @@ export const bare = createPlayground({
   setup: undefined,
   token: undefined,
   data: env.PLAYGROUND_DATA,
+  media: env.KARMI_MEDIA,
 });
 
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;

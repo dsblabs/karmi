@@ -1,6 +1,7 @@
 import type { CatalogueInput } from "@karmi/core";
 import { shopPolicy } from "./assistant";
 import { bookCourier, dispatchAgent, listParcels, packParcel } from "./dispatch";
+import { forksAgent } from "./media-forks";
 import { getOrder, refundAgent, refundOrder } from "./refund";
 import { adjustStock, checkStock, deleteProduct, restock, stockAudit, stockroomAgent } from "./stockroom";
 
@@ -13,5 +14,5 @@ export const catalogue = (model: string): CatalogueInput => ({
   fragments: [shopPolicy],
   skills: [restock],
   hooks: [stockAudit],
-  agents: [refundAgent(model), stockroomAgent(model), dispatchAgent(model)],
+  agents: [refundAgent(model), stockroomAgent(model), dispatchAgent(model), forksAgent(model)],
 });

@@ -173,6 +173,36 @@ test("cancellation ends the Turn and keeps what a Tool already did", async ({ pa
   await expect(page.locator("#courier")).toContainText("booked no courier yet");
 });
 
+test("a Fork keeps its uploaded media after the original Thread is deleted", async ({ page }) => {
+  await openScenario(page, "forks");
+  await expect(page.locator(".note")).toContainText("Images, audio, video and PDF");
+  await page.getByLabel("File").setInputFiles({
+    name: "sample.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("browser sample bytes"),
+  });
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps")).toContainText("I received the sample file.");
+  await expect(page.locator("#original-thread")).toContainText("sample.txt");
+
+  await page.getByRole("button", { name: "Fork the Thread" }).click();
+  await expect(page.locator("#fork-thread")).toContainText("sample.txt");
+  await expect(page.locator("#original-thread")).toContainText("7 events");
+  await expect(page.locator("#fork-thread")).toContainText("7 events");
+
+  await page.getByRole("button", { name: "Delete the original" }).click();
+  await expect(page.locator("#original-thread")).toContainText("deleted");
+  const download = page.waitForEvent("download");
+  await page.locator("#fork-thread").getByRole("link", { name: "Download sample.txt" }).click();
+  expect(
+    await (await download).createReadStream().then(async (stream) => {
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      return Buffer.concat(chunks).toString();
+    }),
+  ).toBe("browser sample bytes");
+});
+
 // The layout rules of docs/ui.md. A new view or card must pass at each size without a change to this check.
 const VIEWPORTS = { desktop: [1440, 900], tablet: [820, 1180], mobile: [390, 844] } as const;
 for (const [name, [width, height]] of Object.entries(VIEWPORTS))

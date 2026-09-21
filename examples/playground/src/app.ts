@@ -2,7 +2,10 @@ import { SpecInvalidError, type AgentSpec, type Karmi, type Scope, type Thread }
 import { createHttpHandler, type Principal } from "@karmi/http";
 import { AGENTS, ASSISTANT } from "./assistant";
 import { decodeDispatch, decodeReport, reportBooking, TURNS } from "./dispatch";
+import { forkScenarioRoutes } from "./fork-routes";
+import { FORKS } from "./media-forks";
 import type { ProviderSetup } from "./provider-options";
+import { routeError } from "./route-error";
 import { scenarioRuntimes, SCOPE, USER, type Runtime } from "./runtimes";
 import { sampleData, type SampleDataDO } from "./sample-data";
 import { COVERAGE, SCENARIOS, viewScenario } from "./scenarios";
@@ -20,6 +23,8 @@ export interface PlaygroundOptions {
   token: string | undefined;
   /** The namespace of the sample systems. */
   data: DurableObjectNamespace<SampleDataDO>;
+  /** The media bucket used by the authenticated download route. */
+  media: R2Bucket | undefined;
 }
 
 /** The Playground as a Worker `fetch`. */
@@ -38,8 +43,12 @@ async function sameToken(given: string, expected: string): Promise<boolean> {
   return a !== undefined && b !== undefined && crypto.subtle.timingSafeEqual(a, b);
 }
 
-function error(status: number, code: string, message: string): Response {
-  return Response.json({ error: { code, message } }, { status });
+function authentication(token: string | undefined) {
+  return async (request: Request): Promise<Principal | null> => {
+    const header = request.headers.get("authorization") ?? "";
+    const given = header.startsWith("Bearer ") ? header.slice(7) : new URL(request.url).searchParams.get("token");
+    return token && given && (await sameToken(given, token)) ? { scope: SCOPE, user: USER } : null;
+  };
 }
 
 // The one place that reads the body of the Spec route. It checks only the Agent id, because `put` validates each other
@@ -57,7 +66,7 @@ async function putSpec(scope: Scope, request: Request): Promise<Response | undef
   // The editor must not replace the Agent of a different scenario, which a reset of this scenario cannot restore.
   const spec = decodeSpec(await request.json().catch(() => undefined));
   if (!spec)
-    return error(400, "http.badRequest", `The body must be a JSON Agent Spec with the agentId "${ASSISTANT}".`);
+    return routeError(400, "http.badRequest", `The body must be a JSON Agent Spec with the agentId "${ASSISTANT}".`);
   try {
     await scope.agents.put(spec);
     return undefined;
@@ -79,14 +88,15 @@ async function reportJob(
   request: Request,
 ): Promise<Response | undefined> {
   const report = decodeReport(await request.json().catch(() => undefined));
-  if (!report) return error(400, "http.badRequest", 'The body must be {"report":"collected"} or {"report":"failed"}.');
+  if (!report)
+    return routeError(400, "http.badRequest", 'The body must be {"report":"collected"} or {"report":"failed"}.');
   // One read gives the booking and the generation, thus no stale copy meets a fresh one.
   const stored = await stub.read();
   const dispatch = decodeDispatch(stored.data);
   const booking = dispatch.booking;
   const thread = open(stored.generation);
   if (!booking || (await thread.status()).paused !== "job")
-    return error(409, "playground.noJob", "No Turn waits for the courier Job.");
+    return routeError(409, "playground.noJob", "No Turn waits for the courier Job.");
   // The Thread comes first. The sample courier system then cannot report an outcome that no Turn received.
   if (report === "collected")
     await thread.jobs.complete(booking.jobId, {
@@ -101,24 +111,22 @@ async function reportJob(
  * Creates the Playground routes on a karmi. The access token guards each route: the Thread routes of
  * `@karmi/http` and the routes below `/api`. No route returns a credential.
  */
-export function createPlayground({ karmi, model, setup, token, data }: PlaygroundOptions): Playground {
+export function createPlayground({ karmi, model, setup, token, data, media }: PlaygroundOptions): Playground {
   // A browser cannot set headers on an EventSource, so the token can also be a query parameter.
-  const authenticate = async (request: Request): Promise<Principal | null> => {
-    const header = request.headers.get("authorization") ?? "";
-    const given = header.startsWith("Bearer ") ? header.slice(7) : new URL(request.url).searchParams.get("token");
-    return token && given && (await sameToken(given, token)) ? { scope: SCOPE, user: USER } : null;
-  };
+  const authenticate = authentication(token);
   const http = createHttpHandler({ karmi, authenticate });
 
   // `karmi.scope` makes random values, which the Workers runtime allows only while it handles a request.
   const scope = () => karmi.scope(SCOPE);
 
   const runtimes = scenarioRuntimes(scope, model);
+  const forks = forkScenarioRoutes({ scope, scopeId: SCOPE, user: USER, data, media });
 
   const threadOf = (runtime: Runtime, generation: number) =>
     scope().thread({ agent: runtime.agent, user: USER, threadId: `${runtime.agent}-${generation}` });
 
   async function scenarioState(id: string, runtime: Runtime): Promise<Response> {
+    if (id === FORKS) return forks.state();
     await runtime.prepare?.();
     const state = await sampleData(data, SCOPE, id).read();
     const thread = threadOf(runtime, state.generation);
@@ -136,13 +144,17 @@ export function createPlayground({ karmi, model, setup, token, data }: Playgroun
         scenarios: SCENARIOS.map((scenario) => viewScenario(scenario, setup)),
         coverage: COVERAGE,
       });
+    const forkResponse = await forks.handle(request, path);
+    if (forkResponse) return forkResponse;
     const [, id, action] = /^\/api\/scenarios\/([^/]+)(?:\/(reset|spec|job))?$/.exec(path) ?? [];
     const runtime = id === undefined ? undefined : runtimes[id];
-    if (id === undefined || !runtime) return error(404, "http.notFound", "No such route.");
+    if (id === undefined || !runtime) return routeError(404, "http.notFound", "No such route.");
     if (action === undefined && request.method === "GET") return scenarioState(id, runtime);
+    if (action === "reset" && id === FORKS && request.method === "POST") return forks.reset();
     const restart = async (restore: boolean) => {
       const stub = sampleData(data, SCOPE, id);
-      const thread = threadOf(runtime, (await stub.read()).generation);
+      const stored = await stub.read();
+      const thread = threadOf(runtime, stored.generation);
       // The order matters: the cancel stops a Turn that could still change the data which the reset restores.
       await thread.cancel();
       await thread.delete();
@@ -157,14 +169,14 @@ export function createPlayground({ karmi, model, setup, token, data }: Playgroun
     // A saved Spec starts a new Thread, thus the earlier answers cannot change what the new version does.
     if (action === "spec" && id === AGENTS && request.method === "PUT")
       return (await putSpec(scope(), request)) ?? restart(false);
-    return error(404, "http.notFound", "No such route.");
+    return routeError(404, "http.notFound", "No such route.");
   }
 
   return {
     async fetch(request, _env, ctx) {
       const path = new URL(request.url).pathname;
       if (!path.startsWith("/api/")) return http.fetch(request, _env, ctx);
-      if (!(await authenticate(request))) return error(401, "http.unauthorized", "Authentication required.");
+      if (!(await authenticate(request))) return routeError(401, "http.unauthorized", "Authentication required.");
       return api(request, path);
     },
   };

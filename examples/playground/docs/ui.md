@@ -40,6 +40,7 @@ Use these classes. Add a component only when none of them fits, and add it to th
 | `.note` | A limit that the operator must know before a run. |
 | `.fine`, `.muted` | A small explanation, and an empty state. |
 | `.error`, `.outcome` | A failure, and the result of an action. |
+| `.thread-events` | A closed event list for one Thread in a scenario that compares Threads. |
 | `.you`, `.agent`, `.tool` | The items of the conversation. One `.tool` card holds the input, the Approval and the result of one Tool call. A `continue` Approval uses the same card for the budget of the Turn. |
 
 An empty list shows a `.muted` sentence that tells what fills it. Do not show an empty card.
