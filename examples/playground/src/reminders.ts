@@ -56,6 +56,7 @@ export const REMINDER_PROMPTS = [
     text: "In 1 minute, remind Sam Rivera that order A-1042 is ready for collection. Use a Schedule.",
   },
   { label: "List", text: "List your pending Schedules." },
+  { label: "Agent cancel", text: "Cancel each of your pending Schedules." },
   { label: "Approval", text: "Send a reminder to Sam Rivera now: order A-1042 is ready for collection." },
 ];
 

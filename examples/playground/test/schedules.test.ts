@@ -127,6 +127,7 @@ describe("a Schedule of the Agent", () => {
     await karmi.scope(SCOPE).config.set({ ceilings: { scheduling: { maxPending: 2 } } });
     provider.script(["The supplier delivered 24 kettles."]);
     const { threadKey } = await state();
+    expect((await karmi.scope(SCOPE).config.get()).document.ceilings?.scheduling).toEqual({ maxPending: 2 });
     await api("POST", `${PATH}/trigger`);
     expect(await until(threadKey, "turn.completed")).not.toContainEvent({ type: "turn.failed" });
   });

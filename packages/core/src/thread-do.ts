@@ -2451,6 +2451,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       else {
         const route = this.deliveryRoute(record.input.channelRef);
         if (route.ok && route.value) this.deliveries.route(route.value);
+        // The Deliverer can leave the Catalogue after the Schedule was created. The Turn still runs.
+        else if (!route.ok) this.logger(row).warn("Schedule firing kept the route", { scheduleId, code: route.code });
         record.pendingInput = this.enqueue(entered.value, record.input, false).id;
         this.append(
           row.turn,

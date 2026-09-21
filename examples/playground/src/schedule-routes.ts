@@ -52,8 +52,8 @@ interface ScheduleContext extends ScheduleRouteOptions {
 }
 
 /**
- * Raises a stored Scope ceiling that is below the grant of the Agent. A Playground from before this scenario stored
- * a ceiling of 2, and a Turn of an Agent with a larger grant fails with `spec.invalid`.
+ * Raises a stored Scope ceiling that is below the grant of the Agent. A Turn of an Agent with a grant above the
+ * ceiling fails with `spec.invalid`. The routes that change the scenario call it, never the state route.
  */
 async function raiseCeiling(scope: Scope): Promise<void> {
   const { document } = await scope.config.get();
@@ -67,11 +67,7 @@ async function scenarioState(context: ScheduleContext): Promise<Response> {
   const thread = context.open(stored.generation);
   // The status call through the identity creates the Thread. The other reads need no sequence.
   const status = await thread.status();
-  const [schedules, delivered] = await Promise.all([
-    thread.schedules(),
-    context.inbox().read(),
-    raiseCeiling(context.scope()),
-  ]);
+  const [schedules, delivered] = await Promise.all([thread.schedules(), context.inbox().read()]);
   const waiting = new Set(status.pendingApprovals?.map((approval) => approval.seq));
   return Response.json({
     threadKey: thread.key,
@@ -89,6 +85,7 @@ async function scenarioState(context: ScheduleContext): Promise<Response> {
 // The Framework validates the timing. The page shows its message, for example for a cron text with four fields.
 async function change(context: ScheduleContext, work: (thread: Thread) => Promise<unknown>): Promise<Response> {
   const { generation } = await context.system().read();
+  await raiseCeiling(context.scope());
   try {
     await work(context.open(generation));
   } catch (caught) {
@@ -108,7 +105,7 @@ async function resetScenario(context: ScheduleContext): Promise<Response> {
   for (const { scheduleId } of await thread.schedules()) await thread.cancelSchedule(scheduleId);
   await thread.cancel();
   await thread.delete();
-  await Promise.all([context.system().reset(), context.inbox().reset()]);
+  await Promise.all([context.system().reset(), context.inbox().reset(), raiseCeiling(context.scope())]);
   return scenarioState(context);
 }
 
@@ -128,6 +125,7 @@ async function handle(context: ScheduleContext, request: Request, path: string):
     return change(context, (thread) => thread.cancelSchedule(scheduleId));
   }
   if (path === "/api/scenarios/schedules/trigger") {
+    await raiseCeiling(context.scope());
     await triggerSupplierDelivery(context, "The trigger route of the Playground", Date.now());
     return scenarioState(context);
   }
