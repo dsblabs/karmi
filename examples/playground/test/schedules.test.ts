@@ -122,6 +122,14 @@ describe("a Schedule of the Agent", () => {
       input: { kind: "event", type: "schedule.fired", payload: { customer: "Sam Rivera" } },
     });
   });
+
+  it("raises a lower Scope ceiling that an earlier Playground stored, thus the Turn of the Agent runs", async () => {
+    await karmi.scope(SCOPE).config.set({ ceilings: { scheduling: { maxPending: 2 } } });
+    provider.script(["The supplier delivered 24 kettles."]);
+    const { threadKey } = await state();
+    await api("POST", `${PATH}/trigger`);
+    expect(await until(threadKey, "turn.completed")).not.toContainEvent({ type: "turn.failed" });
+  });
 });
 
 describe("the external trigger", () => {

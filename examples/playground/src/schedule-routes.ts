@@ -1,4 +1,5 @@
 import { KarmiError, type Scope, type Thread } from "@karmi/core";
+import { SCOPE_CONFIG } from "./assistant";
 import {
   decodeInbox,
   decodeReminders,
@@ -6,6 +7,7 @@ import {
   decodeTiming,
   inboxChannel,
   INBOX_DATA,
+  MAX_PENDING,
   reminderDue,
   REMINDERS,
   SCHEDULES,
@@ -49,12 +51,27 @@ interface ScheduleContext extends ScheduleRouteOptions {
   open(generation: number): Thread;
 }
 
+/**
+ * Raises a stored Scope ceiling that is below the grant of the Agent. A Playground from before this scenario stored
+ * a ceiling of 2, and a Turn of an Agent with a larger grant fails with `spec.invalid`.
+ */
+async function raiseCeiling(scope: Scope): Promise<void> {
+  const { document } = await scope.config.get();
+  const stored = document.ceilings?.scheduling;
+  const low = stored === false || (stored?.maxPending !== undefined && stored.maxPending < MAX_PENDING);
+  if (low) await scope.config.set(SCOPE_CONFIG);
+}
+
 async function scenarioState(context: ScheduleContext): Promise<Response> {
   const stored = await context.system().read();
   const thread = context.open(stored.generation);
   // The status call through the identity creates the Thread. The other reads need no sequence.
   const status = await thread.status();
-  const [schedules, delivered] = await Promise.all([thread.schedules(), context.inbox().read()]);
+  const [schedules, delivered] = await Promise.all([
+    thread.schedules(),
+    context.inbox().read(),
+    raiseCeiling(context.scope()),
+  ]);
   const waiting = new Set(status.pendingApprovals?.map((approval) => approval.seq));
   return Response.json({
     threadKey: thread.key,
