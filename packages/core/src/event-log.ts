@@ -4,6 +4,7 @@ import {
   count as countRows,
   desc,
   eq,
+  getTableColumns,
   gt,
   gte,
   inArray,
@@ -20,6 +21,9 @@ import { excludedEventTypes } from "./thread-sockets";
 import type { Granularity, ThreadEvent, ThreadEventData, TurnInput } from "./thread-events";
 import type { LoggedEvent } from "./turn-state";
 import type { UsageRecord } from "./usage";
+
+// A Durable Object refuses a statement with more than 100 bound values, and each seeded row binds one per column.
+const SEED_ROWS = Math.floor(100 / Object.keys(getTableColumns(events)).length);
 
 /** One stored row of the Thread event log, as a Fork copies it. */
 export type EventRow = typeof events.$inferSelect;
@@ -203,10 +207,10 @@ export class EventLog {
 
   /** Takes `rows` as the whole log of a new Fork. Call it only on an empty log. */
   seed(rows: readonly EventRow[]): void {
-    if (rows.length)
+    for (let from = 0; from < rows.length; from += SEED_ROWS)
       this.db
         .insert(events)
-        .values([...rows])
+        .values(rows.slice(from, from + SEED_ROWS))
         .run();
     this.last = rows.at(-1)?.seq ?? 0;
   }

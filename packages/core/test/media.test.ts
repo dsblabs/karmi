@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
+import type { ThreadEvent } from "../src/index";
 import { karmi, clock, provider, scope, recovery } from "./worker";
 import { reply } from "../src/testing/index";
 
@@ -287,6 +288,19 @@ describe("thread.fork() media", () => {
     const failed = scope.thread(scope.thread({ agent: "concierge", threadId: "media-fork-failed" }).key);
     await expect(failed.status()).rejects.toMatchObject({ code: "thread.notFound" });
     expect(await env.KARMI_MEDIA.get(second.key)).not.toBeNull();
+  });
+
+  it("forks a log with more rows than one SQL statement can bind", async () => {
+    const thread = scope.thread({ agent: "concierge", threadId: "media-fork-long" });
+    let events: ThreadEvent[] = [];
+    for (let turn = 0; turn < 30; turn++) {
+      provider.script(["OK"]);
+      events = await thread.send({ kind: "message", parts: [{ type: "text", text: "Again." }] });
+    }
+    const head = events.at(-1)!.seq;
+    expect(head).toBeGreaterThan(100);
+    const fork = await thread.fork(head, { threadId: "media-fork-long-copy" });
+    expect(await fork.events()).toEqual(await thread.events());
   });
 
   it("skips an object already missing in the original Thread", async () => {

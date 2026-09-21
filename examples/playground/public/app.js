@@ -29,8 +29,10 @@ async function api(method, path, body) {
     throw new Error("unauthorized");
   }
   if (!response.ok) {
-    const { error } = await response.json();
-    throw Object.assign(new Error(error?.message ?? response.statusText), { issues: error?.issues });
+    // A crash of the Worker answers with a page from Cloudflare, which is not JSON.
+    const { error } = await response.json().catch(() => ({}));
+    const fallback = `The Playground answered with HTTP ${response.status}. Look at the Worker logs.`;
+    throw Object.assign(new Error(error?.message ?? fallback), { issues: error?.issues });
   }
   return response.status === 204 ? undefined : response.json();
 }
