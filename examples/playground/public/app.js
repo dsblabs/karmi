@@ -514,6 +514,8 @@ function forkCards({ original, fork, positions }, onChanged, isCurrent) {
     { ariaLabel: "Fork position", disabled: positions.length === 0 || Boolean(fork) },
     ...positions.map((position) => el("option", { value: String(position.seq), textContent: position.label })),
   );
+  // The default position is the newest one, thus the Fork gets the full conversation.
+  select.value = String(positions.at(-1)?.seq ?? "");
   const result = el("p", { className: "fine" });
   const action = (label, path, body, disabled) =>
     el("button", {
@@ -551,9 +553,14 @@ function forkCards({ original, fork, positions }, onChanged, isCurrent) {
       "div",
       { className: "card" },
       el("h3", { textContent: "Thread actions" }),
-      positions.length > 0
-        ? el("p", { className: "fine", textContent: "The supported positions are the ends of completed Turns." })
-        : el("p", { className: "muted", textContent: "Run the upload before you make a Fork." }),
+      fork
+        ? el("p", {
+            className: "fine",
+            textContent: "A scenario has one Fork. Reset the scenario to make another one.",
+          })
+        : positions.length > 0
+          ? el("p", { className: "fine", textContent: "The supported positions are the ends of completed Turns." })
+          : el("p", { className: "muted", textContent: "Complete a Turn before you make a Fork." }),
       el(
         "div",
         { className: "row" },
@@ -593,13 +600,20 @@ async function renderScenario(scenario) {
     ariaLabel: "Prompt",
     placeholder: "Write a message to the Agent.",
   });
-  const file = scenario.upload
-    ? el("input", {
-        id: "file",
-        type: "file",
-        ariaLabel: "File",
-      })
-    : null;
+  const file = scenario.upload ? el("input", { id: "file", type: "file", ariaLabel: "File" }) : null;
+  const removeFile = el("button", { textContent: "Remove the file", disabled: true });
+  // A script can set the files of an input only through a DataTransfer object.
+  const setFile = (...files) => {
+    const transfer = new DataTransfer();
+    for (const item of files) transfer.items.add(item);
+    file.files = transfer.files;
+    removeFile.disabled = files.length === 0;
+  };
+  if (file) file.onchange = () => (removeFile.disabled = file.files.length === 0);
+  removeFile.onclick = () => setFile();
+  // The composer of a scenario that compares Threads selects the Thread that receives the Turn.
+  const target =
+    scenario.id === "forks" ? el("select", { id: "target", ariaLabel: "Thread that receives the Turn" }) : null;
   const run = el("button", { id: "run", className: "primary", textContent: "Run", disabled: true });
   // The Turn controls act on the Turn that runs or is parked. Only a scenario that explains them shows them.
   const control = (id, text) => (scenario.controls ? el("button", { id, textContent: text, disabled: true }) : null);
@@ -634,13 +648,23 @@ async function renderScenario(scenario) {
               ),
             ),
           prompt,
-          file,
+          file &&
+            el(
+              "div",
+              { className: "row" },
+              file,
+              el("button", {
+                textContent: "Attach the sample file",
+                onclick: () => setFile(new File(["karmi sample media\n"], "sample.txt", { type: "text/plain" })),
+              }),
+              removeFile,
+            ),
           file &&
             el("p", {
               className: "fine",
-              textContent: "If you choose no file, Run uploads the Playground sample text file.",
+              textContent: "The file goes with the next message only. A message without a file sends only text.",
             }),
-          el("div", { className: "row" }, run, status),
+          el("div", { className: "row" }, run, target, status),
           controls.length > 0 && el("div", { className: "row" }, ...controls),
         ),
       ),
@@ -656,6 +680,8 @@ async function renderScenario(scenario) {
   const path = `/api/scenarios/${scenario.id}`;
   let state = await api("GET", path);
   if (mine !== view) return;
+  // The Thread that the conversation shows and that receives each Turn.
+  let threadKey = state.threadKey;
   let shownPanel;
   const showPanel = () => {
     const { threadKey: _, ...data } = state;
@@ -669,6 +695,7 @@ async function renderScenario(scenario) {
           state = saved;
           shownPanel = undefined;
           showPanel();
+          if (syncTarget()) showThread();
         } else restart(saved);
         $("panel").append(el("p", { id: "saved", className: "outcome", textContent: note }));
       },
@@ -741,6 +768,18 @@ async function renderScenario(scenario) {
     tools.set(id, card);
     return card;
   };
+  // The text of a Turn input, then one line for each file that it carries.
+  const inputParts = (input) =>
+    (input.parts ?? []).map((part) =>
+      part.type === "text"
+        ? part.text
+        : el(
+            "span",
+            { className: "attachment" },
+            `${part.media.name ?? part.media.id} `,
+            el("code", { textContent: `${part.media.mimeType}, ${part.media.bytes} bytes` }),
+          ),
+    );
   const agentText = () =>
     (live ??= add(el("div", { className: "agent" }, el("strong", { textContent: "Agent" }), el("span"))));
 
@@ -750,7 +789,7 @@ async function renderScenario(scenario) {
       .closest(".approval")
       .querySelectorAll("button")
       .forEach((button) => (button.disabled = true));
-    await api("POST", `/threads/${state.threadKey}/approvals/${seq}`, { decision, by: "operator" });
+    await api("POST", `/threads/${threadKey}/approvals/${seq}`, { decision, by: "operator" });
   };
 
   const onEvent = (event) => {
@@ -760,7 +799,7 @@ async function renderScenario(scenario) {
       case "turn.started":
         busy = true;
         refreshSoon();
-        add(el("div", { className: "you" }, el("strong", { textContent: "You" }), event.input.parts?.[0]?.text ?? ""));
+        add(el("div", { className: "you" }, el("strong", { textContent: "You" }), ...inputParts(event.input)));
         break;
       case "turn.input":
         add(
@@ -768,7 +807,7 @@ async function renderScenario(scenario) {
             "div",
             { className: "you" },
             el("strong", { textContent: event.steer ? "You, added to this Turn" : "You, in this Turn" }),
-            event.input.parts?.[0]?.text ?? "",
+            ...inputParts(event.input),
           ),
         );
         break;
@@ -909,11 +948,34 @@ async function renderScenario(scenario) {
     sync();
   };
 
+  // Offers each Thread of the scenario that exists. It returns true when the selected Thread no longer exists, thus
+  // the composer moved to the first Thread that does.
+  const syncTarget = () => {
+    if (!target) return false;
+    const threads = [
+      !state.original.deleted && ["Original Thread", state.original],
+      state.fork && ["Fork Thread", state.fork],
+    ];
+    const open = threads.filter(Boolean);
+    target.replaceChildren(
+      ...open.map(([label, thread]) => el("option", { value: thread.threadKey, textContent: `Send to the ${label}` })),
+    );
+    const moved = !open.some(([, thread]) => thread.threadKey === threadKey);
+    if (moved) threadKey = open[0][1].threadKey;
+    target.value = threadKey;
+    return moved;
+  };
+  if (target)
+    target.onchange = () => {
+      threadKey = target.value;
+      showThread();
+    };
   const listen = () => {
     stream?.close();
-    stream = new EventSource(`/threads/${state.threadKey}/events?after=0&token=${encodeURIComponent(token)}`);
+    stream = new EventSource(`/threads/${threadKey}/events?after=0&token=${encodeURIComponent(token)}`);
     stream.onmessage = (message) => onEvent(JSON.parse(message.data));
   };
+  syncTarget();
   listen();
   reset.disabled = false;
   sync();
@@ -929,13 +991,14 @@ async function renderScenario(scenario) {
     busy = true;
     sync();
     try {
-      if (scenario.upload) {
+      if (file?.files[0]) {
         const form = new FormData();
         form.append("text", text);
-        form.append("file", file.files[0] ?? new File(["karmi sample media\n"], "sample.txt", { type: "text/plain" }));
-        await api("POST", `/threads/${state.threadKey}/turns`, form);
+        form.append("file", file.files[0]);
+        await api("POST", `/threads/${threadKey}/turns`, form);
+        setFile();
       } else
-        await api("POST", `/threads/${state.threadKey}/turns`, {
+        await api("POST", `/threads/${threadKey}/turns`, {
           kind: "message",
           parts: [{ type: "text", text }],
           steer: joins,
@@ -957,7 +1020,7 @@ async function renderScenario(scenario) {
     stop.onclick = async () => {
       stop.disabled = true;
       try {
-        await api("POST", `/threads/${state.threadKey}/cancel`);
+        await api("POST", `/threads/${threadKey}/cancel`);
       } catch (error) {
         add(el("p", { className: "error", textContent: String(error.message) }));
       } finally {
@@ -984,6 +1047,14 @@ async function renderScenario(scenario) {
   const restart = (next) => {
     stream?.close();
     state = next;
+    threadKey = state.threadKey;
+    if (file) setFile();
+    syncTarget();
+    showThread();
+  };
+  // Shows the Thread of `threadKey` from its first event.
+  const showThread = () => {
+    stream?.close();
     steps.replaceChildren();
     log.replaceChildren();
     tools.clear();

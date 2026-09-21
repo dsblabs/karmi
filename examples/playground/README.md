@@ -133,12 +133,14 @@ The scenario needs a model that supports Tool calls. The example code is in [`sr
 
 Do these steps:
 
-1. Select a file, or use the sample text file.
-2. Select **Run**. The side column shows the stored media reference and a download link.
-3. Select the end of a completed Turn, then select **Fork the Thread**.
-4. Inspect the separate event logs and media references of both Threads.
-5. Select **Delete the original**.
-6. Download the Fork's file. Its bytes remain available because the Fork owns a copy.
+1. Select a file, or select **Attach the sample file**. **Remove the file** clears the selection.
+2. Select **Run**. The conversation shows the file below your message. The side column shows the stored media reference and a download link.
+3. Send a second message. The file goes with one message only, thus this message sends only text.
+4. Select the end of a completed Turn, then select **Fork the Thread**.
+5. Inspect the separate event logs and media references of both Threads.
+6. Select **Send to the Fork Thread** in the composer and run a prompt. Only the event log of the Fork grows.
+7. Select **Delete the original**. The composer moves to the Fork.
+8. Download the Fork's file. Its bytes remain available because the Fork owns a copy.
 
 The download route accepts only media from the original or Fork of the current scenario. It refuses another Thread or Scope with a `404` answer. A reset deletes both scenario Threads and starts a new original Thread. It does not change another scenario or a Provider credential.
 

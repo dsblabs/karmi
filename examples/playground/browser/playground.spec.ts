@@ -184,6 +184,9 @@ test("a Fork keeps its uploaded media after the original Thread is deleted", asy
   await page.getByRole("button", { name: "Run" }).click();
   await expect(page.locator("#steps")).toContainText("I received the sample file.");
   await expect(page.locator("#original-thread")).toContainText("sample.txt");
+  await expect(page.locator("#steps .you .attachment")).toContainText("sample.txt");
+  // The file goes with one message only.
+  await expect(page.getByLabel("File")).toHaveValue("");
 
   await page.getByRole("button", { name: "Fork the Thread" }).click();
   await expect(page.locator("#fork-thread")).toContainText("sample.txt");
@@ -201,6 +204,26 @@ test("a Fork keeps its uploaded media after the original Thread is deleted", asy
       return Buffer.concat(chunks).toString();
     }),
   ).toBe("browser sample bytes");
+
+  // The composer moves to the Fork, which accepts a Turn without a file.
+  await expect(page.locator("#target option")).toHaveText(["Send to the Fork Thread"]);
+  await page.getByLabel("Prompt").fill("What did I upload?");
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps .agent")).toHaveCount(2);
+  await expect(page.locator("#steps .attachment")).toHaveCount(1);
+  await expect(page.locator("#fork-thread")).toContainText("14 events");
+});
+
+test("the operator removes a selected file before the message goes", async ({ page }) => {
+  await openScenario(page, "forks");
+  await page.getByRole("button", { name: "Attach the sample file" }).click();
+  await expect(page.getByLabel("File")).toHaveValue(/sample\.txt$/);
+  await page.getByRole("button", { name: "Remove the file" }).click();
+  await expect(page.getByLabel("File")).toHaveValue("");
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps .agent")).toBeVisible();
+  await expect(page.locator("#steps .attachment")).toHaveCount(0);
+  await expect(page.locator("#original-thread")).toContainText("Upload a file to this Thread.");
 });
 
 // The layout rules of docs/ui.md. A new view or card must pass at each size without a change to this check.
