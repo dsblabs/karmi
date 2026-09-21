@@ -123,6 +123,56 @@ test("a Skill adds its Tool, and the Hook writes the audit log", async ({ page }
   await expect(page.locator("#audit")).toContainText("wrote no line yet");
 });
 
+/** Opens the Turn control scenario with one suggested prompt and runs it. */
+async function runDispatch(page: Page, chip: string): Promise<void> {
+  await openScenario(page, "turns");
+  await page.getByRole("button", { name: chip, exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+}
+
+test("the Turn parks on its budget, takes a steered input and continues after an allow", async ({ page }) => {
+  await runDispatch(page, "Budget");
+  await expect(page.locator(".approval")).toContainText("Budget of the Turn");
+  await expect(page.locator("#turn")).toContainText("a new budget");
+  await expect(page.locator("#dispatch")).toContainText("packed");
+
+  // The Harness adds a steered input to the Turn at the next batch boundary, thus its event follows the allow.
+  await page.getByLabel("Prompt").fill("Pack the beans parcel last.");
+  await page.getByRole("button", { name: "Add to this Turn" }).click();
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page.locator("#steps")).toContainText("added to this Turn");
+  await expect(page.locator("#steps")).toContainText("Every parcel is packed.");
+  await expect(page.locator("#turn")).toContainText("idle");
+});
+
+test("a deny of the continuation ends the Turn on its budget", async ({ page }) => {
+  await runDispatch(page, "Budget");
+  await page.getByRole("button", { name: "Deny" }).click();
+  await expect(page.locator("#steps")).toContainText("ended on its budget");
+  await expect(page.locator("#dispatch")).toContainText("open");
+});
+
+test("a Job parks the Turn until the operator reports the collection", async ({ page }) => {
+  await runDispatch(page, "Job");
+  await expect(page.locator("#courier")).toContainText("waiting");
+  await expect(page.locator("#turn")).toContainText("the Job");
+  await page.getByRole("button", { name: "Report the collection" }).click();
+  await expect(page.locator("#steps")).toContainText("The Turn continues");
+  await expect(page.locator("#courier")).toContainText("collected");
+  await expect(page.locator("#steps")).toContainText("The courier answered.");
+});
+
+test("cancellation ends the Turn and keeps what a Tool already did", async ({ page }) => {
+  await runDispatch(page, "Job");
+  await expect(page.locator("#courier")).toContainText("waiting");
+  await page.getByRole("button", { name: "Cancel the Turn" }).click();
+  await expect(page.locator("#steps")).toContainText("You cancelled the Turn");
+  await expect(page.locator("#courier")).toContainText("No Turn waits for this Job");
+  await expect(page.locator("#dispatch")).toContainText("packed");
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#courier")).toContainText("booked no courier yet");
+});
+
 // The layout rules of docs/ui.md. A new view or card must pass at each size without a change to this check.
 const VIEWPORTS = { desktop: [1440, 900], tablet: [820, 1180], mobile: [390, 844] } as const;
 for (const [name, [width, height]] of Object.entries(VIEWPORTS))

@@ -1,5 +1,6 @@
-import type { Scope } from "@karmi/core";
+import type { Scope, ThreadStatus } from "@karmi/core";
 import { AGENTS, ASSISTANT, presets, SCOPE_CONFIG, shopPolicy, shopPolicyArgs, startingSpec } from "./assistant";
+import { decodeDispatch, DISPATCH, TURNS } from "./dispatch";
 import { decodeOrder, REFUND } from "./refund";
 import { adjustStock, checkStock, decodeStock, deleteProduct, STOCKROOM, stockroomAgent } from "./stockroom";
 
@@ -16,8 +17,11 @@ export interface Runtime {
   prepare?(): Promise<void>;
   /** Runs after the reset of the Thread and the sample data. */
   restore?(): Promise<void>;
-  /** Returns what the page shows next to the conversation. `data` is the stored sample data of the scenario. */
-  view(data: string | undefined): Promise<Record<string, unknown>> | Record<string, unknown>;
+  /**
+   * Returns what the page shows next to the conversation. `data` is the stored sample data of the scenario and
+   * `status` is the state of its Thread.
+   */
+  view(data: string | undefined, status: ThreadStatus): Promise<Record<string, unknown>> | Record<string, unknown>;
 }
 
 /**
@@ -32,6 +36,14 @@ export function scenarioRuntimes(scope: () => Scope, model: string): Record<stri
 
   return {
     [REFUND]: { agent: REFUND, view: (stored) => ({ order: decodeOrder(stored) }) },
+    [TURNS]: {
+      agent: DISPATCH,
+      view: (stored, status) => ({
+        dispatch: decodeDispatch(stored),
+        // The page shows the Turn state, thus pending work and its budget are visible without the event log.
+        turn: { state: status.state, paused: status.paused, budget: status.budget },
+      }),
+    },
     [STOCKROOM]: {
       agent: STOCKROOM,
       view: (stored) => ({

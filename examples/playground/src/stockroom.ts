@@ -2,7 +2,7 @@ import { defineAgent, defineHook, defineSkill, defineTool } from "@karmi/core";
 import { env } from "cloudflare:workers";
 import { z } from "zod";
 import { errorResult } from "./results";
-import { sampleData } from "./sample-data";
+import { decodeSample, sampleData } from "./sample-data";
 
 /** The id of the Tools scenario. It is also the id of its Agent. */
 export const STOCKROOM = "stockroom";
@@ -38,15 +38,7 @@ export const STOCKROOM_PROMPTS = [
 ];
 
 /** Decodes the stored sample data. Data that is absent or not valid gives the starting stock. */
-export function decodeStock(data: string | undefined): Stock {
-  if (data === undefined) return STARTING_STOCK;
-  try {
-    const parsed = stockSchema.safeParse(JSON.parse(data));
-    return parsed.success ? parsed.data : STARTING_STOCK;
-  } catch {
-    return STARTING_STOCK;
-  }
-}
+export const decodeStock = (data: string | undefined): Stock => decodeSample(stockSchema, STARTING_STOCK, data);
 
 const stockSystem = (scope: string) => sampleData(env.PLAYGROUND_DATA, scope, STOCKROOM);
 const readStock = async (scope: string) => decodeStock((await stockSystem(scope).read()).data);

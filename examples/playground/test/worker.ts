@@ -7,7 +7,7 @@ import { catalogue } from "../src/catalogue";
 
 // The test Worker runs the same routes, Tools and Agent as src/worker.ts against a scripted Provider, so no
 // test needs a credential or a network.
-export const { karmi, provider } = createTestKarmi(catalogue("fake/model"));
+export const { karmi, provider, clock } = createTestKarmi(catalogue("fake/model"));
 
 /** Starts the script of the guided refund again. */
 export const refundScript = () => provider.script(refundReplies);

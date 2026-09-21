@@ -16,7 +16,7 @@ A scenario view has four zones. Put new content in one of them. Do not add a zon
 |---|---|---|
 | Title bar | `.intro` | The title, the status, the summary, notes, the link to the example code and **Reset scenario** |
 | Conversation | `#steps` | What the operator and the Agent did, in the sequence of the Thread events |
-| Composer | `.composer` | The prompt, the suggested prompts, **Run** and the status line |
+| Composer | `.composer` | The prompt, the suggested prompts, **Run**, the Turn controls and the status line |
 | Side column | `.side` | The state of the sample system, the controls that change the scenario and the event log |
 
 - An action on the full scenario goes in the title bar.
@@ -31,6 +31,7 @@ Use these classes. Add a component only when none of them fits, and add it to th
 | Class | Use |
 |---|---|
 | `.card` | One group of data in the side column. It has an `h3` title. Use `h4` for a label and `pre` for text of the Framework. |
+| `.card.titled` | A card whose `h3` also holds a `.badge` with the state of the data, for example the order or the courier booking. |
 | `details.card` | Reference data that the operator does not watch, for example the Permission Policy. It stays closed. Write the number of items in the summary. |
 | `.chips` | A row of small buttons that fill an editor, for example suggested prompts. A chip does not send a request. |
 | `.editor` | A `textarea` for code or JSON. |
@@ -39,14 +40,15 @@ Use these classes. Add a component only when none of them fits, and add it to th
 | `.note` | A limit that the operator must know before a run. |
 | `.fine`, `.muted` | A small explanation, and an empty state. |
 | `.error`, `.outcome` | A failure, and the result of an action. |
-| `.you`, `.agent`, `.tool` | The items of the conversation. One `.tool` card holds the input, the Approval and the result of one Tool call. |
+| `.you`, `.agent`, `.tool` | The items of the conversation. One `.tool` card holds the input, the Approval and the result of one Tool call. A `continue` Approval uses the same card for the budget of the Turn. |
 
 An empty list shows a `.muted` sentence that tells what fills it. Do not show an empty card.
 
 ## States
 
 - Set a button to `disabled` while its request runs. Set it back in a `finally` block.
-- The `sync` function owns the **Run** button, the status line and the typing indicator. Change the `busy` and `waiting` values, then call `sync`. Do not set them from a second place.
+- The `sync` function owns the **Run** button, the Turn controls, the status line and the typing indicator. Change the `busy`, `waiting` and `parked` values, then call `sync`. Do not set them from a second place.
+- A scenario with `controls` gets a second `.row` in the composer: **Add to this Turn**, **Queue for the next Turn** and **Cancel the Turn**. These buttons work only while a Turn runs or is parked.
 - The `add` function appends to the conversation. It scrolls only when the operator is at the end.
 - A card gets the `changed` class when its data changes. The operator then sees the effect of a Tool call.
 - Check `mine === view` after each `await` in a render function. The operator can open a different view during the request.

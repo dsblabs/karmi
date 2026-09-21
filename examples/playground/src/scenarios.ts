@@ -1,4 +1,5 @@
 import { AGENTS, ASSISTANT_PROMPTS } from "./assistant";
+import { DISPATCH_PROMPTS, MAX_STEPS, TURNS } from "./dispatch";
 import type { ProviderSetup } from "./provider-options";
 import { REFUND, REFUND_PROMPT } from "./refund";
 import { STOCKROOM, STOCKROOM_PROMPTS } from "./stockroom";
@@ -33,6 +34,8 @@ export interface Scenario {
   prompts?: SuggestedPrompt[];
   /** The link to the example code. */
   code?: string;
+  /** True when the composer shows the Turn controls: steer, queue and cancel. */
+  controls?: boolean;
 }
 
 const notBuilt = (id: string, group: string, title: string, prerequisites: string[] = []): Scenario => ({
@@ -83,8 +86,21 @@ export const SCENARIOS: readonly Scenario[] = [
     prompts: STOCKROOM_PROMPTS,
     code: `${CODE}/src/stockroom.ts`,
   },
+  {
+    id: TURNS,
+    group: "Threads",
+    title: "Control a Turn and its parked work",
+    summary: `An Agent packs a sample dispatch. Add an input to the running Turn or queue it for the next one, and cancel the Turn. The Turn parks for a continuation Approval after ${String(MAX_STEPS)} Steps, and it parks again while a courier Job runs.`,
+    built: true,
+    prerequisites: [],
+    needs: ["toolCalls"],
+    prompts: DISPATCH_PROMPTS,
+    code: `${CODE}/src/dispatch.ts`,
+    controls: true,
+  },
   notBuilt("provider-tools", "Tools", "Provider Tools"),
-  notBuilt("threads", "Threads", "Steering, cancellation, budgets, Jobs, Compaction and forks"),
+  notBuilt("compaction", "Threads", "Compaction and recovery"),
+  notBuilt("forks", "Threads", "Media and independent Thread forks"),
   notBuilt("delegation", "Delegation", "Child Threads and their Approvals"),
   notBuilt("schedules", "Schedules and delivery", "Schedules, external triggers and offline delivery"),
   notBuilt("memory", "Memory and Knowledge", "User Memory and document search", [
@@ -162,6 +178,7 @@ const row =
 const shown = row(REFUND);
 const agents = row(AGENTS);
 const tools = row(STOCKROOM);
+const turns = row(TURNS);
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
@@ -179,8 +196,13 @@ export const COVERAGE: readonly CoverageRow[] = [
   shown("Tool inputs and results", "Tools", "The event log shows each Tool call and its result."),
   shown("Annotations and Permission Policy", "Tools", "The read-only lookup runs. The refund waits for an Approval."),
   shown("Approvals", "Threads", "Allow changes the sample order. Deny leaves it unchanged."),
+  turns("Inputs during a Turn", "Threads", "A steered input joins the Turn. A queued input starts the next Turn."),
+  turns("Cancellation during a Turn", "Threads", "Cancel ends the Turn. The booking that a Tool made stays."),
+  turns("Budgets", "Threads", "The Turn parks after its Steps. Allow gives a new budget. Deny ends the Turn."),
+  turns("Jobs", "Threads", "The courier Tool parks the Turn. A reported outcome resumes it."),
+  turns("Capability grants", "Agents", `The longRunning grant gives the Turn ${String(MAX_STEPS)} Steps.`),
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),
-  shown("Cancellation", "Threads", "Reset cancels a Turn that waits for an Approval."),
+  shown("Cancellation on reset", "Threads", "Reset cancels a Turn that waits for an Approval."),
   shown("Deletion", "Threads", "Reset deletes the Thread of the scenario."),
   shown("REST operations and SSE", "HTTP and media", "The browser uses the routes of @karmi/http only."),
   shown("Errors", "HTTP and media", "A request without the access token gets a 401 answer."),

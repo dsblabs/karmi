@@ -2,11 +2,12 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has three browser scenarios:
+This version has four browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
 - **Tools, Skills and a Hook**
+- **Control a Turn and its parked work**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -97,9 +98,37 @@ The **Permission Policy** card shows the rules of the Agent, and the **Tool anno
 
 The scenario needs a model that supports Tool calls. A small model can call `adjust_stock` before it loads the Tool. The call then gets an error result that tells the model to use `tool_search`. The example code is in [`src/stockroom.ts`](./src/stockroom.ts).
 
+## The Turn control scenario
+
+**Control a Turn and its parked work** has an Agent that packs the parcels of a sample dispatch system. The Agent has a `longRunning` grant of 6 Steps, thus a Turn parks for a continuation Approval before it packs every parcel. One Tool gives its call to a Job.
+
+The composer has three more buttons. Each one acts on the Turn that runs or is parked now:
+
+| Button | What it does |
+| --- | --- |
+| **Add to this Turn** | Sends the input with `steer`. The Harness adds it to the Turn at the next batch of Tool calls. |
+| **Queue for the next Turn** | Sends the input without `steer`. A Thread runs one Turn at a time, thus the input waits. |
+| **Cancel the Turn** | Ends the Turn with `turn.failed` and the reason `cancelled`. |
+
+Do these steps:
+
+1. Select **Run** with the **Budget** prompt. The Agent packs parcels until it spends the 6 Steps of its budget.
+2. Read the **Turn** card. It shows the state of the Turn, what it waits for and the Steps that it spent.
+3. Write an instruction and select **Add to this Turn**. The event `turn.input` with `steer` appears when the Turn continues.
+4. Select **Allow** on the budget Approval. The Turn gets a new budget and packs the rest. A **Deny** ends the Turn with the stop reason `budget`. An Approval with no answer becomes a deny after 24 hours.
+5. Select **Reset scenario**, then the **Job** prompt and **Run**. The Agent packs one parcel and books the courier.
+6. Read the **Courier system** card. The Tool returned `{ pending: jobId }`, thus the tool Step parks and the Turn waits.
+7. Select **Report the collection** or **Report a failure**. You play the part of the external courier system. The Turn continues with the result of the Job.
+
+To see the limit of cancellation, select **Cancel the Turn** while the Turn waits for the courier Job. The Turn ends, and the booking that the Tool made stays in the sample courier system. The Framework cannot undo an action that a Tool finished in another system.
+
+A reset cancels the parked Turn, deletes the Thread and restores the parcels and the courier system.
+
+The scenario needs a model that supports Tool calls. The example code is in [`src/dispatch.ts`](./src/dispatch.ts). The Job route is in [`src/app.ts`](./src/app.ts).
+
 ## Model limits
 
-The refund scenario and the Tools scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint, so each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
+The refund scenario, the Tools scenario and the Turn control scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint, so each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
 A custom endpoint must have a public address. The Worker refuses requests to a private address such as `localhost`.
 
