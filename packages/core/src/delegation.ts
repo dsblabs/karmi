@@ -62,6 +62,12 @@ export class DelegationStore {
   origin(): ChildOrigin | undefined {
     return this.db.select({ origin: delegationOrigins.origin }).from(delegationOrigins).get()?.origin;
   }
+  /** Removes the origin, every child record and every reservation. */
+  clear(): void {
+    this.db.delete(delegationOrigins).run();
+    this.db.delete(delegationChildren).run();
+    this.db.delete(delegationReservations).run();
+  }
   attach(origin: ChildOrigin): boolean {
     if (this.origin()) return false;
     this.db.insert(delegationOrigins).values({ id: 1, origin }).run();

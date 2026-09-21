@@ -65,6 +65,7 @@ import type { Logger } from "./context";
 import type { FragmentContext } from "./fragment";
 import { foldLoaded, type Loaded } from "./loading";
 import { EventLog, type EventRow } from "./event-log";
+import { InputQueue } from "./input-queue";
 import { DeliveryOutbox, deliveryBinding, type DeliveryBinding } from "./deliverer";
 import type { Deployment } from "./deployment";
 import { errorMessage, KarmiError } from "./errors";
@@ -126,7 +127,7 @@ import type { QueueMessage } from "./queue";
 import { UsageOutbox, type UsageAttribution } from "./usage";
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import type { DrizzleSqliteDODatabase } from "drizzle-orm/durable-sqlite";
-import { and, asc, eq, lte } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import threadMigrations from "./db/thread/migrations";
 import * as threadSchema from "./db/thread/schema";
@@ -244,7 +245,6 @@ const decodeSnapshot = (value: TurnSnapshot): TurnSnapshot => {
   const legacy = value as TurnSnapshot & { context?: TurnSnapshot["context"] };
   return { ...legacy, context: legacy.context ?? resolveContext({}, {}) };
 };
-const decodeInput = (value: TurnInput): TurnInput => value;
 const decodeForkEvent = (json: string): ThreadEventData => JSON.parse(json);
 
 /**
@@ -260,6 +260,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private readonly log: EventLog;
   private readonly usageOutbox: UsageOutbox;
   private readonly deliveries: DeliveryOutbox;
+  private readonly inputs: InputQueue;
   private readonly db: DrizzleSqliteDODatabase<typeof threadSchema.threadSchema>;
   private syncWork: Promise<void> | undefined;
   private syncAgain = false;
@@ -283,6 +284,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     this.log = new EventLog(this.db);
     this.usageOutbox = new UsageOutbox(this.db);
     this.deliveries = new DeliveryOutbox(this.db);
+    this.inputs = new InputQueue(this.db);
     ctx.blockConcurrencyWhile(async () => {
       await migrate(this.db, threadMigrations);
     });
@@ -424,19 +426,18 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       keys.config(address.scope),
     ).threadForget(address.scope, address.threadId);
     if (!forgotten.ok) throw new KarmiError(forgotten.code, forgotten.message);
+    // Each module empties the tables that it owns. The Durable Object names only the tables that have no module.
     this.db.transaction((tx) => {
       tx.delete(threadSchema.containerRuns).run();
       tx.delete(threadSchema.containerWorkspaces).run();
       tx.delete(threadSchema.threads).run();
-      this.log.clear();
-      this.usageOutbox.clear();
-      tx.delete(threadSchema.inputs).run();
-      this.deliveries.clear();
       tx.delete(threadSchema.alarms).run();
-      tx.delete(threadSchema.delegationOrigins).run();
-      tx.delete(threadSchema.delegationChildren).run();
-      tx.delete(threadSchema.delegationReservations).run();
-      tx.delete(threadSchema.schedules).run();
+      this.log.clear();
+      this.inputs.clear();
+      this.usageOutbox.clear();
+      this.deliveries.clear();
+      this.delegations.clear();
+      this.scheduleStore.clear();
     });
   }
 
@@ -478,11 +479,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     // after the Turn being prepared right now.
     const joins = steer && row.state !== "idle";
     const next = this.preparing === undefined ? row.turn + 1 : this.preparing + 1;
-    const { id } = this.db
-      .insert(threadSchema.inputs)
-      .values({ turn: joins ? row.turn : next, input, steer: joins })
-      .returning({ id: threadSchema.inputs.id })
-      .get();
+    const id = this.inputs.add(joins ? row.turn : next, input, joins);
     if (this.active) this.armWatchdog();
     else if (row.state === "idle" || row.state === "running") this.kick(row.state === "running");
     else if (!joins && this.readTurn(row).paused === "scope_suspended") this.wake(row, "input");
@@ -903,10 +900,6 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     return row;
   }
 
-  private hasInputs(): boolean {
-    return this.db.select({ id: threadSchema.inputs.id }).from(threadSchema.inputs).get() !== undefined;
-  }
-
   private kick(recovering: boolean): void {
     this.armWatchdog();
     // The loop is not awaited. The Durable Object outlives the caller's request, and it is the persisted rows,
@@ -917,7 +910,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private kickIfQueued(): void {
-    if (!this.active && this.hasInputs()) this.kick(false);
+    if (!this.active && !this.inputs.isEmpty()) this.kick(false);
   }
 
   private armWatchdog(): void {
@@ -947,7 +940,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     if (alarm.kind === "schedule") return this.fireSchedule(decodeScheduleAlarm(alarm.payload));
     if (alarm.kind !== "watchdog") return super.runAlarm(alarm);
     const row = this.db.select().from(threadSchema.threads).get();
-    if (!row || row.state === "parked" || (row.state === "idle" && !this.hasInputs())) {
+    if (!row || row.state === "parked" || (row.state === "idle" && this.inputs.isEmpty())) {
       this.scheduler.cancel("watchdog");
       return;
     }
@@ -970,7 +963,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           continue;
         }
         if (row.state === "parked") {
-          if (!(this.readTurn(row).paused === "scope_suspended" && this.hasInputs())) return;
+          if (!(this.readTurn(row).paused === "scope_suspended" && !this.inputs.isEmpty())) return;
           this.wake(row, "input", false);
           row = this.row();
         } else if (row.state === "idle") {
@@ -1005,12 +998,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private async prepare(row: ThreadRow): Promise<PreparedTurn> {
     const fingerprint = await this.deployment.catalogue.fingerprint();
     const turn = row.turn + 1;
-    const first = this.db
-      .select({ input: threadSchema.inputs.input })
-      .from(threadSchema.inputs)
-      .orderBy(asc(threadSchema.inputs.id))
-      .get();
-    const source = await this.scopeSnapshot({ ...row, turn }, first ? decodeInput(first.input) : undefined);
+    const source = await this.scopeSnapshot({ ...row, turn }, this.inputs.first());
     if (!source.ok) return { toolsVersion: fingerprint };
     const mcp = await this.openMcp({ ...row, turn }, source.snapshot);
     const versions = mcp?.versions() ?? {};
@@ -1021,7 +1009,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   /** Prepares and starts the next Turn from the queued inputs. Returns false when nothing is queued. */
   private async startNextTurn(row: ThreadRow): Promise<boolean> {
-    if (!this.hasInputs()) return false;
+    if (this.inputs.isEmpty()) return false;
     // The new Turn's signal tree starts here so the catalogue refreshes in `prepare` run under it.
     this.turnAbort = new AbortController();
     this.preparing = row.turn + 1;
@@ -1035,15 +1023,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   private startTurn(row: ThreadRow, prepared: PreparedTurn): boolean {
     const turn = row.turn + 1;
     // Nothing may yield between taking the inputs and logging them, or an eviction would lose them.
-    const queued = this.db
-      .select({ input: threadSchema.inputs.input })
-      .from(threadSchema.inputs)
-      .where(lte(threadSchema.inputs.turn, turn))
-      .orderBy(asc(threadSchema.inputs.id))
-      .all();
-    const [first, ...rest] = queued.map((next) => decodeInput(next.input));
+    const [first, ...rest] = this.inputs.takeThrough(turn);
     if (!first) return false;
-    this.db.delete(threadSchema.inputs).where(lte(threadSchema.inputs.turn, turn)).run();
     this.update({
       state: "running",
       turn,
@@ -1099,7 +1080,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         fallback_json: null,
       });
     if (end.type !== "turn.paused") this.scheduler.cancel("delegation-deadline");
-    if (end.type !== "turn.paused" && this.hasInputs()) this.armWatchdog();
+    if (end.type !== "turn.paused" && !this.inputs.isEmpty()) this.armWatchdog();
     else this.scheduler.cancel("watchdog");
     // The row no longer holds the snapshot, so it is read from the copy taken on entry. A Turn that never
     // took one has no Hooks to run.
@@ -1403,16 +1384,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
    */
   private joinSteers(row: ThreadRow, turn: TurnState, channelRef: unknown): TurnState {
     if (isRerun(turn.plan)) return turn;
-    const steers = this.db
-      .select({ input: threadSchema.inputs.input })
-      .from(threadSchema.inputs)
-      .where(eq(threadSchema.inputs.steer, true))
-      .orderBy(asc(threadSchema.inputs.id))
-      .all();
+    const steers = this.inputs.takeSteers();
     if (steers.length === 0) return turn;
-    this.db.delete(threadSchema.inputs).where(eq(threadSchema.inputs.steer, true)).run();
-    for (const next of steers)
-      this.append(row.turn, { type: "turn.input", input: decodeInput(next.input), steer: true }, channelRef);
+    for (const input of steers) this.append(row.turn, { type: "turn.input", input, steer: true }, channelRef);
     return this.readTurn(row);
   }
 
@@ -2455,13 +2429,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const record = this.scheduleStore.get(scheduleId);
     if (!record) return;
     const row = this.row();
-    const undelivered =
-      record.pendingInput !== undefined &&
-      this.db
-        .select({ id: threadSchema.inputs.id })
-        .from(threadSchema.inputs)
-        .where(eq(threadSchema.inputs.id, record.pendingInput))
-        .get() !== undefined;
+    const undelivered = record.pendingInput !== undefined && this.inputs.has(record.pendingInput);
     const now = this.deployment.clock.now();
     const nextAt = record.timing.kind === "cron" ? nextCronTime(record.timing.cron, now, record.timing.tz) : undefined;
     if (undelivered && nextAt !== undefined) {
@@ -2506,7 +2474,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     if (this.delegations.origin()) return ok(undefined);
-    if (entered.value.turn > 0 || this.hasInputs())
+    if (entered.value.turn > 0 || !this.inputs.isEmpty())
       return fail(new KarmiError("thread.busy", "Child Thread already exists."));
     this.delegations.attach(origin);
     const deadline = Math.min(...origin.chain.map((a) => a.deadline));

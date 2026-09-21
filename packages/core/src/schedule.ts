@@ -215,6 +215,10 @@ export class ScheduleStore {
   delete(id: string): void {
     this.db.delete(schedules).where(eq(schedules.id, id)).run();
   }
+  /** Removes every Schedule. It does not cancel their Alarms. */
+  clear(): void {
+    this.db.delete(schedules).run();
+  }
 }
 
 /**
