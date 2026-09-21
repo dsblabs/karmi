@@ -436,6 +436,10 @@ _Avoid_: metric, billing event, usage log, telemetry
 A UsageHandler is a Catalogue item that the Platform supplies. It receives Usage records in batches. A Queue delivers each batch at least once, with `threadId:seq` as the idempotency key. It is the billing seam. When it fails, the Queue tries again, and the Turn never fails. karmi keeps no counters for each Scope. Spend limits for a full Scope belong to the Platform, which enforces them through this handler.
 _Avoid_: billing hook, metering, usage callback, meter
 
+**Outbox**:
+An Outbox is a table of a Thread that holds work for the Queue. The Framework writes the row in the same write as the Thread event that causes it. Thus an eviction never loses the work. An Alarm sends the rows to the Queue, and the Queue delivers them at least once. The Usage record Outbox feeds the UsageHandler. The delivery Outbox feeds the Deliverer. The delete of a Thread empties its Outboxes.
+_Avoid_: queue (that is the Cloudflare Queue), buffer, backlog
+
 **Approval**:
 An Approval is a pause in a Turn that only the answer of a person can end. An `approval.requested` Thread event shows it, and an `approval.resolved` Thread event resolves it. There are three kinds:
 
