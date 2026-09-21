@@ -19,11 +19,29 @@ const restockReplies: ReplyScript = ({ request }) => {
   return "I ordered 24 kettles from the supplier.";
 };
 
+/**
+ * The script of the Turn control scenario: pack the parcels that are not packed, or book the courier. The
+ * checks run with a small budget, thus the Turn asks to continue before every parcel is packed.
+ */
+const dispatchReplies: ReplyScript = ({ request }) => {
+  const results = request.messages.filter((message) => message.role === "toolResult");
+  const asked = JSON.stringify(request.messages.filter((message) => message.role === "user"));
+  const packed = results.filter((result) => result.toolName === "pack_parcel" && !result.isError).length;
+  if (asked.includes("courier")) {
+    if (packed === 0) return [reply.toolCall("pack_parcel", { parcelId: "P-1" })];
+    return results.some((result) => result.toolName === "book_courier")
+      ? "The courier answered."
+      : [reply.toolCall("book_courier", { note: "Ring the bell." })];
+  }
+  return packed >= 4 ? "Every parcel is packed." : [reply.toolCall("pack_parcel", { parcelId: `P-${packed + 1}` })];
+};
+
 /** The script of the browser checks. It selects the replies from the Prompt, thus one Provider serves each scenario. */
 export const playgroundReplies: ReplyScript = (ctx) => {
   const system = ctx.request.system ?? "";
   if (system.includes("refund desk")) return refundReplies(ctx);
   if (system.includes("stock system")) return restockReplies(ctx);
+  if (system.includes("dispatch desk")) return dispatchReplies(ctx);
   const days = /for (\d+) days/.exec(system)?.[1];
   return system.includes("pirate") ? `Arr, ye have ${days} days.` : `You can return it for ${days} days.`;
 };

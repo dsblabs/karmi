@@ -2,7 +2,7 @@ import { defineAgent, defineTool } from "@karmi/core";
 import { env } from "cloudflare:workers";
 import { z } from "zod";
 import { errorResult } from "./results";
-import { sampleData } from "./sample-data";
+import { decodeSample, sampleData } from "./sample-data";
 
 /** The id of the refund scenario. It is also the id of its Agent. */
 export const REFUND = "refund";
@@ -34,15 +34,7 @@ export const REFUND_PROMPT =
   "The customer of order A-1042 says the coffee set arrived broken. Look up the order and refund the full amount.";
 
 /** Decodes the stored sample data. Data that is absent or not valid gives the starting order. */
-export function decodeOrder(data: string | undefined): Order {
-  if (data === undefined) return STARTING_ORDER;
-  try {
-    const parsed = orderSchema.safeParse(JSON.parse(data));
-    return parsed.success ? parsed.data : STARTING_ORDER;
-  } catch {
-    return STARTING_ORDER;
-  }
-}
+export const decodeOrder = (data: string | undefined): Order => decodeSample(orderSchema, STARTING_ORDER, data);
 
 const orders = (scope: string) => sampleData(env.PLAYGROUND_DATA, scope, REFUND);
 

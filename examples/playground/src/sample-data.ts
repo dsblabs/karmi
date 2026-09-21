@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { z } from "zod";
 
 /** The stored state of one scenario: its sample data and the count of resets. */
 export interface ScenarioState {
@@ -32,6 +33,24 @@ export class SampleDataDO extends DurableObject {
     await this.ctx.storage.delete("data");
     await this.ctx.storage.put("generation", generation);
     return generation;
+  }
+}
+
+/**
+ * Decodes the stored sample data of one scenario with its schema. Data that is absent or not valid gives the
+ * starting value, thus a scenario always shows data that its page can render.
+ */
+export function decodeSample<Schema extends z.ZodType>(
+  schema: Schema,
+  starting: z.infer<Schema>,
+  data: string | undefined,
+): z.infer<Schema> {
+  if (data === undefined) return starting;
+  try {
+    const parsed = schema.safeParse(JSON.parse(data));
+    return parsed.success ? parsed.data : starting;
+  } catch {
+    return starting;
   }
 }
 

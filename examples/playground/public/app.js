@@ -175,22 +175,26 @@ function renderCoverage() {
   );
 }
 
+/** A definition list of the given rows. A row that is false is left out, and a value can be a node. */
+function rows(...items) {
+  return el(
+    "dl",
+    {},
+    ...items.filter(Boolean).flatMap(([name, value]) => [el("dt", { textContent: name }), el("dd", {}, value)]),
+  );
+}
+
 function orderCard(order) {
-  const rows = [
-    ["Order", order.id],
-    ["Customer", order.customer],
-    ["Item", order.item],
-    ["Total", `$${order.total}`],
-    order.refund && ["Refund", `$${order.refund.amount} (${order.refund.reason})`],
-  ].filter(Boolean);
   return el(
     "div",
-    { className: "card", id: "order" },
+    { className: "card titled", id: "order" },
     el("h3", {}, "Order system", el("span", { className: `badge ${order.status}`, textContent: order.status })),
-    el(
-      "dl",
-      {},
-      ...rows.flatMap(([name, value]) => [el("dt", { textContent: name }), el("dd", { textContent: value })]),
+    rows(
+      ["Order", order.id],
+      ["Customer", order.customer],
+      ["Item", order.item],
+      ["Total", `$${order.total}`],
+      order.refund && ["Refund", `$${order.refund.amount} (${order.refund.reason})`],
     ),
     el("p", { className: "fine", textContent: "This is sample data. Reset restores it." }),
   );
@@ -342,8 +346,128 @@ function specCards({ agent, prompt, presets, ceilings }, onSaved) {
   ];
 }
 
+/**
+ * What each park reason means: `waits` names what the Turn waits for, and `line` is the line that the
+ * conversation shows. A park that an Approval card already explains has no line.
+ */
+const PARKED = {
+  approval: { waits: "your Approval of a Tool call" },
+  budget: { waits: "a new budget", line: "The Turn is parked. It spent the Steps of its budget." },
+  job: { waits: "the Job", line: "The Turn is parked. It waits for the Job and uses no Worker time." },
+  scope_suspended: { waits: "the Scope" },
+};
+
+/** The conversation card of a `continue` Approval. It shows what the Turn spent and takes the answer. */
+function continueCard(event, ask) {
+  const label = el("span", { className: "state", textContent: "needs your Approval" });
+  const card = el(
+    "details",
+    { className: "tool approval waiting", id: `approval-${event.seq}`, open: true },
+    el("summary", {}, el("span", {}, "Budget of the Turn"), label),
+    el("h4", { textContent: "Spent in this budget" }),
+    el("pre", { textContent: JSON.stringify(event.budget, null, 2) }),
+    el(
+      "div",
+      { className: "ask" },
+      el("strong", { textContent: "The Turn spent its budget. Do you give it a new one?" }),
+      el(
+        "div",
+        { className: "row" },
+        el("button", { className: "primary", textContent: "Allow", onclick: ask(event.seq, "allow") }),
+        el("button", { textContent: "Deny", onclick: ask(event.seq, "deny") }),
+      ),
+    ),
+  );
+  card.state = label;
+  return card;
+}
+
+function dispatchCards({ dispatch, turn }) {
+  const booking = dispatch.booking;
+  const result = el("p", { className: "fine" });
+  const report = (label, outcome, primary) =>
+    el("button", {
+      className: primary ? "primary" : "",
+      textContent: label,
+      onclick: async (click) => {
+        const button = click.target;
+        button.disabled = true;
+        result.className = "fine";
+        result.textContent = "";
+        try {
+          await api("POST", "/api/scenarios/turns/job", { report: outcome });
+        } catch (error) {
+          result.className = "error";
+          result.textContent = error.message;
+        } finally {
+          button.disabled = false;
+        }
+      },
+    });
+  return [
+    el(
+      "div",
+      { className: "card", id: "dispatch" },
+      el("h3", { textContent: "Dispatch system" }),
+      rows(...dispatch.parcels.map((parcel) => [parcel.id, `${parcel.item}: ${parcel.packed ? "packed" : "open"}`])),
+      el("p", { className: "fine", textContent: "This is sample data. Reset restores it." }),
+    ),
+    el(
+      "div",
+      { className: "card", id: "turn" },
+      el("h3", { textContent: "Turn" }),
+      rows(
+        ["State", turn.state],
+        turn.paused && ["Waits for", PARKED[turn.paused]?.waits ?? turn.paused],
+        turn.budget && ["Steps", `${turn.budget.steps} of ${turn.budget.max.steps}`],
+      ),
+      el("p", {
+        className: "fine",
+        textContent: "The Steps come from the longRunning grant of the Agent. A parked Turn uses no Worker time.",
+      }),
+    ),
+    el(
+      "div",
+      { className: "card titled", id: "courier" },
+      el(
+        "h3",
+        {},
+        "Courier system",
+        booking && el("span", { className: `badge ${booking.status}`, textContent: booking.status }),
+      ),
+      booking
+        ? rows(
+            ["Job", el("code", { textContent: booking.jobId })],
+            ["Parcels", String(booking.parcels)],
+            ["Note", booking.note],
+          )
+        : el("p", { className: "muted", textContent: "The Agent booked no courier yet." }),
+      booking &&
+        turn.paused === "job" &&
+        el(
+          "div",
+          { className: "row" },
+          report("Report the collection", "collected", true),
+          report("Report a failure", "failed"),
+        ),
+      booking &&
+        turn.paused !== "job" &&
+        el("p", {
+          className: "fine",
+          textContent: "No Turn waits for this Job. The booking stays in the sample courier system.",
+        }),
+      result,
+    ),
+  ];
+}
+
 // The cards next to the conversation, by scenario id.
-const PANELS = { refund: (state) => [orderCard(state.order)], agents: specCards, stockroom: stockCards };
+const PANELS = {
+  refund: (state) => [orderCard(state.order)],
+  agents: specCards,
+  stockroom: stockCards,
+  turns: dispatchCards,
+};
 
 async function renderScenario(scenario) {
   const mine = view;
@@ -355,6 +479,12 @@ async function renderScenario(scenario) {
     placeholder: "Write a message to the Agent.",
   });
   const run = el("button", { id: "run", className: "primary", textContent: "Run", disabled: true });
+  // The Turn controls act on the Turn that runs or is parked. Only a scenario that explains them shows them.
+  const control = (id, text) => (scenario.controls ? el("button", { id, textContent: text, disabled: true }) : null);
+  const steer = control("steer", "Add to this Turn");
+  const queue = control("queue", "Queue for the next Turn");
+  const stop = control("cancel", "Cancel the Turn");
+  const controls = [steer, queue, stop].filter(Boolean);
   const reset = el("button", { id: "reset", textContent: "Reset scenario", disabled: true });
   const status = el("span", { className: "hint" });
   const steps = el("div", { id: "steps" });
@@ -383,6 +513,7 @@ async function renderScenario(scenario) {
             ),
           prompt,
           el("div", { className: "row" }, run, status),
+          controls.length > 0 && el("div", { className: "row" }, ...controls),
         ),
       ),
       el(
@@ -428,20 +559,25 @@ async function renderScenario(scenario) {
   let live;
   let busy = false;
   let waiting = 0;
+  // Why the Turn is parked, or undefined while it runs or the Thread is idle.
+  let parked;
   const typing = el("div", { className: "typing", textContent: "The Agent works" });
   const tools = new Map();
   const json = (value) => JSON.stringify(value, null, 2);
   const sync = () => {
     run.disabled = !ready || busy;
+    for (const button of controls) button.disabled = !ready || !busy;
     status.textContent = !ready
       ? "This scenario cannot run with the current setup."
       : waiting > 0
         ? "The Agent waits for your decision."
-        : busy
-          ? "The Agent works…"
-          : "Ctrl + Enter runs the prompt.";
+        : parked
+          ? `The Turn is parked. It waits for ${PARKED[parked]?.waits ?? parked}.`
+          : busy
+            ? "The Agent works…"
+            : "Ctrl + Enter runs the prompt.";
     // A node that moves restarts its animation, so the line moves only when it is not the last one.
-    if (!(busy && waiting === 0 && !live)) typing.remove();
+    if (!(busy && waiting === 0 && !parked && !live)) typing.remove();
     else if (steps.lastChild !== typing) steps.append(typing);
   };
   const add = (node) => {
@@ -472,13 +608,33 @@ async function renderScenario(scenario) {
   const agentText = () =>
     (live ??= add(el("div", { className: "agent" }, el("strong", { textContent: "Agent" }), el("span"))));
 
+  // Answers one Approval. The card turns its buttons off, because the Thread rejects a second answer.
+  const ask = (seq, decision) => async (click) => {
+    click.target
+      .closest(".approval")
+      .querySelectorAll("button")
+      .forEach((button) => (button.disabled = true));
+    await api("POST", `/threads/${state.threadKey}/approvals/${seq}`, { decision, by: "operator" });
+  };
+
   const onEvent = (event) => {
     logCount.textContent = String(Number(logCount.textContent) + 1);
     log.append(el("pre", { textContent: JSON.stringify(event) }));
     switch (event.type) {
       case "turn.started":
         busy = true;
+        refreshSoon();
         add(el("div", { className: "you" }, el("strong", { textContent: "You" }), event.input.parts?.[0]?.text ?? ""));
+        break;
+      case "turn.input":
+        add(
+          el(
+            "div",
+            { className: "you" },
+            el("strong", { textContent: event.steer ? "You, added to this Turn" : "You, in this Turn" }),
+            event.input.parts?.[0]?.text ?? "",
+          ),
+        );
         break;
       case "message.delta":
         if (event.kind !== "text") break;
@@ -524,12 +680,15 @@ async function renderScenario(scenario) {
         );
         break;
       case "approval.requested": {
+        // A `continue` Approval belongs to the Turn, thus it has no Tool card of its own.
+        if (event.kind === "continue") {
+          waiting += 1;
+          add(continueCard(event, ask));
+          break;
+        }
         if (event.kind !== "tool") break;
         const card = toolCard(event.id, event.tool, event.input);
-        const answer = (decision) => async () => {
-          card.querySelectorAll("button").forEach((button) => (button.disabled = true));
-          await api("POST", `/threads/${state.threadKey}/approvals/${event.seq}`, { decision, by: "operator" });
-        };
+        const answer = (decision) => ask(event.seq, decision);
         waiting += 1;
         card.id = `approval-${event.seq}`;
         card.open = true;
@@ -564,13 +723,47 @@ async function renderScenario(scenario) {
           );
         break;
       }
+      case "turn.paused":
+        parked = event.reason;
+        const line = PARKED[event.reason]?.line;
+        if (line) add(el("p", { className: "outcome", textContent: line }));
+        refreshSoon();
+        break;
+      case "turn.resumed":
+        parked = undefined;
+        if (event.reason === "job")
+          add(el("p", { className: "outcome", textContent: "The Job reported its outcome. The Turn continues." }));
+        refreshSoon();
+        break;
+      case "job.started":
+        add(
+          el(
+            "p",
+            { className: "outcome" },
+            "The Tool gave the call to the Job ",
+            el("code", { textContent: event.jobId }),
+            ". The tool Step waits for the outcome of the Job.",
+          ),
+        );
+        break;
       case "turn.completed":
       case "turn.failed":
+        parked = undefined;
+        if (event.type === "turn.completed" && event.stopReason === "budget")
+          add(
+            el("p", {
+              className: "outcome",
+              textContent: "The Turn ended on its budget. The continuation Approval got no allow.",
+            }),
+          );
         if (event.type === "turn.failed")
           add(
             el("p", {
-              className: "error",
-              textContent: `The Turn failed: ${event.message} Check the model name and the credential that you gave to pnpm setup.`,
+              className: event.reason === "cancelled" ? "outcome" : "error",
+              textContent:
+                event.reason === "cancelled"
+                  ? "You cancelled the Turn. The Framework cannot undo an action that a Tool finished in another system."
+                  : `The Turn failed: ${event.message} Check the model name and the credential that you gave to pnpm setup.`,
             }),
           );
         busy = false;
@@ -589,19 +782,46 @@ async function renderScenario(scenario) {
   reset.disabled = false;
   sync();
 
-  run.onclick = async () => {
+  /**
+   * Sends the prompt as a Turn input. `steer` adds it to the Turn that runs or is parked now. Without `steer`, an
+   * input that arrives during a Turn waits for the next one, thus the page shows `note` at once.
+   */
+  const sendInput = async ({ steer: joins = false, note } = {}) => {
     const text = prompt.value.trim();
     if (!text) return prompt.focus();
+    const running = busy;
     busy = true;
     sync();
     try {
-      await api("POST", `/threads/${state.threadKey}/turns`, { kind: "message", parts: [{ type: "text", text }] });
+      await api("POST", `/threads/${state.threadKey}/turns`, {
+        kind: "message",
+        parts: [{ type: "text", text }],
+        steer: joins,
+      });
       prompt.value = "";
+      if (note && running) add(el("p", { className: "outcome", textContent: note }));
     } catch (error) {
-      busy = false;
+      busy = running;
       add(el("p", { className: "error", textContent: String(error.message) }));
     }
+    sync();
   };
+  run.onclick = () => sendInput();
+  if (steer) steer.onclick = () => sendInput({ steer: true });
+  if (queue)
+    queue.onclick = () =>
+      sendInput({ note: "The input waits for the next Turn, because a Thread runs one Turn at a time." });
+  if (stop)
+    stop.onclick = async () => {
+      stop.disabled = true;
+      try {
+        await api("POST", `/threads/${state.threadKey}/cancel`);
+      } catch (error) {
+        add(el("p", { className: "error", textContent: String(error.message) }));
+      } finally {
+        sync();
+      }
+    };
   prompt.onkeydown = (event) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !run.disabled) run.click();
   };
@@ -629,6 +849,7 @@ async function renderScenario(scenario) {
     live = undefined;
     busy = false;
     waiting = 0;
+    parked = undefined;
     prompt.value = scenario.prompts[0].text;
     showPanel();
     listen();

@@ -59,7 +59,9 @@ main { display: flex; flex-direction: column; gap: 1rem; padding: 1.25rem 1.5rem
 .title .actions { margin-left: auto; display: flex; gap: 0.75rem; align-items: center; font-size: 0.9rem; }
 .intro > p { margin: 0.4rem 0 0; color: var(--muted); max-width: 46rem; }
 .badge { font-size: 0.7rem; font-weight: 500; padding: 0.1rem 0.5rem; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
-.badge.ready, .badge.refunded { color: var(--good); border-color: currentColor; }
+.badge.ready, .badge.refunded, .badge.collected { color: var(--good); border-color: currentColor; }
+.badge.waiting { color: var(--accent); border-color: currentColor; }
+.badge.failed { color: var(--bad); border-color: currentColor; }
 .badge.unavailable { color: var(--warn); border-color: currentColor; }
 .intro > p.note { color: var(--text); border-left: 3px solid var(--warn); background: light-dark(#fef3c766, #fbbf2414); border-radius: 0 7px 7px 0; padding: 0.45rem 0.8rem; margin-top: 0.7rem; font-size: 0.9rem; }
 .card { border: 1px solid var(--line); border-radius: 10px; padding: 0.9rem 1rem; background: var(--bg); }
@@ -93,7 +95,7 @@ main { display: flex; flex-direction: column; gap: 1rem; padding: 1.25rem 1.5rem
 .chips button { font-size: 0.8rem; padding: 0.2rem 0.65rem; border-radius: 99px; color: var(--muted); }
 .chips button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .editor { width: 100%; min-height: 16rem; resize: vertical; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 0.6rem; }
-.row { display: flex; gap: 0.5rem; margin-top: 0.6rem; align-items: center; }
+.row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; align-items: center; }
 .outcome, .fine { margin: 0.6rem 0 0; font-size: 0.82rem; color: var(--muted); }
 .typing { align-self: flex-start; color: var(--muted); font-size: 0.85rem; }
 .typing::after { content: "…"; animation: blink 1.4s ease-in-out infinite; }
@@ -110,8 +112,8 @@ main { display: flex; flex-direction: column; gap: 1rem; padding: 1.25rem 1.5rem
 .side .card { overflow-wrap: anywhere; }
 .side .card li { margin: 0.15rem 0; font-size: 0.9rem; }
 .side .card li code { color: var(--muted); }
-#order h3 { display: flex; align-items: center; gap: 0.5rem; }
-#order h3 .badge { margin-left: auto; }
+.card.titled h3 { display: flex; align-items: center; gap: 0.5rem; }
+.card.titled h3 .badge { margin-left: auto; }
 .card.changed { animation: flash 1.2s ease-out; }
 @keyframes flash { from { box-shadow: 0 0 0 3px var(--good); } }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0; font-size: 0.9rem; }
