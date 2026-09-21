@@ -14,7 +14,14 @@ const karmi = createKarmi({
   defaults: { providers: { default: { adapter: "fake", models: ["*"] } } },
 });
 
-const playground = createPlayground({ karmi, model: "fake/model", setup, token: TOKEN, data: env.PLAYGROUND_DATA });
+const playground = createPlayground({
+  karmi,
+  model: "fake/model",
+  setup,
+  token: TOKEN,
+  data: env.PLAYGROUND_DATA,
+  media: env.KARMI_MEDIA,
+});
 
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;
 export { SampleDataDO } from "../src/sample-data";

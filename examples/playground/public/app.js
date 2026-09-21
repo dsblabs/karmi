@@ -15,10 +15,14 @@ function el(tag, props = {}, ...children) {
 }
 
 async function api(method, path, body) {
+  const form = body instanceof FormData;
   const response = await fetch(path, {
     method,
-    headers: { authorization: `Bearer ${token}`, ...(body !== undefined && { "content-type": "application/json" }) },
-    ...(body !== undefined && { body: JSON.stringify(body) }),
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(body !== undefined && !form && { "content-type": "application/json" }),
+    },
+    ...(body !== undefined && { body: form ? body : JSON.stringify(body) }),
   });
   if (response.status === 401) {
     showGate("The Playground did not accept this token.");
@@ -461,12 +465,121 @@ function dispatchCards({ dispatch, turn }) {
   ];
 }
 
+function forkCards({ original, fork, positions }, onChanged, isCurrent) {
+  const threadCard = (id, title, thread) => {
+    const media = thread.media ?? [];
+    return el(
+      "div",
+      { className: "card titled", id },
+      el("h3", {}, title, badge(thread.deleted ? "deleted" : thread.status.state)),
+      rows(["Thread key", el("code", { textContent: thread.threadKey })], ["Events", `${thread.events.length} events`]),
+      media.length > 0
+        ? el(
+            "ul",
+            {},
+            ...media.map((item) =>
+              el(
+                "li",
+                {},
+                item.name ?? item.id,
+                " ",
+                el("code", { textContent: `${item.mimeType}, ${item.bytes} bytes` }),
+                !thread.deleted &&
+                  el("a", {
+                    href: `/api/scenarios/forks/threads/${encodeURIComponent(thread.threadKey)}/media/${encodeURIComponent(item.id)}?token=${encodeURIComponent(token)}`,
+                    download: item.name ?? item.id,
+                    textContent: `Download ${item.name ?? item.id}`,
+                  }),
+              ),
+            ),
+          )
+        : el("p", {
+            className: "muted",
+            textContent: thread.deleted
+              ? "The original media is no longer available."
+              : "Upload a file to this Thread.",
+          }),
+      el(
+        "details",
+        { className: "thread-events" },
+        el("summary", { textContent: `Inspect ${thread.events.length} events` }),
+        el("pre", { textContent: JSON.stringify(thread.events, null, 2) }),
+      ),
+    );
+  };
+  const select = el(
+    "select",
+    { ariaLabel: "Fork position", disabled: positions.length === 0 || Boolean(fork) },
+    ...positions.map((position) => el("option", { value: String(position.seq), textContent: position.label })),
+  );
+  const result = el("p", { className: "fine" });
+  const action = (label, path, body, disabled) =>
+    el("button", {
+      textContent: label,
+      disabled,
+      onclick: async (click) => {
+        click.target.disabled = true;
+        try {
+          const next = await api("POST", path, body?.());
+          if (!isCurrent()) return;
+          onChanged(
+            next,
+            label === "Fork the Thread" ? "The Fork has its own event log and media copy." : "The Fork remains usable.",
+          );
+        } catch (error) {
+          if (!isCurrent()) return;
+          result.className = "error";
+          result.textContent = error.message;
+        } finally {
+          click.target.disabled = false;
+        }
+      },
+    });
+  return [
+    threadCard("original-thread", "Original Thread", original),
+    fork
+      ? threadCard("fork-thread", "Fork Thread", fork)
+      : el(
+          "div",
+          { className: "card", id: "fork-thread" },
+          el("h3", { textContent: "Fork Thread" }),
+          el("p", { className: "muted", textContent: "Select a completed Turn and make the Fork." }),
+        ),
+    el(
+      "div",
+      { className: "card" },
+      el("h3", { textContent: "Thread actions" }),
+      positions.length > 0
+        ? el("p", { className: "fine", textContent: "The supported positions are the ends of completed Turns." })
+        : el("p", { className: "muted", textContent: "Run the upload before you make a Fork." }),
+      el(
+        "div",
+        { className: "row" },
+        select,
+        action(
+          "Fork the Thread",
+          "/api/scenarios/forks/fork",
+          () => ({ seq: Number(select.value) }),
+          positions.length === 0 || Boolean(fork),
+        ),
+        action("Delete the original", "/api/scenarios/forks/original/delete", undefined, !fork || original.deleted),
+      ),
+      result,
+      el("p", {
+        className: "fine",
+        textContent: "Delete is available after the Fork, so you can first inspect both Threads.",
+      }),
+    ),
+  ];
+}
+
 // The cards next to the conversation, by scenario id.
 const PANELS = {
   refund: (state) => [orderCard(state.order)],
   agents: specCards,
   stockroom: stockCards,
   turns: dispatchCards,
+  forks: forkCards,
 };
 
 async function renderScenario(scenario) {
@@ -478,6 +591,13 @@ async function renderScenario(scenario) {
     ariaLabel: "Prompt",
     placeholder: "Write a message to the Agent.",
   });
+  const file = scenario.upload
+    ? el("input", {
+        id: "file",
+        type: "file",
+        ariaLabel: "File",
+      })
+    : null;
   const run = el("button", { id: "run", className: "primary", textContent: "Run", disabled: true });
   // The Turn controls act on the Turn that runs or is parked. Only a scenario that explains them shows them.
   const control = (id, text) => (scenario.controls ? el("button", { id, textContent: text, disabled: true }) : null);
@@ -512,6 +632,12 @@ async function renderScenario(scenario) {
               ),
             ),
           prompt,
+          file,
+          file &&
+            el("p", {
+              className: "fine",
+              textContent: "If you choose no file, Run uploads the Playground sample text file.",
+            }),
           el("div", { className: "row" }, run, status),
           controls.length > 0 && el("div", { className: "row" }, ...controls),
         ),
@@ -533,11 +659,19 @@ async function renderScenario(scenario) {
     const { threadKey: _, ...data } = state;
     const next = JSON.stringify(data);
     if (next === shownPanel) return;
-    // A panel that stores something gives the new state of the scenario, which has a new Thread.
-    const cards = PANELS[scenario.id](state, (saved, note) => {
-      restart(saved);
-      $("panel").append(el("p", { id: "saved", className: "outcome", textContent: note }));
-    });
+    // A panel action returns the whole scenario state. A saved Spec also starts a new Thread.
+    const cards = PANELS[scenario.id](
+      state,
+      (saved, note) => {
+        if (scenario.id === "forks") {
+          state = saved;
+          shownPanel = undefined;
+          showPanel();
+        } else restart(saved);
+        $("panel").append(el("p", { id: "saved", className: "outcome", textContent: note }));
+      },
+      () => mine === view,
+    );
     if (shownPanel !== undefined) cards[0].classList.add("changed");
     shownPanel = next;
     $("panel").replaceChildren(...cards);
@@ -793,11 +927,17 @@ async function renderScenario(scenario) {
     busy = true;
     sync();
     try {
-      await api("POST", `/threads/${state.threadKey}/turns`, {
-        kind: "message",
-        parts: [{ type: "text", text }],
-        steer: joins,
-      });
+      if (scenario.upload) {
+        const form = new FormData();
+        form.append("text", text);
+        form.append("file", file.files[0] ?? new File(["karmi sample media\n"], "sample.txt", { type: "text/plain" }));
+        await api("POST", `/threads/${state.threadKey}/turns`, form);
+      } else
+        await api("POST", `/threads/${state.threadKey}/turns`, {
+          kind: "message",
+          parts: [{ type: "text", text }],
+          steer: joins,
+        });
       prompt.value = "";
       if (note && running) add(el("p", { className: "outcome", textContent: note }));
     } catch (error) {

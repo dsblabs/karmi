@@ -1,5 +1,6 @@
 import { AGENTS, ASSISTANT_PROMPTS } from "./assistant";
 import { DISPATCH_PROMPTS, MAX_STEPS, TURNS } from "./dispatch";
+import { FORKS, FORKS_PROMPT } from "./media-forks";
 import type { ProviderSetup } from "./provider-options";
 import { REFUND, REFUND_PROMPT } from "./refund";
 import { STOCKROOM, STOCKROOM_PROMPTS } from "./stockroom";
@@ -7,7 +8,7 @@ import { STOCKROOM, STOCKROOM_PROMPTS } from "./stockroom";
 const CODE = "https://github.com/dsblabs/karmi/blob/main/examples/playground";
 
 /** A model feature that a scenario needs. */
-export type ModelFeature = "toolCalls";
+export type ModelFeature = "media" | "toolCalls";
 
 /** A prompt that a scenario suggests. The operator can edit it before the run. */
 export interface SuggestedPrompt {
@@ -36,6 +37,8 @@ export interface Scenario {
   code?: string;
   /** True when the composer shows the Turn controls: steer, queue and cancel. */
   controls?: boolean;
+  /** True when the composer sends one file with the prompt. */
+  upload?: boolean;
 }
 
 const notBuilt = (id: string, group: string, title: string, prerequisites: string[] = []): Scenario => ({
@@ -100,7 +103,19 @@ export const SCENARIOS: readonly Scenario[] = [
   },
   notBuilt("provider-tools", "Tools", "Provider Tools"),
   notBuilt("compaction", "Threads", "Compaction and recovery"),
-  notBuilt("forks", "Threads", "Media and independent Thread forks"),
+  {
+    id: FORKS,
+    group: "Threads",
+    title: "Media and independent Thread Forks",
+    summary:
+      "Upload a file as real stored bytes, fork the Thread at a completed Turn, then delete the original. The Fork keeps its own media copy.",
+    built: true,
+    prerequisites: [],
+    needs: ["media"],
+    prompts: [{ label: "Describe the file", text: FORKS_PROMPT }],
+    code: `${CODE}/src/media-forks.ts`,
+    upload: true,
+  },
   notBuilt("delegation", "Delegation", "Child Threads and their Approvals"),
   notBuilt("schedules", "Schedules and delivery", "Schedules, external triggers and offline delivery"),
   notBuilt("memory", "Memory and Knowledge", "User Memory and document search", [
@@ -114,7 +129,7 @@ export const SCENARIOS: readonly Scenario[] = [
     "A remote MCP server.",
     "AI Gateway needs a Cloudflare account.",
   ]),
-  notBuilt("http", "HTTP and media", "WebSocket, reconnects, uploads and downloads"),
+  notBuilt("http", "HTTP and media", "WebSocket and reconnects"),
   notBuilt("observability", "Observability", "Usage records, costs and logs"),
   notBuilt("operations", "Development and operations", "Test kit, doctor, deployment and removal", [
     "Deployment needs a Cloudflare account.",
@@ -144,12 +159,18 @@ export function viewScenario(scenario: Scenario, setup: ProviderSetup | undefine
       reason: "No Provider is set up. Run `pnpm setup` in examples/playground, then start the Playground again.",
       modelNotes: [],
     };
-  const modelNotes =
-    scenario.needs.includes("toolCalls") && !setup.option.toolCalls
+  const modelNotes = [
+    ...(scenario.needs.includes("toolCalls") && !setup.option.toolCalls
       ? [
           `This scenario needs a model that supports Tool calls. The Playground cannot check that for ${setup.model}. A model without Tool calls answers in text only, and no Tool call appears.`,
         ]
-      : [];
+      : []),
+    ...(scenario.needs.includes("media")
+      ? [
+          `Images, audio, video and PDF can reach a compatible model. Other files remain stored and downloadable, but the model receives a file placeholder. Check the media support and size limit of ${setup.model}.`,
+        ]
+      : []),
+  ];
   return { ...scenario, status: "ready", modelNotes };
 }
 
@@ -179,6 +200,7 @@ const shown = row(REFUND);
 const agents = row(AGENTS);
 const tools = row(STOCKROOM);
 const turns = row(TURNS);
+const forks = row(FORKS);
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
@@ -200,12 +222,20 @@ export const COVERAGE: readonly CoverageRow[] = [
   turns("Cancellation during a Turn", "Threads", "Cancel ends the Turn. The booking that a Tool made stays."),
   turns("Budgets", "Threads", "The Turn parks after its Steps. Allow gives a new budget. Deny ends the Turn."),
   turns("Jobs", "Threads", "The courier Tool parks the Turn. A reported outcome resumes it."),
+  forks("Forks", "Threads", "Select a completed Turn and inspect the original and Fork as separate Threads."),
+  forks("Independent Fork media", "Threads", "Delete the original, then download the bytes from the Fork."),
   turns("Capability grants", "Agents", `The longRunning grant gives the Turn ${String(MAX_STEPS)} Steps.`),
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),
   shown("Cancellation on reset", "Threads", "Reset cancels a Turn that waits for an Approval."),
   shown("Deletion", "Threads", "Reset deletes the Thread of the scenario."),
   shown("REST operations and SSE", "HTTP and media", "The browser uses the routes of @karmi/http only."),
   shown("Errors", "HTTP and media", "A request without the access token gets a 401 answer."),
+  forks(
+    "Media uploads and downloads",
+    "HTTP and media",
+    "Upload a file with multipart HTTP and download its stored bytes.",
+  ),
+  forks("Thread and Scope media access", "HTTP and media", "A media route refuses a Thread outside this scenario."),
   shown("Provider selection", "Providers and MCP", "Setup selects one of five Providers. The header shows it."),
   {
     group: "Development and operations",

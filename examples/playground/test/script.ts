@@ -42,6 +42,7 @@ export const playgroundReplies: ReplyScript = (ctx) => {
   if (system.includes("refund desk")) return refundReplies(ctx);
   if (system.includes("stock system")) return restockReplies(ctx);
   if (system.includes("dispatch desk")) return dispatchReplies(ctx);
+  if (system.includes("attached file")) return "I received the sample file.";
   const days = /for (\d+) days/.exec(system)?.[1];
   return system.includes("pirate") ? `Arr, ye have ${days} days.` : `You can return it for ${days} days.`;
 };

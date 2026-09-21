@@ -2,12 +2,13 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has four browser scenarios:
+This version has five browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
 - **Tools, Skills and a Hook**
 - **Control a Turn and its parked work**
+- **Media and independent Thread Forks**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -126,9 +127,30 @@ A reset cancels the parked Turn, deletes the Thread and restores the parcels and
 
 The scenario needs a model that supports Tool calls. The example code is in [`src/dispatch.ts`](./src/dispatch.ts). The Job route is in [`src/app.ts`](./src/app.ts).
 
+## The media and Thread Forks scenario
+
+**Media and independent Thread Forks** sends a real file through the multipart HTTP route. The Framework stores the bytes under the original Thread.
+
+Do these steps:
+
+1. Select a file, or use the sample text file.
+2. Select **Run**. The side column shows the stored media reference and a download link.
+3. Select the end of a completed Turn, then select **Fork the Thread**.
+4. Inspect the separate event logs and media references of both Threads.
+5. Select **Delete the original**.
+6. Download the Fork's file. Its bytes remain available because the Fork owns a copy.
+
+The download route accepts only media from the original or Fork of the current scenario. It refuses another Thread or Scope with a `404` answer. A reset deletes both scenario Threads and starts a new original Thread. It does not change another scenario or a Provider credential.
+
+Images, audio, video and PDF can reach a compatible model. Other files stay stored and downloadable, but the model receives a file placeholder. Check the media support and size limit of your selected model.
+
+The Agent is in [`src/media-forks.ts`](./src/media-forks.ts). The Fork, delete and download routes are in [`src/fork-routes.ts`](./src/fork-routes.ts).
+
 ## Model limits
 
-The refund scenario, the Tools scenario and the Turn control scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint, so each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
+The refund scenario, the Tools scenario and the Turn control scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
+
+The media scenario shows a separate note about the media types that models can receive. Storage and download do not depend on model support.
 
 A custom endpoint must have a public address. The Worker refuses requests to a private address such as `localhost`.
 

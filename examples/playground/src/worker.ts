@@ -31,7 +31,14 @@ const karmi = createKarmi({
     }),
 });
 
-const playground = createPlayground({ karmi, model, setup, token: env.PLAYGROUND_TOKEN, data: env.PLAYGROUND_DATA });
+const playground = createPlayground({
+  karmi,
+  model,
+  setup,
+  token: env.PLAYGROUND_TOKEN,
+  data: env.PLAYGROUND_DATA,
+  media: env.KARMI_MEDIA,
+});
 
 /** The Durable Object classes of karmi that wrangler.jsonc names. */
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;
