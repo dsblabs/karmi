@@ -1,5 +1,6 @@
 import { defineFragment, type AgentSpec, type ScopeConfigDocument } from "@karmi/core";
 import { z } from "zod";
+import { MAX_PENDING } from "./reminders";
 
 /** The id of the Agent Spec scenario. */
 export const AGENTS = "agents";
@@ -36,9 +37,10 @@ export const startingSpec = (model: string): AgentSpec => ({
 
 /**
  * The config of the sample Scope. The ceiling is the maximum that an Agent Spec of this Scope can grant. A Spec that
- * asks for more does not pass validation.
+ * asks for more does not pass validation. The ceiling equals the grant of the Schedules scenario, which uses the same
+ * Scope, thus this config does not lower that grant.
  */
-export const SCOPE_CONFIG: ScopeConfigDocument = { ceilings: { scheduling: { maxPending: 2 } } };
+export const SCOPE_CONFIG: ScopeConfigDocument = { ceilings: { scheduling: { maxPending: MAX_PENDING } } };
 
 /** A Spec change that the page offers as one button. */
 export interface SpecPreset {
@@ -70,7 +72,7 @@ export const presets = (model: string): SpecPreset[] => {
       id: "inside-ceiling",
       label: "Grant in the ceiling",
       expect: "The Scope stores the Spec. The Agent gets the Schedule Tools.",
-      spec: { ...start, capabilities: { scheduling: { maxPending: 2 } } },
+      spec: { ...start, capabilities: { scheduling: { maxPending: MAX_PENDING } } },
     },
     {
       id: "above-ceiling",

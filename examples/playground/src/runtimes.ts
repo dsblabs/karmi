@@ -1,7 +1,6 @@
 import type { Scope, ThreadStatus } from "@karmi/core";
 import { AGENTS, ASSISTANT, presets, SCOPE_CONFIG, shopPolicy, shopPolicyArgs, startingSpec } from "./assistant";
 import { decodeDispatch, DISPATCH, TURNS } from "./dispatch";
-import { FORKS } from "./media-forks";
 import { decodeOrder, REFUND } from "./refund";
 import { adjustStock, checkStock, decodeStock, deleteProduct, STOCKROOM, stockroomAgent } from "./stockroom";
 
@@ -26,7 +25,7 @@ export interface Runtime {
 }
 
 /**
- * Returns the server side of each built scenario by scenario id. `scope` opens the sample Scope. The routes call it
+ * Returns the server side of each built scenario that uses the shared state and reset routes, by scenario id. `scope` opens the sample Scope. The routes call it
  * for each request, because the Workers runtime allows random values only while it handles a request.
  */
 export function scenarioRuntimes(scope: () => Scope, model: string): Record<string, Runtime> {
@@ -37,7 +36,6 @@ export function scenarioRuntimes(scope: () => Scope, model: string): Record<stri
 
   return {
     [REFUND]: { agent: REFUND, view: (stored) => ({ order: decodeOrder(stored) }) },
-    [FORKS]: { agent: FORKS, view: () => ({}) },
     [TURNS]: {
       agent: DISPATCH,
       view: (stored, status) => ({

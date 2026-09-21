@@ -3,6 +3,7 @@ import { shopPolicy } from "./assistant";
 import { bookCourier, dispatchAgent, listParcels, packParcel } from "./dispatch";
 import { forksAgent } from "./media-forks";
 import { getOrder, refundAgent, refundOrder } from "./refund";
+import { remindersAgent, sampleInbox, sendReminder } from "./reminders";
 import { adjustStock, checkStock, deleteProduct, restock, stockAudit, stockroomAgent } from "./stockroom";
 
 /**
@@ -10,9 +11,20 @@ import { adjustStock, checkStock, deleteProduct, restock, stockAudit, stockroomA
  * because that scenario stores its Agent at runtime.
  */
 export const catalogue = (model: string): CatalogueInput => ({
-  tools: [getOrder, refundOrder, checkStock, adjustStock, deleteProduct, listParcels, packParcel, bookCourier],
+  tools: [
+    getOrder,
+    refundOrder,
+    checkStock,
+    adjustStock,
+    deleteProduct,
+    listParcels,
+    packParcel,
+    bookCourier,
+    sendReminder,
+  ],
   fragments: [shopPolicy],
   skills: [restock],
   hooks: [stockAudit],
-  agents: [refundAgent(model), stockroomAgent(model), dispatchAgent(model), forksAgent(model)],
+  deliverers: [sampleInbox],
+  agents: [refundAgent(model), stockroomAgent(model), dispatchAgent(model), forksAgent(model), remindersAgent(model)],
 });

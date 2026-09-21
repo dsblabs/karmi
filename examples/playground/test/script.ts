@@ -36,12 +36,31 @@ const dispatchReplies: ReplyScript = ({ request }) => {
   return packed >= 4 ? "Every parcel is packed." : [reply.toolCall("pack_parcel", { parcelId: `P-${packed + 1}` })];
 };
 
+/**
+ * The script of the Schedules scenario: make a Schedule when the operator asks for one, send the reminder that an
+ * Event or the operator asks for, and tell what a supplier Event brought.
+ */
+const reminderReplies: ReplyScript = ({ request }) => {
+  const turn = request.messages.slice(request.messages.findLastIndex((message) => message.role === "user"));
+  const asked = JSON.stringify(turn[0]);
+  const results = turn.filter((message) => message.role === "toolResult");
+  if (asked.includes("supplier.delivery")) return "The supplier delivered 24 kettles.";
+  if (asked.includes("Use a Schedule"))
+    return results.length === 0
+      ? [reply.toolCall("schedule", { delay: "1m", payload: { customer: "Sam Rivera" } })]
+      : "I made the Schedule.";
+  if (results.length === 0)
+    return [reply.toolCall("send_reminder", { customer: "Sam Rivera", text: "Order A-1042 is ready for collection." })];
+  return results.at(-1)?.isError ? "I did not send the reminder." : "I sent the reminder.";
+};
+
 /** The script of the browser checks. It selects the replies from the Prompt, thus one Provider serves each scenario. */
 export const playgroundReplies: ReplyScript = (ctx) => {
   const system = ctx.request.system ?? "";
   if (system.includes("refund desk")) return refundReplies(ctx);
   if (system.includes("stock system")) return restockReplies(ctx);
   if (system.includes("dispatch desk")) return dispatchReplies(ctx);
+  if (system.includes("reminder desk")) return reminderReplies(ctx);
   if (system.includes("attached file")) return "I received the sample file.";
   const days = /for (\d+) days/.exec(system)?.[1];
   return system.includes("pirate") ? `Arr, ye have ${days} days.` : `You can return it for ${days} days.`;

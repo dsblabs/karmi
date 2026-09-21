@@ -5,10 +5,12 @@ import { decodeDispatch, decodeReport, reportBooking, TURNS } from "./dispatch";
 import { forkScenarioRoutes } from "./fork-routes";
 import { FORKS } from "./media-forks";
 import type { ProviderSetup } from "./provider-options";
+import { SCHEDULES } from "./reminders";
 import { routeError } from "./route-error";
 import { scenarioRuntimes, SCOPE, USER, type Runtime } from "./runtimes";
 import { sampleData, type SampleDataDO } from "./sample-data";
 import { COVERAGE, SCENARIOS, viewScenario } from "./scenarios";
+import { scheduleScenarioRoutes, triggerSupplierDelivery } from "./schedule-routes";
 
 export { SCOPE, USER };
 
@@ -31,6 +33,36 @@ export interface PlaygroundOptions {
 export interface Playground {
   /** Answers the Thread routes and the routes below `/api`. Returns a 404 answer for each other path. */
   fetch(request: Request, env?: unknown, ctx?: ExecutionContext): Promise<Response>;
+  /**
+   * Sends the supplier Event of the Schedules scenario, as a Worker `scheduled` handler does for a cron trigger.
+   * `at` is the scheduled time in epoch milliseconds.
+   */
+  supplierDelivery(at: number): Promise<void>;
+}
+
+/** The routes of a scenario that does not use the shared state and reset routes. */
+interface ScenarioRoutes {
+  state(): Promise<Response>;
+  reset(): Promise<Response>;
+  /** Answers a route of the scenario, or returns undefined for each other path. */
+  handle(request: Request, path: string): Promise<Response | undefined>;
+}
+
+/** Answers a route of a scenario that has its own routes, or returns undefined for each other path. */
+async function ownRoutes(
+  own: Record<string, ScenarioRoutes>,
+  request: Request,
+  path: string,
+): Promise<Response | undefined> {
+  const [, id, action] = /^\/api\/scenarios\/([^/]+)(\/reset)?$/.exec(path) ?? [];
+  const named = id === undefined ? undefined : own[id];
+  if (named && action === undefined && request.method === "GET") return named.state();
+  if (named && action !== undefined && request.method === "POST") return named.reset();
+  for (const routes of Object.values(own)) {
+    const response = await routes.handle(request, path);
+    if (response) return response;
+  }
+  return undefined;
 }
 
 const encoder = new TextEncoder();
@@ -120,13 +152,14 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
   const scope = () => karmi.scope(SCOPE);
 
   const runtimes = scenarioRuntimes(scope, model);
-  const forks = forkScenarioRoutes({ scope, scopeId: SCOPE, user: USER, data, media });
+  const sample = { scope, scopeId: SCOPE, user: USER, data };
+  // A scenario with more than one Thread, or with state outside its sample data, has its own state, reset and routes.
+  const own = { [FORKS]: forkScenarioRoutes({ ...sample, media }), [SCHEDULES]: scheduleScenarioRoutes(sample) };
 
   const threadOf = (runtime: Runtime, generation: number) =>
     scope().thread({ agent: runtime.agent, user: USER, threadId: `${runtime.agent}-${generation}` });
 
   async function scenarioState(id: string, runtime: Runtime): Promise<Response> {
-    if (id === FORKS) return forks.state();
     await runtime.prepare?.();
     const state = await sampleData(data, SCOPE, id).read();
     const thread = threadOf(runtime, state.generation);
@@ -144,13 +177,12 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
         scenarios: SCENARIOS.map((scenario) => viewScenario(scenario, setup)),
         coverage: COVERAGE,
       });
-    const forkResponse = await forks.handle(request, path);
-    if (forkResponse) return forkResponse;
+    const answered = await ownRoutes(own, request, path);
+    if (answered) return answered;
     const [, id, action] = /^\/api\/scenarios\/([^/]+)(?:\/(reset|spec|job))?$/.exec(path) ?? [];
     const runtime = id === undefined ? undefined : runtimes[id];
     if (id === undefined || !runtime) return routeError(404, "http.notFound", "No such route.");
     if (action === undefined && request.method === "GET") return scenarioState(id, runtime);
-    if (action === "reset" && id === FORKS && request.method === "POST") return forks.reset();
     const restart = async (restore: boolean) => {
       const stub = sampleData(data, SCOPE, id);
       const stored = await stub.read();
@@ -173,6 +205,7 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
   }
 
   return {
+    supplierDelivery: (at) => triggerSupplierDelivery(sample, "The scheduled handler of the Worker", at),
     async fetch(request, _env, ctx) {
       const path = new URL(request.url).pathname;
       if (!path.startsWith("/api/")) return http.fetch(request, _env, ctx);

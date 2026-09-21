@@ -209,3 +209,37 @@ it.each([
   await expect.poll(() => deliveries.length).toBe(1);
   expect(deliveries[0]!.events.map((e) => e.type)).toEqual(types);
 });
+
+it("routes the offline output of a fired Schedule to the Deliverer of its Event", async () => {
+  provider.script(["Reminder sent"]);
+  const thread = karmi.scope("test").thread({ agent: "concierge", threadId: "scheduled-delivery" });
+  await thread.schedule({
+    delay: "10m",
+    input: {
+      kind: "event",
+      type: "reminder.due",
+      payload: {},
+      channelRef: { deliverer: { name: "receipt", ref: "scheduled" } },
+    },
+  });
+  await clock.advance("10m");
+  await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.completed")).toBe(true);
+  await clock.advance(1000);
+  await expect.poll(() => deliveries.length).toBe(1);
+  expect(deliveries[0]).toMatchObject({ key: thread.key, ref: "scheduled" });
+});
+
+it("refuses a Schedule whose Event names an unknown Deliverer", async () => {
+  const thread = karmi.scope("test").thread({ agent: "concierge", threadId: "scheduled-unknown" });
+  await expect(
+    thread.schedule({
+      delay: "10m",
+      input: {
+        kind: "event",
+        type: "reminder.due",
+        payload: {},
+        channelRef: { deliverer: { name: "nobody", ref: 1 } },
+      },
+    }),
+  ).rejects.toMatchObject({ code: "deliverer.notFound" });
+});

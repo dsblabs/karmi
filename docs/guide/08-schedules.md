@@ -60,6 +60,7 @@ A Schedule that fires does the same as `send` with the Event. Thus the Event joi
 - A Schedule with `delay` or `at` fires one time. Then the Thread deletes it.
 - An `at` in the past fires immediately.
 - The Thread does not try a failed Turn again.
+- A `channelRef.deliverer` on the Event becomes the Deliverer of the Thread when the Schedule fires. `schedule` rejects an Event that names an unknown Deliverer with `deliverer.notFound`. [Threads](./04-threads.md#offline-delivery) describes offline delivery.
 - A cron Schedule keeps at most one Event that the Thread did not start yet. If the next tick comes before that, the Thread records `schedule.skipped` and waits for the subsequent tick.
 - The Thread calculates the next cron tick from the time that the Schedule fired. It does not send the ticks that it missed.
 

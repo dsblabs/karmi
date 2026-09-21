@@ -363,6 +363,14 @@ const PARKED = {
   scope_suspended: { waits: "the Scope" },
 };
 
+// What the conversation tells for each Schedule event.
+const SCHEDULE_LINES = {
+  "schedule.created": "The Thread has a new Schedule.",
+  "schedule.fired": "A Schedule fired. Its Event starts a Turn, or waits for the end of the current Turn.",
+  "schedule.skipped": "A recurring Schedule skipped a tick, because the Event of its last tick still waits for a Turn.",
+  "schedule.cancelled": "The Thread cancelled a Schedule.",
+};
+
 /** The conversation card of a `continue` Approval. It shows what the Turn spent and takes the answer. */
 function continueCard(event, ask) {
   const label = el("span", { className: "state", textContent: "needs your Approval" });
@@ -582,6 +590,195 @@ function forkCards({ original, fork, positions }, onChanged, isCurrent) {
   ];
 }
 
+/** One action button of a card. It shows the failure in `result` and gives the answer of the route to `done`. */
+function cardAction(label, request, done, result, primary = false) {
+  return el("button", {
+    className: primary ? "primary" : "",
+    textContent: label,
+    onclick: async (click) => {
+      click.target.disabled = true;
+      result.className = "fine";
+      result.textContent = "";
+      try {
+        done(await request());
+      } catch (error) {
+        result.className = "error";
+        result.textContent = error.message;
+      } finally {
+        click.target.disabled = false;
+      }
+    },
+  });
+}
+
+// What the operator selected and typed in the Schedule form.
+const scheduleForm = { mode: "delay", value: undefined };
+
+function scheduleCards({ threadKey, schedules, reminders, inbox, modes }, onChanged, isCurrent, subscriber) {
+  const path = "/api/scenarios/schedules";
+  const time = (at) => new Date(at).toLocaleTimeString();
+  const changed = (note) => (next) => isCurrent() && onChanged(next, note);
+  const result = el("p", { className: "fine" });
+  const mode = el(
+    "select",
+    { id: "timing-mode", ariaLabel: "Timing mode" },
+    ...modes.map((item) => el("option", { value: item.mode, textContent: item.label })),
+  );
+  const value = el("input", { id: "timing-value", type: "text", ariaLabel: "Timing value", spellcheck: false });
+  const expect = el("p", { className: "fine" });
+  // The side column renders again when its data changes. The form keeps what the operator selected and typed.
+  const showMode = (typed) => {
+    const selected = modes.find((item) => item.mode === mode.value);
+    // The suggested time is two minutes from now, because a fixed time in the sample data is soon in the past.
+    value.value = typed ?? (selected.mode === "at" ? new Date(Date.now() + 120_000).toISOString() : selected.value);
+    expect.textContent = selected.expect;
+  };
+  mode.onchange = () => {
+    scheduleForm.mode = mode.value;
+    scheduleForm.value = undefined;
+    showMode();
+  };
+  value.oninput = () => (scheduleForm.value = value.value);
+  mode.value = scheduleForm.mode;
+  showMode(scheduleForm.value);
+  const inboxResult = el("p", { className: "fine" });
+  const answer = (seq, decision) =>
+    cardAction(
+      decision === "allow" ? "Allow" : "Deny",
+      () => api("POST", `/threads/${threadKey}/approvals/${seq}`, { decision, by: "operator" }),
+      () => (inboxResult.textContent = `You answered ${decision}. The Turn continues.`),
+      inboxResult,
+      decision === "allow",
+    );
+  const triggerResult = el("p", { className: "fine" });
+  return [
+    el(
+      "div",
+      { className: "card titled", id: "schedules" },
+      el("h3", {}, "Pending Schedules", el("span", { className: "badge", textContent: String(schedules.length) })),
+      schedules.length > 0
+        ? el(
+            "ul",
+            {},
+            ...schedules.map((item) =>
+              el(
+                "li",
+                {},
+                `${item.cron ? "Recurring" : "One time"}, next at ${time(item.nextAt)} `,
+                el("code", { textContent: item.cron ? `${item.cron} ${item.tz}` : item.input.type }),
+                el(
+                  "div",
+                  { className: "row" },
+                  cardAction(
+                    "Cancel the Schedule",
+                    () => api("POST", `${path}/schedule/cancel`, { scheduleId: item.scheduleId }),
+                    changed("The Thread cancelled the Schedule. It records a schedule.cancelled event."),
+                    result,
+                  ),
+                ),
+              ),
+            ),
+          )
+        : el("p", { className: "muted", textContent: "Create a Schedule here, or ask the Agent to create one." }),
+      el(
+        "div",
+        { className: "row" },
+        mode,
+        value,
+        cardAction(
+          "Create the Schedule",
+          () => api("POST", `${path}/schedule`, { mode: mode.value, value: value.value }),
+          changed("The Thread has the Schedule. A Turn starts when it fires."),
+          result,
+          true,
+        ),
+      ),
+      expect,
+      result,
+    ),
+    el(
+      "div",
+      { className: "card titled", id: "subscriber" },
+      el("h3", {}, "Subscriber of this page", badge(subscriber.attached ? "attached" : "detached")),
+      el("p", {
+        className: "fine",
+        textContent: subscriber.attached
+          ? "The page holds a WebSocket of the Thread. An attached Subscriber stops offline delivery, thus the inbox gets nothing."
+          : "The page holds no socket. It reads new events with plain requests, which are no Subscriber. The Deliverer gets each completed Turn and each Approval request about one second after it occurs.",
+      }),
+      el(
+        "div",
+        { className: "row" },
+        el("button", {
+          className: "primary",
+          textContent: subscriber.attached ? "Detach the Subscriber" : "Attach the Subscriber",
+          onclick: subscriber.toggle,
+        }),
+      ),
+    ),
+    el(
+      "div",
+      { className: "card titled", id: "inbox" },
+      el("h3", {}, "Sample inbox", el("span", { className: "badge", textContent: String(inbox.length) })),
+      inbox.length > 0
+        ? el(
+            "ul",
+            {},
+            ...inbox.map((entry) =>
+              el(
+                "li",
+                {},
+                el("span", { className: `badge ${entry.kind}`, textContent: entry.kind }),
+                ` ${entry.text}`,
+                entry.call && el("pre", { textContent: JSON.stringify(entry.call.input, null, 2) }),
+                entry.waiting && el("div", { className: "row" }, answer(entry.seq, "allow"), answer(entry.seq, "deny")),
+              ),
+            ),
+          )
+        : el("p", {
+            className: "muted",
+            textContent: "The Deliverer wrote no message yet. Detach the Subscriber, then let a Turn complete.",
+          }),
+      inboxResult,
+      el("p", {
+        className: "fine",
+        textContent: "This is a sample system, not an email account. The sample_inbox Deliverer writes to it.",
+      }),
+    ),
+    el(
+      "div",
+      { className: "card", id: "trigger" },
+      el("h3", { textContent: "External trigger" }),
+      el("p", {
+        className: "fine",
+        textContent:
+          "A trigger from a different system is your code: it finds the Thread and sends an Event. This button and the scheduled handler of the Worker call the same function. The README tells how to call the handler.",
+      }),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          "Send the supplier Event",
+          () => api("POST", `${path}/trigger`),
+          changed("The Thread got the supplier.delivery Event. A Turn starts for it."),
+          triggerResult,
+          true,
+        ),
+      ),
+      triggerResult,
+    ),
+    el(
+      "div",
+      { className: "card", id: "reminders" },
+      el("h3", { textContent: "Reminder system" }),
+      reminders.sent.length > 0
+        ? el("ul", {}, ...reminders.sent.map((item) => el("li", { textContent: `${item.customer}: ${item.text}` })))
+        : el("p", { className: "muted", textContent: "The send_reminder Tool sent no reminder yet." }),
+      el("p", { className: "fine", textContent: "This is sample data. Reset restores it." }),
+    ),
+  ];
+}
+
 // The cards next to the conversation, by scenario id.
 const PANELS = {
   refund: (state) => [orderCard(state.order)],
@@ -589,6 +786,7 @@ const PANELS = {
   stockroom: stockCards,
   turns: dispatchCards,
   forks: forkCards,
+  schedules: scheduleCards,
 };
 
 async function renderScenario(scenario) {
@@ -683,15 +881,19 @@ async function renderScenario(scenario) {
   // The Thread that the conversation shows and that receives each Turn.
   let threadKey = state.threadKey;
   let shownPanel;
+  // False while the page holds no stream of the Thread. Only the Schedules scenario detaches its Subscriber.
+  let attached = true;
+  // The `seq` of the newest event that the page has, thus a new stream or a plain read starts after it.
+  let lastSeq = 0;
   const showPanel = () => {
     const { threadKey: _, ...data } = state;
-    const next = JSON.stringify(data);
+    const next = JSON.stringify({ data, attached });
     if (next === shownPanel) return;
     // A panel action returns the whole scenario state. A saved Spec also starts a new Thread.
     const cards = PANELS[scenario.id](
       state,
       (saved, note) => {
-        if (scenario.id === "forks") {
+        if (scenario.id === "forks" || scenario.id === "schedules") {
           state = saved;
           shownPanel = undefined;
           showPanel();
@@ -700,6 +902,7 @@ async function renderScenario(scenario) {
         $("panel").append(el("p", { id: "saved", className: "outcome", textContent: note }));
       },
       () => mine === view,
+      { attached, toggle: () => setAttached(!attached) },
     );
     if (shownPanel !== undefined) cards[0].classList.add("changed");
     shownPanel = next;
@@ -770,16 +973,18 @@ async function renderScenario(scenario) {
   };
   // The text of a Turn input, then one line for each file that it carries.
   const inputParts = (input) =>
-    (input.parts ?? []).map((part) =>
-      part.type === "text"
-        ? part.text
-        : el(
-            "span",
-            { className: "attachment" },
-            `${part.media.name ?? part.media.id} `,
-            el("code", { textContent: `${part.media.mimeType}, ${part.media.bytes} bytes` }),
-          ),
-    );
+    input.kind === "event"
+      ? [el("code", { textContent: input.type }), el("pre", { textContent: json(input.payload) })]
+      : (input.parts ?? []).map((part) =>
+          part.type === "text"
+            ? part.text
+            : el(
+                "span",
+                { className: "attachment" },
+                `${part.media.name ?? part.media.id} `,
+                el("code", { textContent: `${part.media.mimeType}, ${part.media.bytes} bytes` }),
+              ),
+        );
   const agentText = () =>
     (live ??= add(el("div", { className: "agent" }, el("strong", { textContent: "Agent" }), el("span"))));
 
@@ -793,13 +998,35 @@ async function renderScenario(scenario) {
   };
 
   const onEvent = (event) => {
+    if (Number.isInteger(event.seq)) lastSeq = Math.max(lastSeq, event.seq);
     logCount.textContent = String(Number(logCount.textContent) + 1);
     log.append(el("pre", { textContent: JSON.stringify(event) }));
     switch (event.type) {
       case "turn.started":
         busy = true;
         refreshSoon();
-        add(el("div", { className: "you" }, el("strong", { textContent: "You" }), ...inputParts(event.input)));
+        add(
+          el(
+            "div",
+            { className: "you" },
+            el("strong", { textContent: event.input.kind === "event" ? "Event" : "You" }),
+            ...inputParts(event.input),
+          ),
+        );
+        break;
+      case "schedule.created":
+      case "schedule.fired":
+      case "schedule.skipped":
+      case "schedule.cancelled":
+        add(
+          el(
+            "p",
+            { className: "outcome" },
+            SCHEDULE_LINES[event.type],
+            event.nextAt !== undefined && ` The next firing is at ${new Date(event.nextAt).toLocaleTimeString()}.`,
+          ),
+        );
+        refreshSoon();
         break;
       case "turn.input":
         add(
@@ -972,9 +1199,43 @@ async function renderScenario(scenario) {
     };
   const listen = () => {
     stream?.close();
-    stream = new EventSource(`/threads/${threadKey}/events?after=0&token=${encodeURIComponent(token)}`);
+    if (!attached) return;
+    const query = `after=${lastSeq}&token=${encodeURIComponent(token)}`;
+    // The Schedules scenario detaches its Subscriber. The Thread learns of a closed WebSocket at once. It can learn of
+    // a closed SSE stream much later, and offline delivery stays off until then.
+    if (scenario.id !== "schedules") stream = new EventSource(`/threads/${threadKey}/events?${query}`);
+    else {
+      const socket = new WebSocket(`${location.origin.replace(/^http/, "ws")}/threads/${threadKey}?${query}`);
+      // A WebSocket does not connect again on its own. Close code 4004 tells that the Thread no longer exists.
+      socket.onclose = (closed) => {
+        if (stream === socket && attached && mine === view && closed.code !== 4004) setTimeout(listen, 1000);
+      };
+      stream = socket;
+    }
     stream.onmessage = (message) => onEvent(JSON.parse(message.data));
   };
+  const setAttached = (next) => {
+    attached = next;
+    showPanel();
+    listen();
+  };
+  // The inbox changes without a Thread event, and a detached page gets no event. Thus this scenario reads the new
+  // events and its state on a timer. A plain read of the event log is no Subscriber.
+  if (scenario.id === "schedules") {
+    const timer = setInterval(async () => {
+      if (mine !== view) return clearInterval(timer);
+      try {
+        const key = threadKey;
+        const missed = attached ? [] : await api("GET", `/threads/${key}/events?after=${lastSeq}`);
+        if (mine !== view || key !== threadKey || attached) return;
+        for (const event of missed) if (event.seq > lastSeq) onEvent(event);
+      } catch {
+        // The next tick reads the same events again.
+      } finally {
+        if (mine === view) refreshSoon();
+      }
+    }, 2000);
+  }
   syncTarget();
   listen();
   reset.disabled = false;
@@ -1002,6 +1263,8 @@ async function renderScenario(scenario) {
           kind: "message",
           parts: [{ type: "text", text }],
           steer: joins,
+          // The Schedules scenario names its Deliverer on each input, thus a detached page gets offline delivery.
+          ...(state.channelRef && { channelRef: state.channelRef }),
         });
       prompt.value = "";
       if (note && running) add(el("p", { className: "outcome", textContent: note }));
@@ -1059,6 +1322,7 @@ async function renderScenario(scenario) {
     log.replaceChildren();
     tools.clear();
     logCount.textContent = "0";
+    lastSeq = 0;
     live = undefined;
     busy = false;
     waiting = 0;
