@@ -41,6 +41,7 @@ Use these classes. Add a component only when none of them fits, and add it to th
 | `.fine`, `.muted` | A small explanation, and an empty state. |
 | `.error`, `.outcome` | A failure, and the result of an action. |
 | `.thread-events` | A closed event list for one Thread in a scenario that compares Threads. |
+| `.tool.compacted` | The Compaction card of the conversation: the summary and the first kept event. |
 | `.you`, `.agent`, `.tool` | The items of the conversation. One `.tool` card holds the input, the Approval and the result of one Tool call. A `continue` Approval uses the same card for the budget of the Turn. |
 
 An empty list shows a `.muted` sentence that tells what fills it. Do not show an empty card.
@@ -52,10 +53,12 @@ An empty list shows a `.muted` sentence that tells what fills it. Do not show an
 - A scenario with `upload` gets a `.row` with the file input, **Attach the sample file** and **Remove the file**. A sent message clears the file.
 - A scenario that compares Threads gets a `select` next to **Run**. It selects the Thread that the conversation shows and that receives each Turn. The `syncTarget` function owns its options.
 - A scenario with `controls` gets a second `.row` in the composer: **Add to this Turn**, **Queue for the next Turn** and **Cancel the Turn**. These buttons work only while a Turn runs or is parked.
+- The Compaction and recovery scenario gets a **Ledger system** card with **Hold the ledger** and **Release the ledger**, and a **Context of the Agent** card with **Compact the Thread**. A panel action keeps the Thread of the conversation. Only a saved Agent Spec starts a new one.
 - The Schedules scenario gets a **Subscriber of this page** card. **Detach the Subscriber** closes the socket of the page. The page then reads new events and the scenario state on a timer. The `setAttached` function owns this state.
 - The `add` function appends to the conversation. It scrolls only when the operator is at the end.
 - A card gets the `changed` class when its data changes. The operator then sees the effect of a Tool call.
 - Check `mine === view` after each `await` in a render function. The operator can open a different view during the request.
+- The `onEvent` function skips an event with a `seq` that the page has, because a stream that connects again after a restart of the dev server can repeat one.
 - Handle a new Thread event in the `switch` of `onEvent`. Show it as an item of the conversation, not as raw JSON. The event log has the raw JSON.
 
 ## Layout and sizes

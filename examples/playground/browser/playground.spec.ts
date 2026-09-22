@@ -316,3 +316,62 @@ test("a detached page gets the Approval request and the completed Turn in the sa
   await expect(page.locator("#inbox")).toContainText("wrote no message yet");
   await expect(page.locator("#schedules")).toContainText("Create a Schedule here");
 });
+
+/** Runs the long prompt of the ledger scenario. A sent message empties the editor, thus the chip fills it again. */
+async function runLedger(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Run" })).toBeEnabled();
+  await page.getByRole("button", { name: "Long conversation", exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+}
+
+async function openLedger(page: Page): Promise<void> {
+  await openScenario(page, "compaction");
+  await expect(page.locator("#ledger")).toContainText("open");
+}
+
+test("a long conversation compacts the Thread, and the Agent continues", async ({ page }) => {
+  await openLedger(page);
+  await expect(page.locator("#context")).toContainText("2000 tokens");
+  await runLedger(page);
+  await expect(page.locator("#steps .agent")).toHaveCount(1);
+  await expect(page.locator("#steps .compacted")).toHaveCount(0);
+  // The reply reported a usage over the limit, thus the next Turn compacts before its model Step.
+  await runLedger(page);
+  await expect(page.locator("#steps")).toContainText("over the window minus the reserve");
+  await expect(page.locator("#steps .compacted")).toContainText("SUMMARY: the operator read the ledger.");
+  await expect(page.locator("#steps .compacted")).toContainText("events from seq");
+  await expect(page.locator("#steps .agent")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Run" })).toBeEnabled();
+  await page.locator(".events summary").click();
+  await expect(page.locator("#log")).toContainText('"type":"thread.compacted"');
+});
+
+test("the operator compacts an idle Thread with instructions", async ({ page }) => {
+  await openLedger(page);
+  await runLedger(page);
+  await expect(page.locator("#steps .agent")).toHaveCount(1);
+  await runLedger(page);
+  await expect(page.locator("#steps .agent")).toHaveCount(2);
+  // The Thread refuses a Compaction while the Turn runs. Run is enabled again when the Turn ends.
+  await expect(page.getByRole("button", { name: "Run" })).toBeEnabled();
+  await page.getByRole("button", { name: "Compact the Thread" }).click();
+  await expect(page.locator("#steps")).toContainText("You asked for a Compaction.");
+  await expect(page.locator("#steps .compacted")).toHaveCount(2);
+});
+
+test("a held ledger keeps the Tool call running until the operator releases it", async ({ page }) => {
+  await openLedger(page);
+  await page.getByRole("button", { name: "Hold the ledger" }).click();
+  await expect(page.locator("#ledger")).toContainText("held");
+  await page.getByRole("button", { name: "Unsafe call", exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+  // The Tool writes the entry before it waits, thus the card shows the entry while the call runs.
+  await expect(page.locator("#ledger")).toContainText("Window cleaning");
+  await expect(page.locator("#steps .tool .state").first()).toHaveText("running");
+  await expect(page.locator("#turn")).toContainText("running");
+  await page.getByRole("button", { name: "Release the ledger" }).click();
+  await expect(page.locator("#steps")).toContainText("The ledger has the new entry.");
+  await expect(page.locator("#turn")).toContainText("idle");
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#ledger")).not.toContainText("Window cleaning");
+});
