@@ -42,6 +42,7 @@ Use these classes. Add a component only when none of them fits, and add it to th
 | `.error`, `.outcome` | A failure, and the result of an action. |
 | `.thread-events` | A closed event list for one Thread in a scenario that compares Threads. |
 | `.tool.compacted` | The Compaction card of the conversation: the summary and the first kept event. |
+| `.tool.child` | The card of one child Thread in the conversation. Its `.items` hold the task, the Tool calls and the answer of the child, from the stream of the child. |
 | `.you`, `.agent`, `.tool` | The items of the conversation. One `.tool` card holds the input, the Approval and the result of one Tool call. A `continue` Approval uses the same card for the budget of the Turn. |
 
 An empty list shows a `.muted` sentence that tells what fills it. Do not show an empty card.
@@ -54,6 +55,7 @@ An empty list shows a `.muted` sentence that tells what fills it. Do not show an
 - A scenario that compares Threads gets a `select` next to **Run**. It selects the Thread that the conversation shows and that receives each Turn. The `syncTarget` function owns its options.
 - A scenario with `controls` gets a second `.row` in the composer: **Add to this Turn**, **Queue for the next Turn** and **Cancel the Turn**. These buttons work only while a Turn runs or is parked.
 - The Compaction and recovery scenario gets a **Ledger system** card with **Hold the ledger** and **Release the ledger**, and a **Context of the Agent** card with **Compact the Thread**. A panel action keeps the Thread of the conversation. Only a saved Agent Spec starts a new one.
+- The Delegation scenario gets a **Child Threads** card and a **Usage records** card. A `delegation.started` event adds a `.tool.child` card and opens a stream of the child Thread. The `childStreams` set holds each one, and `closeStreams` closes them with the stream of the page. An Approval of a child shows in the parent conversation with the label of the child, and its answer goes to the parent route.
 - The Schedules scenario gets a **Subscriber of this page** card. **Detach the Subscriber** closes the socket of the page. The page then reads new events and the scenario state on a timer. The `setAttached` function owns this state.
 - The `add` function appends to the conversation. It scrolls only when the operator is at the end.
 - A card gets the `changed` class when its data changes. The operator then sees the effect of a Tool call.

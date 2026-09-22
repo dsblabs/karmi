@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has seven browser scenarios:
+This version has eight browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -11,6 +11,7 @@ This version has seven browser scenarios:
 - **Media and independent Thread Forks**
 - **Schedules, external triggers and offline delivery**
 - **Compaction and recovery**
+- **Child Threads and their Approvals**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -246,9 +247,33 @@ No check runs in a Cloudflare account. A local result is not proof for a deploye
 
 The scenario needs a model that supports Tool calls. The Agent and the Tools are in [`src/ledger.ts`](./src/ledger.ts). The hold route is in [`src/app.ts`](./src/app.ts).
 
+## The Delegation scenario
+
+**Child Threads and their Approvals** has two Agents. The parent Agent `manager` has the `delegation` grant and names `buyer` in `delegates`. The grant gives it the Tool `delegate` of the Framework. The child Agent `buyer` has two Tools that read or change a sample purchase system:
+
+- `list_suppliers` is read-only. The Permission Policy of the child allows it.
+- `place_order` has no Policy rule. Thus each call waits for an Approval.
+
+Do these steps:
+
+1. Select **Run** with the **Delegate** prompt. The parent calls `delegate` with the Agent name and the task text. The conversation shows the line `The delegate call started the child Thread` and a **Child Thread** card. The **Child Threads** card in the side column shows the child with its parent key and the call id.
+2. Read the **Child Thread** card. It shows the task, each Tool call and the answer of the child. The child has new context: it gets the task text only, not your message. The events come from the event log of the child, not from the parent log.
+3. Read the **Turn** card. The parent Turn is parked. The delegate call is a Job, and the Turn waits for the child. The card shows the children of the Turn: how many started and how many are active.
+4. Read the Approval. The child asked to call `place_order`. The parent Thread shows the Approval again, with the label of the child. Select **Allow** or **Deny**. The answer goes down to the child Thread.
+5. Read the outcome. **Allow** places the order, and the **Purchase system** card shows it. **Deny** gives the child an error result, and the child says that no order was placed. In both cases, the final answer of the child becomes the result of the `delegate` call, and the parent reports it.
+6. Read the **Usage records** card. The parent and the child have their own records. A record of the child names the parent Thread and the call. No record occurs two times.
+7. Select **Reset scenario**, then the **Two children** prompt and **Run**. The parent calls `delegate` two times in one Step. Two child Threads run at the same time, and each one has its own Approval.
+8. Select **Cancel the Turn** while the children wait. The parent Turn ends with `turn.failed` and the reason `cancelled`. Each child Turn ends the same way, and its card says so. An order that a child placed before the cancel stays in the sample purchase system.
+
+Open **Event log** to see the parent log. It has `delegation.started` and `delegation.completed` with the key of the child, and the Approval of the child with a `child` field. It has no Tool call of the child.
+
+A child id is the parent id, then the call id of the `delegate` call. A reset cancels the parent Turn, which cancels each child. It then deletes each child Thread and the parent Thread, and restores the sample data. A delete of the parent does not reach a child, thus the reset lists the children with `scope.threads.list` and the parent key.
+
+The scenario needs a model that supports Tool calls. A small model can call `place_order` without the supplier list, or put the two tasks in one `delegate` call. The Agents and the Tools are in [`src/purchases.ts`](./src/purchases.ts). The state and reset routes are in [`src/runtimes.ts`](./src/runtimes.ts) and [`src/app.ts`](./src/app.ts).
+
 ## Model limits
 
-The refund scenario, the Tools scenario, the Turn control scenario, the Schedules scenario and the Compaction and recovery scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
+The refund scenario, the Tools scenario, the Turn control scenario, the Schedules scenario, the Compaction and recovery scenario and the Delegation scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
 The media scenario shows a separate note about the media types that models can receive. Storage and download do not depend on model support.
 

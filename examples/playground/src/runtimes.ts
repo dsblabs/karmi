@@ -1,7 +1,8 @@
-import type { Scope, Thread, ThreadStatus } from "@karmi/core";
+import type { Scope, Thread, ThreadStatus, UsageRecord } from "@karmi/core";
 import { AGENTS, ASSISTANT, presets, SCOPE_CONFIG, shopPolicy, shopPolicyArgs, startingSpec } from "./assistant";
 import { decodeDispatch, decodeReport, DISPATCH, reportBooking, TURNS } from "./dispatch";
 import { COMPACTION, CONTEXT, decodeHold, decodeLedger, isHeld, LEDGER, readLedgerOf, writeLedger } from "./ledger";
+import { BUYER, decodePurchases, DELEGATION, MANAGER } from "./purchases";
 import { decodeOrder, REFUND } from "./refund";
 import { routeError } from "./route-error";
 import { sampleData, type SampleDataDO } from "./sample-data";
@@ -80,11 +81,58 @@ export interface Runtime {
   prepare?(): Promise<void>;
   /** Runs after the reset of the Thread and the sample data. */
   restore?(): Promise<void>;
+  /** Returns the child Threads that the Thread of the scenario delegated to. A reset deletes each one. */
+  children?(thread: Thread): Promise<Thread[]>;
   /**
-   * Returns what the page shows next to the conversation. `data` is the stored sample data of the scenario and
-   * `status` is the state of its Thread.
+   * Returns what the page shows next to the conversation. `data` is the stored sample data of the scenario,
+   * `status` is the state of its Thread and `thread` is the Thread.
    */
-  view(data: string | undefined, status: ThreadStatus): Promise<Record<string, unknown>> | Record<string, unknown>;
+  view(
+    data: string | undefined,
+    status: ThreadStatus,
+    thread: Thread,
+  ): Promise<Record<string, unknown>> | Record<string, unknown>;
+}
+
+/** The Usage records in the log of a Thread. A child records its own spend, thus no record occurs two times. */
+async function usageOf(thread: Thread): Promise<UsageRecord[]> {
+  return (await thread.events()).filter((event): event is UsageRecord => event.type === "usage.recorded");
+}
+
+/**
+ * The runtime of the Delegation scenario. The page shows each child Thread of the parent with its parent link, and
+ * the Usage records of the parent and of each child.
+ */
+function delegationRuntime(scope: () => Scope): Runtime {
+  const children = async (thread: Thread) =>
+    (await scope().threads.list({ agent: BUYER, user: USER, parent: thread.key })).map((child) =>
+      scope().thread(child.key),
+    );
+  return {
+    agent: MANAGER,
+    children,
+    async view(stored, status, thread) {
+      const threads = await children(thread);
+      const statuses = await Promise.all(threads.map((child) => child.status()));
+      const usage = (await Promise.all([thread, ...threads].map(usageOf))).flat();
+      return {
+        purchases: decodePurchases(stored),
+        turn: { ...turnView(status), delegated: status.budget?.delegated },
+        children: threads.map((child, index) => {
+          const childStatus = statuses[index];
+          return {
+            threadKey: child.key,
+            threadId: child.identity.threadId,
+            agent: child.identity.agent,
+            parent: childStatus?.parent,
+            state: childStatus?.state,
+            paused: childStatus?.paused,
+          };
+        }),
+        usage,
+      };
+    },
+  };
 }
 
 /** The runtime of the Agent Spec scenario. Its Agent is stored data, thus the runtime stores the starting Spec. */
@@ -159,5 +207,6 @@ export function scenarioRuntimes(scope: () => Scope, model: string): Record<stri
       }),
     },
     [AGENTS]: assistantRuntime(scope, model),
+    [DELEGATION]: delegationRuntime(scope),
   };
 }
