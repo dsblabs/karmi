@@ -1,7 +1,6 @@
 import { SpecInvalidError, type AgentSpec, type Karmi, type Scope, type Thread } from "@karmi/core";
 import { createHttpHandler, type Principal } from "@karmi/http";
 import { AGENTS, ASSISTANT } from "./assistant";
-import { decodeDispatch, decodeReport, reportBooking, TURNS } from "./dispatch";
 import { forkScenarioRoutes } from "./fork-routes";
 import { FORKS } from "./media-forks";
 import type { ProviderSetup } from "./provider-options";
@@ -110,33 +109,19 @@ async function putSpec(scope: Scope, request: Request): Promise<Response | undef
 }
 
 /**
- * Reports the outcome of the courier Job of the Turn control scenario, which resumes the parked Turn. The
- * operator plays the part of the external courier system. Returns an error answer when the body is not a
- * report or when no Turn waits for the Job. Returns nothing after the report.
+ * Ends the Thread of a scenario and resets its sample data. The next generation gets a new Thread. `runtime`
+ * restores what the scenario stores outside its sample data, when given.
  */
-async function reportJob(
+async function resetScenario(
   stub: DurableObjectStub<SampleDataDO>,
-  open: (generation: number) => Thread,
-  request: Request,
-): Promise<Response | undefined> {
-  const report = decodeReport(await request.json().catch(() => undefined));
-  if (!report)
-    return routeError(400, "http.badRequest", 'The body must be {"report":"collected"} or {"report":"failed"}.');
-  // One read gives the booking and the generation, thus no stale copy meets a fresh one.
-  const stored = await stub.read();
-  const dispatch = decodeDispatch(stored.data);
-  const booking = dispatch.booking;
-  const thread = open(stored.generation);
-  if (!booking || (await thread.status()).paused !== "job")
-    return routeError(409, "playground.noJob", "No Turn waits for the courier Job.");
-  // The Thread comes first. The sample courier system then cannot report an outcome that no Turn received.
-  if (report === "collected")
-    await thread.jobs.complete(booking.jobId, {
-      content: [{ type: "text", text: `The courier collected ${booking.parcels} parcels.` }],
-    });
-  else await thread.jobs.fail(booking.jobId, "The courier did not arrive. The collection failed.");
-  await stub.write(JSON.stringify(reportBooking(dispatch, report)));
-  return undefined;
+  thread: Thread,
+  runtime: Runtime | undefined,
+): Promise<void> {
+  // The order matters: the cancel stops a Turn that could still change the data which the reset restores.
+  await thread.cancel();
+  await thread.delete();
+  await stub.reset();
+  await runtime?.restore?.();
 }
 
 /**
@@ -179,25 +164,22 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
       });
     const answered = await ownRoutes(own, request, path);
     if (answered) return answered;
-    const [, id, action] = /^\/api\/scenarios\/([^/]+)(?:\/(reset|spec|job))?$/.exec(path) ?? [];
+    const [, id, action] = /^\/api\/scenarios\/([^/]+)(?:\/(reset|spec|job|hold))?$/.exec(path) ?? [];
     const runtime = id === undefined ? undefined : runtimes[id];
     if (id === undefined || !runtime) return routeError(404, "http.notFound", "No such route.");
     if (action === undefined && request.method === "GET") return scenarioState(id, runtime);
     const restart = async (restore: boolean) => {
       const stub = sampleData(data, SCOPE, id);
-      const stored = await stub.read();
-      const thread = threadOf(runtime, stored.generation);
-      // The order matters: the cancel stops a Turn that could still change the data which the reset restores.
-      await thread.cancel();
-      await thread.delete();
-      await stub.reset();
-      if (restore) await runtime.restore?.();
+      await resetScenario(stub, threadOf(runtime, (await stub.read()).generation), restore ? runtime : undefined);
       return scenarioState(id, runtime);
     };
     if (action === "reset" && request.method === "POST") return restart(true);
-    const open = (generation: number) => threadOf(runtime, generation);
-    if (action === "job" && id === TURNS && request.method === "POST")
-      return (await reportJob(sampleData(data, SCOPE, id), open, request)) ?? scenarioState(id, runtime);
+    const act = action === undefined ? undefined : runtime.actions?.[action];
+    if (act && request.method === "POST")
+      return (
+        (await act(sampleData(data, SCOPE, id), (generation) => threadOf(runtime, generation), request)) ??
+        scenarioState(id, runtime)
+      );
     // A saved Spec starts a new Thread, thus the earlier answers cannot change what the new version does.
     if (action === "spec" && id === AGENTS && request.method === "PUT")
       return (await putSpec(scope(), request)) ?? restart(false);

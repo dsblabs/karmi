@@ -1,5 +1,6 @@
 import { AGENTS, ASSISTANT_PROMPTS } from "./assistant";
 import { DISPATCH_PROMPTS, MAX_STEPS, TURNS } from "./dispatch";
+import { COMPACTION, CONTEXT, LEDGER_PROMPTS } from "./ledger";
 import { FORKS, FORKS_PROMPT } from "./media-forks";
 import type { ProviderSetup } from "./provider-options";
 import { REFUND, REFUND_PROMPT } from "./refund";
@@ -103,7 +104,17 @@ export const SCENARIOS: readonly Scenario[] = [
     controls: true,
   },
   notBuilt("provider-tools", "Tools", "Provider Tools"),
-  notBuilt("compaction", "Threads", "Compaction and recovery"),
+  {
+    id: COMPACTION,
+    group: "Threads",
+    title: "Compaction and recovery",
+    summary: `An Agent keeps a sample ledger. Its context window is ${String(CONTEXT.window)} tokens, thus a short conversation makes the Harness compact the Thread. Hold the ledger, stop the dev server during a Tool call and start it again. The Thread recovers the Turn from its event log.`,
+    built: true,
+    prerequisites: [],
+    needs: ["toolCalls"],
+    prompts: LEDGER_PROMPTS,
+    code: `${CODE}/src/ledger.ts`,
+  },
   {
     id: FORKS,
     group: "Threads",
@@ -214,6 +225,7 @@ const tools = row(STOCKROOM);
 const turns = row(TURNS);
 const forks = row(FORKS);
 const schedules = row(SCHEDULES);
+const compaction = row(COMPACTION);
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
@@ -237,6 +249,22 @@ export const COVERAGE: readonly CoverageRow[] = [
   turns("Jobs", "Threads", "The courier Tool parks the Turn. A reported outcome resumes it."),
   forks("Forks", "Threads", "Select a completed Turn and inspect the original and Fork as separate Threads."),
   forks("Independent Fork media", "Threads", "Delete the original, then download the bytes from the Fork."),
+  compaction(
+    "Compaction",
+    "Threads",
+    "A compact Step runs before a model Step when the context is over the limit. The Thread shows the summary and the first kept event. The Agent continues.",
+  ),
+  compaction("Compaction on request", "Threads", "Compact the Thread with instructions while it is idle."),
+  compaction(
+    "Recovery",
+    "Development and operations",
+    "Stop the dev server during a Tool call. The Thread recovers the Turn from its event log and keeps each finished Tool result.",
+  ),
+  compaction(
+    "Interrupted Tool calls",
+    "Development and operations",
+    "A read-only call runs again. A call without idempotentHint gets an error result with interrupted.",
+  ),
   turns("Capability grants", "Agents", `The longRunning grant gives the Turn ${String(MAX_STEPS)} Steps.`),
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),
   shown("Cancellation on reset", "Threads", "Reset cancels a Turn that waits for an Approval."),

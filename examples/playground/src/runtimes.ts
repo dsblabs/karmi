@@ -1,7 +1,10 @@
-import type { Scope, ThreadStatus } from "@karmi/core";
+import type { Scope, Thread, ThreadStatus } from "@karmi/core";
 import { AGENTS, ASSISTANT, presets, SCOPE_CONFIG, shopPolicy, shopPolicyArgs, startingSpec } from "./assistant";
-import { decodeDispatch, DISPATCH, TURNS } from "./dispatch";
+import { decodeDispatch, decodeReport, DISPATCH, reportBooking, TURNS } from "./dispatch";
+import { COMPACTION, CONTEXT, decodeHold, decodeLedger, LEDGER, type Ledger } from "./ledger";
 import { decodeOrder, REFUND } from "./refund";
+import { routeError } from "./route-error";
+import { sampleData, type SampleDataDO } from "./sample-data";
 import { adjustStock, checkStock, decodeStock, deleteProduct, STOCKROOM, stockroomAgent } from "./stockroom";
 
 /** The sample Scope that the scenarios run in. */
@@ -9,10 +12,63 @@ export const SCOPE = "sample-a";
 /** The User of the one operator. */
 export const USER = "operator";
 
+/**
+ * One action of a scenario, at `POST /api/scenarios/{id}/{action}`. `stub` is the sample system of the scenario
+ * and `open` opens its Thread for one generation. It returns an error answer, or nothing when the route must
+ * answer with the state of the scenario.
+ */
+export type ScenarioAction = (
+  stub: DurableObjectStub<SampleDataDO>,
+  open: (generation: number) => Thread,
+  request: Request,
+) => Promise<Response | undefined>;
+
+/**
+ * Reports the outcome of the courier Job of the Turn control scenario, which resumes the parked Turn. The
+ * operator plays the part of the external courier system. Returns an error answer when the body is not a
+ * report or when no Turn waits for the Job.
+ */
+const reportJob: ScenarioAction = async (stub, open, request) => {
+  const report = decodeReport(await request.json().catch(() => undefined));
+  if (!report)
+    return routeError(400, "http.badRequest", 'The body must be {"report":"collected"} or {"report":"failed"}.');
+  // One read gives the booking and the generation, thus no stale copy meets a fresh one.
+  const stored = await stub.read();
+  const dispatch = decodeDispatch(stored.data);
+  const booking = dispatch.booking;
+  const thread = open(stored.generation);
+  if (!booking || (await thread.status()).paused !== "job")
+    return routeError(409, "playground.noJob", "No Turn waits for the courier Job.");
+  // The Thread comes first. The sample courier system then cannot report an outcome that no Turn received.
+  if (report === "collected")
+    await thread.jobs.complete(booking.jobId, {
+      content: [{ type: "text", text: `The courier collected ${booking.parcels} parcels.` }],
+    });
+  else await thread.jobs.fail(booking.jobId, "The courier did not arrive. The collection failed.");
+  await stub.write(JSON.stringify(reportBooking(dispatch, report)));
+  return undefined;
+};
+
+/**
+ * Holds or releases the sample ledger of the Compaction and recovery scenario. A held ledger makes each Tool
+ * call wait, thus the operator can stop the dev server during the call. Returns an error answer when the body
+ * has no boolean `held`.
+ */
+const holdLedger: ScenarioAction = async (stub, _open, request) => {
+  const held = decodeHold(await request.json().catch(() => undefined));
+  if (held === undefined)
+    return routeError(400, "http.badRequest", 'The body must be {"held":true} or {"held":false}.');
+  const ledger = decodeLedger((await stub.read()).data);
+  await stub.write(JSON.stringify({ ...ledger, held } satisfies Ledger));
+  return undefined;
+};
+
 /** The server side of one scenario: its Agent and what the page shows next to the conversation. */
 export interface Runtime {
   /** The id of the Agent that the Thread of the scenario runs. */
   agent: string;
+  /** The actions of the scenario, by the last path segment of their route. */
+  actions?: Record<string, ScenarioAction>;
   /** Makes what must exist before the Thread of the scenario can exist. */
   prepare?(): Promise<void>;
   /** Runs after the reset of the Thread and the sample data. */
@@ -24,25 +80,68 @@ export interface Runtime {
   view(data: string | undefined, status: ThreadStatus): Promise<Record<string, unknown>> | Record<string, unknown>;
 }
 
+/** The runtime of the Agent Spec scenario. Its Agent is stored data, thus the runtime stores the starting Spec. */
+function assistantRuntime(scope: () => Scope, model: string): Runtime {
+  const storeStartingSpec = async () => {
+    await scope().config.set(SCOPE_CONFIG);
+    await scope().agents.put(startingSpec(model));
+  };
+  return {
+    agent: ASSISTANT,
+    async prepare() {
+      const stored = await scope().agents.list();
+      if (!stored.some((agent) => agent.agentId === ASSISTANT)) await storeStartingSpec();
+    },
+    restore: storeStartingSpec,
+    async view() {
+      const { version, spec } = await scope().agents.get(ASSISTANT);
+      const now = new Date();
+      // The page shows what each Prompt entry gives. The Fragment is the same function that the Harness calls.
+      const prompt = await Promise.all(
+        spec.instructions.map(async (entry) =>
+          "fragment" in entry
+            ? {
+                source: `Fragment ${entry.fragment}`,
+                text:
+                  entry.fragment === shopPolicy.name
+                    ? await shopPolicy.render(
+                        { model: spec.model.id, scope: SCOPE, user: USER, thread: { id: "preview" }, tools: [], now },
+                        shopPolicyArgs.parse(entry.args),
+                      )
+                    : null,
+              }
+            : { source: "Text", text: entry.text },
+        ),
+      );
+      return { agent: { version, spec }, prompt, presets: presets(model), ceilings: SCOPE_CONFIG.ceilings };
+    },
+  };
+}
+
 /**
  * Returns the server side of each built scenario that uses the shared state and reset routes, by scenario id.
  * `scope` opens the sample Scope. The routes call it for each request, because the Workers runtime allows random
  * values only while it handles a request.
  */
 export function scenarioRuntimes(scope: () => Scope, model: string): Record<string, Runtime> {
-  const storeStartingSpec = async () => {
-    await scope().config.set(SCOPE_CONFIG);
-    await scope().agents.put(startingSpec(model));
-  };
-
   return {
     [REFUND]: { agent: REFUND, view: (stored) => ({ order: decodeOrder(stored) }) },
     [TURNS]: {
       agent: DISPATCH,
+      actions: { job: reportJob },
       view: (stored, status) => ({
         dispatch: decodeDispatch(stored),
         // The page shows the Turn state, thus pending work and its budget are visible without the event log.
         turn: { state: status.state, paused: status.paused, budget: status.budget },
+      }),
+    },
+    [COMPACTION]: {
+      agent: LEDGER,
+      actions: { hold: holdLedger },
+      view: (stored, status) => ({
+        ledger: decodeLedger(stored),
+        context: CONTEXT,
+        turn: { state: status.state, paused: status.paused },
       }),
     },
     [STOCKROOM]: {
@@ -53,35 +152,6 @@ export function scenarioRuntimes(scope: () => Scope, model: string): Record<stri
         policy: stockroomAgent(model).spec.policy,
       }),
     },
-    [AGENTS]: {
-      agent: ASSISTANT,
-      async prepare() {
-        const stored = await scope().agents.list();
-        if (!stored.some((agent) => agent.agentId === ASSISTANT)) await storeStartingSpec();
-      },
-      restore: storeStartingSpec,
-      async view() {
-        const { version, spec } = await scope().agents.get(ASSISTANT);
-        const now = new Date();
-        // The page shows what each Prompt entry gives. The Fragment is the same function that the Harness calls.
-        const prompt = await Promise.all(
-          spec.instructions.map(async (entry) =>
-            "fragment" in entry
-              ? {
-                  source: `Fragment ${entry.fragment}`,
-                  text:
-                    entry.fragment === shopPolicy.name
-                      ? await shopPolicy.render(
-                          { model: spec.model.id, scope: SCOPE, user: USER, thread: { id: "preview" }, tools: [], now },
-                          shopPolicyArgs.parse(entry.args),
-                        )
-                      : null,
-                }
-              : { source: "Text", text: entry.text },
-          ),
-        );
-        return { agent: { version, spec }, prompt, presets: presets(model), ceilings: SCOPE_CONFIG.ceilings };
-      },
-    },
+    [AGENTS]: assistantRuntime(scope, model),
   };
 }

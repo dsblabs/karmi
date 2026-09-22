@@ -60,7 +60,7 @@ main { display: flex; flex-direction: column; gap: 1rem; padding: 1.25rem 1.5rem
 .intro > p { margin: 0.4rem 0 0; color: var(--muted); max-width: 46rem; }
 .badge { font-size: 0.7rem; font-weight: 500; padding: 0.1rem 0.5rem; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .badge.ready, .badge.refunded, .badge.collected { color: var(--good); border-color: currentColor; }
-.badge.waiting { color: var(--accent); border-color: currentColor; }
+.badge.waiting, .badge.held { color: var(--accent); border-color: currentColor; }
 .badge.failed, .badge.deleted { color: var(--bad); border-color: currentColor; }
 .badge.unavailable { color: var(--warn); border-color: currentColor; }
 .intro > p.note { color: var(--text); border-left: 3px solid var(--warn); background: light-dark(#fef3c766, #fbbf2414); border-radius: 0 7px 7px 0; padding: 0.45rem 0.8rem; margin-top: 0.7rem; font-size: 0.9rem; }

@@ -371,6 +371,13 @@ const SCHEDULE_LINES = {
   "schedule.cancelled": "The Thread cancelled a Schedule.",
 };
 
+// What the conversation tells for each trigger of a Compaction.
+const COMPACTION_TRIGGERS = {
+  auto: "The context is over the window minus the reserve.",
+  manual: "You asked for a Compaction.",
+  overflow: "The Provider refused the request, because the context was too large.",
+};
+
 /** The conversation card of a `continue` Approval. It shows what the Turn spent and takes the answer. */
 function continueCard(event, ask) {
   const label = el("span", { className: "state", textContent: "needs your Approval" });
@@ -779,6 +786,91 @@ function scheduleCards({ threadKey, schedules, reminders, inbox, modes }, onChan
   ];
 }
 
+function ledgerCards({ threadKey, ledger, context, turn }, onChanged, isCurrent) {
+  const path = "/api/scenarios/compaction";
+  const changed = (note) => (next) => isCurrent() && onChanged(next, note);
+  const holdResult = el("p", { className: "fine" });
+  const compactResult = el("p", { className: "fine" });
+  const instructions = el("input", {
+    id: "compact-instructions",
+    type: "text",
+    ariaLabel: "Compaction instructions",
+    value: "Keep each entry id and amount.",
+    spellcheck: false,
+  });
+  return [
+    el(
+      "div",
+      { className: "card titled", id: "ledger" },
+      el("h3", {}, "Ledger system", badge(ledger.held ? "held" : "open")),
+      rows(...ledger.entries.map((entry) => [entry.id, `${entry.text}: ${entry.amount}`])),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          ledger.held ? "Release the ledger" : "Hold the ledger",
+          () => api("POST", `${path}/hold`, { held: !ledger.held }),
+          changed(
+            ledger.held
+              ? "The ledger is open. A Tool call that waits returns its result now."
+              : "The ledger is held. Each Tool call waits up to five minutes before it returns its result.",
+          ),
+          holdResult,
+          true,
+        ),
+      ),
+      holdResult,
+      el("p", {
+        className: "fine",
+        textContent:
+          "This is sample data. Reset restores it. Hold the ledger, run a prompt, then stop the dev server while the Tool call runs. The README has the walkthrough.",
+      }),
+    ),
+    el(
+      "div",
+      { className: "card", id: "context" },
+      el("h3", { textContent: "Context of the Agent" }),
+      rows(
+        ["Window", `${context.window} tokens`],
+        ["Reserve", `${context.reserveTokens} tokens`],
+        ["Kept", `${context.keepRecentTokens} tokens`],
+      ),
+      el("p", {
+        className: "fine",
+        textContent:
+          "Before each model Step, the Harness compares the context with the window minus the reserve. Over the limit, a compact Step summarises the events before the kept part. The limits are small on purpose.",
+      }),
+      el(
+        "div",
+        { className: "row" },
+        instructions,
+        cardAction(
+          "Compact the Thread",
+          () => api("POST", `/threads/${threadKey}/compact`, { instructions: instructions.value.trim() }),
+          () => (compactResult.textContent = "The Thread compacts. The conversation shows the summary."),
+          compactResult,
+        ),
+      ),
+      compactResult,
+      el("p", {
+        className: "fine",
+        textContent: "The Thread must be idle. It refuses a Compaction while a Turn runs or is parked.",
+      }),
+    ),
+    el(
+      "div",
+      { className: "card", id: "turn" },
+      el("h3", { textContent: "Turn" }),
+      rows(["State", turn.state], turn.paused && ["Waits for", PARKED[turn.paused]?.waits ?? turn.paused]),
+      el("p", {
+        className: "fine",
+        textContent:
+          "After a restart of the dev server, the state stays running until the Thread recovers the Turn. The watchdog alarm of the Thread does that about one minute after the last Step began. A new input to the Thread does it at once.",
+      }),
+    ),
+  ];
+}
+
 // The cards next to the conversation, by scenario id.
 const PANELS = {
   refund: (state) => [orderCard(state.order)],
@@ -787,6 +879,7 @@ const PANELS = {
   turns: dispatchCards,
   forks: forkCards,
   schedules: scheduleCards,
+  compaction: ledgerCards,
 };
 
 async function renderScenario(scenario) {
@@ -886,19 +979,21 @@ async function renderScenario(scenario) {
   // The `seq` of the newest event that the page has, thus a new stream or a plain read starts after it.
   let lastSeq = 0;
   const showPanel = () => {
-    const { threadKey: _, ...data } = state;
-    const next = JSON.stringify({ data, attached });
+    // The key is part of the comparison, because a card can act on the Thread, and a reset starts a new one.
+    const next = JSON.stringify({ state, attached });
     if (next === shownPanel) return;
     // A panel action returns the whole scenario state. A saved Spec also starts a new Thread.
     const cards = PANELS[scenario.id](
       state,
       (saved, note) => {
-        if (scenario.id === "forks" || scenario.id === "schedules") {
+        // A saved Spec starts a new Thread. Each other panel action keeps the Thread of the conversation.
+        if (scenario.id === "agents") restart(saved);
+        else {
           state = saved;
           shownPanel = undefined;
           showPanel();
           if (syncTarget()) showThread();
-        } else restart(saved);
+        }
         $("panel").append(el("p", { id: "saved", className: "outcome", textContent: note }));
       },
       () => mine === view,
@@ -997,8 +1092,14 @@ async function renderScenario(scenario) {
     await api("POST", `/threads/${threadKey}/approvals/${seq}`, { decision, by: "operator" });
   };
 
+  // True from the start of a compact Step until its thread.compacted event. A Step without one dropped nothing.
+  let compacting = false;
   const onEvent = (event) => {
-    if (Number.isInteger(event.seq)) lastSeq = Math.max(lastSeq, event.seq);
+    // A stream that connects again after a restart of the dev server can repeat an event.
+    if (Number.isInteger(event.seq)) {
+      if (event.seq <= lastSeq) return;
+      lastSeq = event.seq;
+    }
     logCount.textContent = String(Number(logCount.textContent) + 1);
     log.append(el("pre", { textContent: JSON.stringify(event) }));
     switch (event.type) {
@@ -1028,6 +1129,55 @@ async function renderScenario(scenario) {
         );
         refreshSoon();
         break;
+      case "step.started":
+        if (event.kind === "compact") {
+          compacting = true;
+          add(
+            el("p", {
+              className: "outcome",
+              textContent: `${COMPACTION_TRIGGERS[event.trigger] ?? "The Harness compacts the Thread."} A compact Step runs before the model Step.`,
+            }),
+          );
+        } else if (event.attempt > 1)
+          add(
+            el("p", {
+              className: "outcome",
+              textContent: `Attempt ${event.attempt} of the ${event.kind} Step ${event.n}. The Thread runs the Step that did not finish again.`,
+            }),
+          );
+        break;
+      case "step.completed":
+        if (event.kind === "compact" && compacting)
+          add(
+            el("p", {
+              className: "outcome",
+              textContent: "The compact Step dropped nothing. The recent events fit in the kept tokens.",
+            }),
+          );
+        compacting = false;
+        break;
+      case "thread.compacted":
+        compacting = false;
+        add(
+          el(
+            "details",
+            { className: "tool done compacted", open: true },
+            el(
+              "summary",
+              {},
+              el("span", {}, "Compaction: ", el("code", { textContent: `${event.trigger}, ${event.strategy}` })),
+              el("span", { className: "state", textContent: `${event.tokensBefore} → ${event.tokensAfter} tokens` }),
+            ),
+            el("h4", { textContent: "Summary" }),
+            el("pre", { textContent: event.summary }),
+            el("h4", { textContent: "Retained context" }),
+            el("p", {
+              className: "outcome",
+              textContent: `The log keeps every event. The next request has the Prompt, this summary and the events from seq ${event.firstKeptSeq}. The events before it are in the summary only.`,
+            }),
+          ),
+        );
+        break;
       case "turn.input":
         add(
           el(
@@ -1054,7 +1204,14 @@ async function renderScenario(scenario) {
       case "tool.result": {
         const card = toolCard(event.id, event.name, undefined);
         card.classList.add(event.isError ? "failed" : "done");
-        card.state.textContent = event.isError ? "error" : "done";
+        card.state.textContent = event.interrupted ? "interrupted" : event.isError ? "error" : "done";
+        if (event.interrupted)
+          card.append(
+            el("p", {
+              className: "outcome",
+              textContent: `An interruption ended attempt ${event.interrupted.attempt - 1} of this call before it reported a result. The Tool has no readOnlyHint or idempotentHint, thus the Harness does not run it again. The model gets this error result and decides what to do.`,
+            }),
+          );
         card.append(
           el("h4", { textContent: "Result" }),
           el("pre", {
@@ -1135,6 +1292,14 @@ async function renderScenario(scenario) {
         parked = undefined;
         if (event.reason === "job")
           add(el("p", { className: "outcome", textContent: "The Job reported its outcome. The Turn continues." }));
+        if (event.reason === "recovered")
+          add(
+            el("p", {
+              className: "outcome",
+              textContent:
+                "The Thread recovered the Turn from its event log after an interruption. Each Tool result in the log stays. The Step that did not finish runs again.",
+            }),
+          );
         refreshSoon();
         break;
       case "job.started":
@@ -1165,7 +1330,9 @@ async function renderScenario(scenario) {
               textContent:
                 event.reason === "cancelled"
                   ? "You cancelled the Turn. The Framework cannot undo an action that a Tool finished in another system."
-                  : `The Turn failed: ${event.message} Check the model name and the credential that you gave to pnpm setup.`,
+                  : event.reason === "recovery"
+                    ? `The Turn failed: ${event.message} Each Step has three attempts.`
+                    : `The Turn failed: ${event.message} Check the model name and the credential that you gave to pnpm setup.`,
             }),
           );
         busy = false;

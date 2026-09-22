@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has six browser scenarios:
+This version has seven browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -10,6 +10,7 @@ This version has six browser scenarios:
 - **Control a Turn and its parked work**
 - **Media and independent Thread Forks**
 - **Schedules, external triggers and offline delivery**
+- **Compaction and recovery**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -190,9 +191,64 @@ A reset cancels each pending Schedule, deletes the Thread and empties the inbox 
 
 The scenario needs a model that supports Tool calls. The Agent, the Tool and the Deliverer are in [`src/reminders.ts`](./src/reminders.ts). The routes and the trigger function are in [`src/schedule-routes.ts`](./src/schedule-routes.ts). The `scheduled` handler is in [`src/worker.ts`](./src/worker.ts).
 
+## The Compaction and recovery scenario
+
+**Compaction and recovery** has an Agent that keeps a sample ledger. Its Tool `read_ledger` has `readOnlyHint`, and its Tool `post_entry` has no `idempotentHint`. The Agent Spec has a small `context`: a window of 2000 tokens, a reserve of 500 and 500 kept tokens. A real Agent inherits the window of its model, which is much larger.
+
+### Compaction
+
+Before each model Step, the Harness compares the context with the window minus the reserve. The context is the usage that the Provider reported for the last model Step, plus an estimate of what the log got since. Over the limit, a compact Step runs before the model Step.
+
+Do these steps:
+
+1. Select **Run** with the **Long conversation** prompt. The Agent reads the ledger and describes each entry.
+2. Select **Run** again with the same prompt, one or two more times. The conversation shows the line `The context is over the window minus the reserve`, then a **Compaction** card with the summary and the first kept `seq`. The number of Turns depends on the length of the answers of your model.
+3. Read the Agent answer after the card. The Agent continues with the summary in place of the earlier Turns. The check is that the Turn completes, not the words of the model.
+4. Open **Event log**. The events before the first kept `seq` are still there. Compaction does not change the log. The next request has the Prompt, the summary and the events from the first kept `seq`.
+5. Select **Compact the Thread** while the Thread is idle. The compact Step runs with the trigger `manual` and your instructions. A compact Step that finds nothing before the kept tokens drops nothing, and the conversation says so.
+
+The **Compaction** card shows the tokens before and after, as the Harness estimated them. The summarising call has its own Usage record with the kind `compaction`.
+
+### Recovery from a terminal
+
+Cloudflare can stop a Durable Object at any time. A stopped dev server does the same to each Thread in the local emulation. The Thread continues from its stored event log. This walkthrough shows it with a Tool call that runs when the server stops. Run it with `pnpm dev` in one terminal and a second terminal for the commands.
+
+1. Select **Hold the ledger**. Each Tool call now writes its change, then waits up to five minutes before it returns its result.
+2. Select **Run** with the **Unsafe call** prompt. The Agent calls `post_entry`. The **Ledger system** card shows the new entry, and the Tool card stays at `running`.
+3. In the terminal of `pnpm dev`, stop the server with `Ctrl+C`. The state of the local emulation stays in `.wrangler/`.
+4. Start the server again with `pnpm dev`. Reload the page. The conversation shows the Turn from the event log: the Tool call has no result, and the **Turn** card shows the state `running`.
+5. Select **Release the ledger**. Then read the event log from the terminal. Use the port that `pnpm dev` printed, your access token and the Thread key from the **Event log**:
+
+   ```sh
+   curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8787/threads/$THREAD_KEY/events" | jq '.[] | {seq, type, attempt, interrupted, reason}'
+   ```
+
+6. Wait for the recovery. The watchdog alarm of the Thread fires about one minute after the last Step began. A new input to the Thread starts the recovery at once, thus send a message with **Run** if you do not want to wait. The event log then has these events, in this sequence:
+
+   | Event | What it shows |
+   | --- | --- |
+   | `turn.resumed` with `reason: "recovered"` | The Thread continues the Turn from its event log. |
+   | `step.started` with `attempt: 2` | The tool Step runs again. Each Step has three attempts. |
+   | `tool.result` for `post_entry` with `isError: true` and `interrupted: { attempt: 2 }` | The call has no `idempotentHint`, thus the Harness does not run it again. The result tells the model that the call may have taken effect. |
+   | `tool.call` and `tool.result` for `read_ledger` | The Agent checks the ledger, as its instructions say. The entry is there one time. |
+   | `turn.completed` | The Agent tells what it found. |
+
+7. Reset the scenario and repeat the steps with the **Safe call** prompt. The Agent calls `read_ledger`, which has `readOnlyHint`. After the recovery, the log has a second `step.started` with `attempt: 2` and one `tool.result` for `read_ledger` with `isError: false`. The Harness ran the call again, because a read-only call is safe to repeat.
+
+A Tool result that is in the log before the interruption stays. The Harness does not run that call again, and the before-tool Hooks do not run again for it. Run the **Unsafe call** prompt with an open ledger first, then hold the ledger for the second Turn, to see a finished result and an interrupted one in the same Thread.
+
+The Playground verified this recovery in two places:
+
+- The Worker tests in `test/compaction.test.ts` run in workerd with the scripted Provider. They abort the Thread Durable Object while the Tool call waits, as a stop of the dev server does, and then fire the watchdog alarm with the Clock of the Test kit.
+- The walkthrough above ran against the local emulation of `wrangler dev` with the scripted Provider of the browser checks. The state survived the stop of the server, and the watchdog alarm fired after the start.
+
+No check ran in a Cloudflare account. The local result does not prove the behavior of a deployed Worker. Cloudflare resets a Durable Object for a code update or a platform failure, and the guide describes what the Harness does then.
+
+The scenario needs a model that supports Tool calls. The Agent and the Tools are in [`src/ledger.ts`](./src/ledger.ts). The hold route is in [`src/app.ts`](./src/app.ts).
+
 ## Model limits
 
-The refund scenario, the Tools scenario, the Turn control scenario and the Schedules scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
+The refund scenario, the Tools scenario, the Turn control scenario, the Schedules scenario and the Compaction and recovery scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
 The media scenario shows a separate note about the media types that models can receive. Storage and download do not depend on model support.
 
