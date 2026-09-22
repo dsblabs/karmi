@@ -95,7 +95,7 @@ export interface Runtime {
 }
 
 /** The Usage records in the log of a Thread. A child records its own spend, thus no record occurs two times. */
-async function usageOf(thread: Thread): Promise<UsageRecord[]> {
+async function usageRecordsOf(thread: Thread): Promise<UsageRecord[]> {
   return (await thread.events()).filter((event): event is UsageRecord => event.type === "usage.recorded");
 }
 
@@ -114,7 +114,7 @@ function delegationRuntime(scope: () => Scope): Runtime {
     async view(stored, status, thread) {
       const threads = await children(thread);
       const statuses = await Promise.all(threads.map((child) => child.status()));
-      const usage = (await Promise.all([thread, ...threads].map(usageOf))).flat();
+      const usage = (await Promise.all([thread, ...threads].map(usageRecordsOf))).flat();
       return {
         purchases: decodePurchases(stored),
         turn: { ...turnView(status), delegated: status.budget?.delegated },

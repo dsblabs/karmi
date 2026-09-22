@@ -398,7 +398,8 @@ test("the parent shows the child Thread and its Approval, and allow places the o
   await expect(page.locator("#purchases")).toContainText("O-1");
   await expect(page.locator("#children")).toContainText("idle");
   await expect(page.locator("#usage")).toContainText("buyer, model");
-  await expect(page.locator("#usage")).toContainText("child of");
+  await expect(page.locator("#usage")).toContainText("for the call");
+  await expect(page.locator("#steps .child")).toContainText("Child Thread for the call");
   await page.locator(".events summary").click();
   await expect(page.locator("#log")).not.toContainText('"name":"list_suppliers"');
 });

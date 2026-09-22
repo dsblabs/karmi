@@ -879,8 +879,12 @@ function ledgerCards({ threadKey, ledger, context, turn }, onChanged, isCurrent)
   ];
 }
 
+/** What a parked Turn waits for. A Turn with a child Thread waits for the child, which the Job represents. */
+const waitsFor = (reason, hasChildren) =>
+  reason === "job" && hasChildren ? "the child Thread" : (PARKED[reason]?.waits ?? reason);
+
 function purchaseCards({ purchases, turn, children, usage }) {
-  const waits = (child) => (child.paused ? (PARKED[child.paused]?.waits ?? child.paused) : child.state);
+  const waits = (child) => (child.paused ? waitsFor(child.paused, false) : child.state);
   return [
     el(
       "div",
@@ -942,7 +946,9 @@ function purchaseCards({ purchases, turn, children, usage }) {
                 "li",
                 {},
                 `${record.agent}, ${record.kind}: ${record.input} in, ${record.output} out `,
-                el("code", { textContent: record.parent ? `child of ${record.parent.callId}` : record.threadId }),
+                el("code", { textContent: record.threadId }),
+                record.parent && " for the call ",
+                record.parent && el("code", { textContent: record.parent.callId }),
               ),
             ),
           )
@@ -959,10 +965,7 @@ function purchaseCards({ purchases, turn, children, usage }) {
       el("h3", { textContent: "Turn" }),
       rows(
         ["State", turn.state],
-        turn.paused && [
-          "Waits for",
-          turn.paused === "job" ? "the child Thread" : (PARKED[turn.paused]?.waits ?? turn.paused),
-        ],
+        turn.paused && ["Waits for", waitsFor(turn.paused, children.length > 0)],
         turn.delegated && ["Children", `${turn.delegated.children} started, ${turn.delegated.active} active`],
       ),
       el("p", {
@@ -1137,7 +1140,7 @@ async function renderScenario(scenario) {
       : waiting > 0
         ? "The Agent waits for your decision."
         : parked
-          ? `The Turn is parked. It waits for ${parked === "job" && children.size > 0 ? "the child Thread" : (PARKED[parked]?.waits ?? parked)}.`
+          ? `The Turn is parked. It waits for ${waitsFor(parked, children.size > 0)}.`
           : busy
             ? "The Agent works…"
             : "Ctrl + Enter runs the prompt.";
@@ -1189,7 +1192,7 @@ async function renderScenario(scenario) {
 
   // The child cards of the conversation, by child Thread key. Each one shows the events of its own Thread.
   const children = new Map();
-  const childCard = (childKey) => {
+  const childCard = (childKey, callId) => {
     let card = children.get(childKey);
     if (card) return card;
     const label = el("span", { className: "state", textContent: "running" });
@@ -1198,11 +1201,10 @@ async function renderScenario(scenario) {
       el(
         "details",
         { className: "tool child", open: true },
-        el("summary", {}, el("span", {}, "Child Thread: ", el("code", { textContent: "" })), label),
+        el("summary", {}, el("span", {}, "Child Thread for the call ", el("code", { textContent: callId })), label),
         el("p", {
           className: "fine",
-          textContent:
-            "The child runs in its own Thread with new context. Its events are below, not in the parent log.",
+          textContent: "The child runs in its own Thread with new context. The card shows the events of the child.",
         }),
         items,
       ),
@@ -1218,28 +1220,30 @@ async function renderScenario(scenario) {
     card.stream = source;
     return card;
   };
+  // A child that ended sends no more events, thus its stream closes and leaves the set.
+  const closeChild = (card) => {
+    card.stream.close();
+    childStreams.delete(card.stream);
+  };
+  const childText = (card) =>
+    (card.live ??= card.items.appendChild(
+      el("div", { className: "agent" }, el("strong", { textContent: "Child Agent" }), el("span")),
+    ));
   const onChildEvent = (card, event) => {
     const line = (text, ...nodes) => card.items.append(el("p", { className: "outcome" }, text, ...nodes));
     switch (event.type) {
       case "turn.started":
-        card.querySelector("summary code").textContent = event.input.kind === "message" ? "task" : event.input.type;
         card.items.append(
           el("div", { className: "you" }, el("strong", { textContent: "Task" }), ...inputParts(event.input)),
         );
         break;
       case "message.delta":
         if (event.kind !== "text") break;
-        card.live ??= card.items.appendChild(
-          el("div", { className: "agent" }, el("strong", { textContent: "Child Agent" }), el("span")),
-        );
-        card.live.lastChild.textContent += event.text;
+        childText(card).lastChild.textContent += event.text;
         break;
       case "message.part":
         if (event.block.type !== "text") break;
-        card.live ??= card.items.appendChild(
-          el("div", { className: "agent" }, el("strong", { textContent: "Child Agent" }), el("span")),
-        );
-        card.live.lastChild.textContent = event.block.text;
+        childText(card).lastChild.textContent = event.block.text;
         card.live = undefined;
         break;
       case "tool.call":
@@ -1269,7 +1273,7 @@ async function renderScenario(scenario) {
       case "turn.completed":
         card.classList.add("done");
         card.state.textContent = "completed";
-        card.stream.close();
+        closeChild(card);
         break;
       case "turn.failed":
         card.classList.add("failed");
@@ -1279,7 +1283,7 @@ async function renderScenario(scenario) {
             ? "The cancel of the parent Turn stopped the child."
             : `The child Turn failed: ${event.message}`,
         );
-        card.stream.close();
+        closeChild(card);
         break;
     }
     refreshSoon();
@@ -1413,11 +1417,11 @@ async function renderScenario(scenario) {
             ". The tool Step parks until the child answers.",
           ),
         );
-        childCard(event.childKey);
+        childCard(event.childKey, event.id);
         refreshSoon();
         break;
       case "delegation.completed": {
-        const card = childCard(event.childKey);
+        const card = childCard(event.childKey, event.id);
         card.append(
           el("h4", { textContent: "Result for the parent" }),
           el("pre", { textContent: event.result.content.map((block) => block.text ?? "").join("\n") }),

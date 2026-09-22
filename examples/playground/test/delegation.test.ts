@@ -1,9 +1,9 @@
 import type { ThreadEvent } from "@karmi/core";
-import { reply } from "@karmi/core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { BUYER, MANAGER, purchasesSchema, STARTING_PURCHASES } from "../src/purchases";
 import { api as request, events } from "./client";
+import { delegationReplies } from "./script";
 import { provider } from "./worker";
 import { TOKEN } from "./worker-options";
 
@@ -67,32 +67,8 @@ async function answer(key: string, seq: number, decision: "allow" | "deny"): Pro
 /** The requests of the parent Agent see the manager instructions. The child Agent has its own. */
 const isParent = (system: string | undefined) => system?.includes("manage a small shop") ?? false;
 
-/**
- * Scripts one delegation: the parent delegates, the child lists the suppliers and places an order, then each
- * one reports. `tasks` is the number of `delegate` calls that the parent makes in one Step.
- */
-function script(tasks = 1) {
-  provider.script(({ request }) => {
-    const results = request.messages.filter((message) => message.role === "toolResult");
-    if (isParent(request.system)) {
-      if (results.length > 0)
-        return `The purchase desk says: ${results.map((result) => JSON.stringify(result.content)).join(" ")}`;
-      return Array.from({ length: tasks }, (_, index) =>
-        reply.toolCall(
-          "delegate",
-          { agent: BUYER, task: index === 0 ? "Order 20 bags of espresso beans." : "Order 10 boxes of filter paper." },
-          `task-${String(index + 1)}`,
-        ),
-      );
-    }
-    const task = JSON.stringify(request.messages[0]);
-    const supplierId = task.includes("filter") ? "S-3" : "S-2";
-    const quantity = task.includes("filter") ? 10 : 20;
-    if (results.length === 0) return [reply.toolCall("list_suppliers", {}, "c1")];
-    if (results.length === 1) return [reply.toolCall("place_order", { supplierId, quantity }, "c2")];
-    return results.at(-1)?.isError ? "No order was placed." : "I placed the order.";
-  });
-}
+/** Starts the shared script of the scenario. A prompt that names filter paper gets two tasks. */
+const script = () => provider.script(delegationReplies);
 
 /** Waits for the bubbled Approval of the child on the parent Thread and returns its request event. */
 async function childApproval(key: string, count = 1) {
@@ -184,9 +160,9 @@ describe("a delegated task", () => {
   });
 
   it("runs two children at the same time, each with its own Approval", async () => {
-    script(2);
+    script();
     const { threadKey } = await state();
-    await send(threadKey, "Order beans and paper.");
+    await send(threadKey, "Order beans and filter paper.");
     const second = await childApproval(threadKey, 2);
     const first = (await events(threadKey)).find((event) => event.type === "approval.requested");
     expect((await state()).turn.delegated).toEqual({ children: 2, active: 2 });

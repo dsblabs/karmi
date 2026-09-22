@@ -257,11 +257,11 @@ The scenario needs a model that supports Tool calls. The Agent and the Tools are
 Do these steps:
 
 1. Select **Run** with the **Delegate** prompt. The parent calls `delegate` with the Agent name and the task text. The conversation shows the line `The delegate call started the child Thread` and a **Child Thread** card. The **Child Threads** card in the side column shows the child with its parent key and the call id.
-2. Read the **Child Thread** card. It shows the task, each Tool call and the answer of the child. The child has new context: it gets the task text only, not your message. The events come from the event log of the child, not from the parent log.
+2. Read the **Child Thread** card. It shows the task, each Tool call and the answer of the child. The child has new context: it gets the task text only. Your message stays in the parent Thread. The card reads the event log of the child.
 3. Read the **Turn** card. The parent Turn is parked. The delegate call is a Job, and the Turn waits for the child. The card shows the children of the Turn: how many started and how many are active.
 4. Read the Approval. The child asked to call `place_order`. The parent Thread shows the Approval again, with the label of the child. Select **Allow** or **Deny**. The answer goes down to the child Thread.
 5. Read the outcome. **Allow** places the order, and the **Purchase system** card shows it. **Deny** gives the child an error result, and the child says that no order was placed. In both cases, the final answer of the child becomes the result of the `delegate` call, and the parent reports it.
-6. Read the **Usage records** card. The parent and the child have their own records. A record of the child names the parent Thread and the call. No record occurs two times.
+6. Read the **Usage records** card. The parent and the child have their own records, each with its Thread id. A record of the child also names the call of the parent. No record occurs two times.
 7. Select **Reset scenario**, then the **Two children** prompt and **Run**. The parent calls `delegate` two times in one Step. Two child Threads run at the same time, and each one has its own Approval.
 8. Select **Cancel the Turn** while the children wait. The parent Turn ends with `turn.failed` and the reason `cancelled`. Each child Turn ends the same way, and its card says so. An order that a child placed before the cancel stays in the sample purchase system.
 
@@ -269,7 +269,7 @@ Open **Event log** to see the parent log. It has `delegation.started` and `deleg
 
 A child id is the parent id, then the call id of the `delegate` call. A reset cancels the parent Turn, which cancels each child. It then deletes each child Thread and the parent Thread, and restores the sample data. A delete of the parent does not reach a child, thus the reset lists the children with `scope.threads.list` and the parent key.
 
-The scenario needs a model that supports Tool calls. A small model can call `place_order` without the supplier list, or put the two tasks in one `delegate` call. The Agents and the Tools are in [`src/purchases.ts`](./src/purchases.ts). The state and reset routes are in [`src/runtimes.ts`](./src/runtimes.ts) and [`src/app.ts`](./src/app.ts).
+The scenario needs a model that supports Tool calls. A small model can call `place_order` without the supplier list, or put the two tasks in one `delegate` call. The Agents and the Tools are in [`src/purchases.ts`](./src/purchases.ts). The state of the scenario is in [`src/runtimes.ts`](./src/runtimes.ts). The reset route is in [`src/app.ts`](./src/app.ts).
 
 ## Model limits
 

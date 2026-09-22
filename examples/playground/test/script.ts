@@ -83,7 +83,7 @@ const ledgerReplies: ReplyScript = ({ request }) => {
  * The script of the Delegation scenario. The parent gives one task to the purchase desk for each order that the
  * operator asks for. The child lists the suppliers, places the order and reports in one sentence.
  */
-const delegationReplies: ReplyScript = ({ request }) => {
+export const delegationReplies: ReplyScript = ({ request }) => {
   const results = request.messages.filter((message) => message.role === "toolResult");
   if (request.system?.includes("manage a small shop")) {
     if (results.length > 0)
