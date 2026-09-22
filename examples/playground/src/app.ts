@@ -109,19 +109,19 @@ async function putSpec(scope: Scope, request: Request): Promise<Response | undef
 }
 
 /**
- * Ends the Thread of a scenario and resets its sample data. The next generation gets a new Thread. `runtime`
- * restores what the scenario stores outside its sample data, when given.
+ * Ends the Thread of a scenario and resets its sample data. The next generation gets a new Thread. `restore`
+ * then restores what the scenario stores outside its sample data, when given.
  */
 async function resetScenario(
   stub: DurableObjectStub<SampleDataDO>,
   thread: Thread,
-  runtime: Runtime | undefined,
+  restore: (() => Promise<void>) | undefined,
 ): Promise<void> {
   // The order matters: the cancel stops a Turn that could still change the data which the reset restores.
   await thread.cancel();
   await thread.delete();
   await stub.reset();
-  await runtime?.restore?.();
+  await restore?.();
 }
 
 /**
@@ -170,7 +170,8 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
     if (action === undefined && request.method === "GET") return scenarioState(id, runtime);
     const restart = async (restore: boolean) => {
       const stub = sampleData(data, SCOPE, id);
-      await resetScenario(stub, threadOf(runtime, (await stub.read()).generation), restore ? runtime : undefined);
+      const thread = threadOf(runtime, (await stub.read()).generation);
+      await resetScenario(stub, thread, restore ? runtime.restore : undefined);
       return scenarioState(id, runtime);
     };
     if (action === "reset" && request.method === "POST") return restart(true);

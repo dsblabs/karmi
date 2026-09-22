@@ -1316,6 +1316,7 @@ async function renderScenario(scenario) {
       case "turn.completed":
       case "turn.failed":
         parked = undefined;
+        compacting = false;
         if (event.type === "turn.completed" && event.stopReason === "budget")
           add(
             el("p", {

@@ -235,14 +235,14 @@ Cloudflare can stop a Durable Object at any time. A stopped dev server does the 
 
 7. Reset the scenario and repeat the steps with the **Safe call** prompt. The Agent calls `read_ledger`, which has `readOnlyHint`. After the recovery, the log has a second `step.started` with `attempt: 2` and one `tool.result` for `read_ledger` with `isError: false`. The Harness ran the call again, because a read-only call is safe to repeat.
 
-A Tool result that is in the log before the interruption stays. The Harness does not run that call again, and the before-tool Hooks do not run again for it. Run the **Unsafe call** prompt with an open ledger first, then hold the ledger for the second Turn, to see a finished result and an interrupted one in the same Thread.
+A Tool result that is in the log before the interruption stays, also when it is in the same Step as the interrupted call. The Harness does not run that call again, and the before-tool Hooks do not run again for it. The hold route can start the hold from a number of entries: `{"held":true,"from":8}` holds the ledger once it has eight entries. The Worker tests use it to give one Step a finished call and an interrupted one.
 
-The Playground verified this recovery in two places:
+Two checks cover this recovery, each in its own environment:
 
-- The Worker tests in `test/compaction.test.ts` run in workerd with the scripted Provider. They abort the Thread Durable Object while the Tool call waits, as a stop of the dev server does, and then fire the watchdog alarm with the Clock of the Test kit.
-- The walkthrough above ran against the local emulation of `wrangler dev` with the scripted Provider of the browser checks. The state survived the stop of the server, and the watchdog alarm fired after the start.
+- The Worker tests in `test/compaction.test.ts` run in workerd with the scripted Provider. They abort the Thread Durable Object while the Tool call waits, then fire the watchdog alarm with the Clock of the Test kit. An abort ends the code in flight and its storage access. It is not the same as a stopped process.
+- The walkthrough above is the local check, with `wrangler dev` and the scripted Provider of the browser checks. It shows that the state survives a stop of the server and that the watchdog alarm fires after the start.
 
-No check ran in a Cloudflare account. The local result does not prove the behavior of a deployed Worker. Cloudflare resets a Durable Object for a code update or a platform failure, and the guide describes what the Harness does then.
+No check runs in a Cloudflare account. A local result is not proof for a deployed Worker. Cloudflare resets a Durable Object for a code update or a platform failure, and the guide describes what the Harness does then.
 
 The scenario needs a model that supports Tool calls. The Agent and the Tools are in [`src/ledger.ts`](./src/ledger.ts). The hold route is in [`src/app.ts`](./src/app.ts).
 

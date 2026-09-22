@@ -1,7 +1,7 @@
 import { defineAgent, defineTool } from "@karmi/core";
 import { env } from "cloudflare:workers";
 import { z } from "zod";
-import { decodeSample, sampleData } from "./sample-data";
+import { decodeSample, sampleData, type SampleDataDO } from "./sample-data";
 
 /** The id of the Compaction and recovery scenario. */
 export const COMPACTION = "compaction";
@@ -14,18 +14,28 @@ export const LEDGER = "ledger";
  */
 export const CONTEXT = { window: 2000, reserveTokens: 500, keepRecentTokens: 500 };
 
-/** How long a Tool waits for a held ledger at most, in polls of half a second. */
-const HOLD_POLLS = 600;
+/** How long a Tool waits for a held ledger at most. */
+const HOLD_TIMEOUT_MS = 5 * 60 * 1000;
+/** The time between two reads of a held ledger. */
+const HOLD_POLL_MS = 500;
 
 /** The schema of the sample ledger system. */
 export const ledgerSchema = z.object({
   entries: z.array(z.object({ id: z.string(), text: z.string(), amount: z.number() })),
-  /** True while the operator holds the ledger. Each Tool call then waits before it returns its result. */
-  held: z.boolean(),
+  /**
+   * The number of entries from which the ledger is held. A Tool call on a held ledger waits before it returns its
+   * result. Absent while the ledger is open. The operator holds the ledger from its current number of entries.
+   * A test holds it from a later number, thus one Step can have a call that finished and a call that waits.
+   */
+  holdFrom: z.number().optional(),
 });
 
 /** The sample ledger system of the scenario. */
 export type Ledger = z.infer<typeof ledgerSchema>;
+
+/** True while the ledger is held: it has at least `holdFrom` entries. */
+export const isHeld = (ledger: Ledger): boolean =>
+  ledger.holdFrom !== undefined && ledger.entries.length >= ledger.holdFrom;
 
 /** The ledger that the scenario starts with and that a reset restores. */
 export const STARTING_LEDGER: Ledger = {
@@ -37,7 +47,6 @@ export const STARTING_LEDGER: Ledger = {
     { id: "E-5", text: "Window sign", amount: 90 },
     { id: "E-6", text: "Milk delivery, week 38", amount: 46 },
   ],
-  held: false,
 };
 
 /** The prompts that the scenario suggests. The operator can edit each one. */
@@ -50,22 +59,39 @@ export const LEDGER_PROMPTS = [
 /** Decodes the stored sample data. Data that is absent or not valid gives the starting ledger. */
 export const decodeLedger = (data: string | undefined): Ledger => decodeSample(ledgerSchema, STARTING_LEDGER, data);
 
+/** A hold request: hold the ledger now, hold it from a number of entries, or release it. */
+export type HoldRequest = { held: true; from?: number } | { held: false };
+
 /** Decodes the body of the hold route. A body of a different shape gives undefined. */
-export function decodeHold(body: unknown): boolean | undefined {
-  if (typeof body !== "object" || body === null || !("held" in body)) return undefined;
-  return typeof body.held === "boolean" ? body.held : undefined;
+export function decodeHold(body: unknown): HoldRequest | undefined {
+  if (typeof body !== "object" || body === null || !("held" in body) || typeof body.held !== "boolean")
+    return undefined;
+  if (!body.held) return { held: false };
+  const from = "from" in body ? body.from : undefined;
+  if (from === undefined) return { held: true };
+  return typeof from === "number" && Number.isInteger(from) && from >= 0 ? { held: true, from } : undefined;
 }
 
-const ledgerSystem = (scope: string) => sampleData(env.PLAYGROUND_DATA, scope, COMPACTION);
+/** The sample system that stores the ledger. */
+export type LedgerSystem = DurableObjectStub<SampleDataDO>;
+
+const ledgerSystem = (scope: string): LedgerSystem => sampleData(env.PLAYGROUND_DATA, scope, COMPACTION);
+
+/** Reads the ledger of the sample system. */
+export const readLedgerOf = async (stub: LedgerSystem): Promise<Ledger> => decodeLedger((await stub.read()).data);
+
+/** Writes the ledger to the sample system. */
+export const writeLedger = (stub: LedgerSystem, ledger: Ledger): Promise<void> =>
+  stub.write(JSON.stringify(ledger satisfies Ledger));
 
 /**
- * Waits while the operator holds the ledger. The wait ends when the operator releases the ledger, when the
- * Harness aborts the call or after five minutes.
+ * Waits while the ledger is held. The wait ends when the operator releases the ledger, when the Harness aborts
+ * the call or after `HOLD_TIMEOUT_MS`.
  */
-async function whileHeld(stub: ReturnType<typeof ledgerSystem>, signal: AbortSignal): Promise<void> {
-  for (let poll = 0; poll < HOLD_POLLS && !signal.aborted; poll += 1) {
-    if (!decodeLedger((await stub.read()).data).held) return;
-    await new Promise((resolve) => setTimeout(resolve, 500));
+async function whileHeld(stub: LedgerSystem, signal: AbortSignal): Promise<void> {
+  for (let polls = 0; polls < HOLD_TIMEOUT_MS / HOLD_POLL_MS && !signal.aborted; polls += 1) {
+    if (!isHeld(await readLedgerOf(stub))) return;
+    await new Promise((resolve) => setTimeout(resolve, HOLD_POLL_MS));
   }
 }
 
@@ -78,7 +104,7 @@ export const readLedger = defineTool({
   async execute(_input, { scope, signal }) {
     const stub = ledgerSystem(scope);
     await whileHeld(stub, signal);
-    return JSON.stringify(decodeLedger((await stub.read()).data).entries);
+    return JSON.stringify((await readLedgerOf(stub)).entries);
   },
 });
 
@@ -97,11 +123,9 @@ export const postEntry = defineTool({
   annotations: { destructiveHint: false },
   async execute({ text, amount }, { scope, signal }) {
     const stub = ledgerSystem(scope);
-    const ledger = decodeLedger((await stub.read()).data);
+    const ledger = await readLedgerOf(stub);
     const id = `E-${String(ledger.entries.length + 1)}`;
-    await stub.write(
-      JSON.stringify({ ...ledger, entries: [...ledger.entries, { id, text, amount }] } satisfies Ledger),
-    );
+    await writeLedger(stub, { ...ledger, entries: [...ledger.entries, { id, text, amount }] });
     await whileHeld(stub, signal);
     return `Posted entry ${id}.`;
   },

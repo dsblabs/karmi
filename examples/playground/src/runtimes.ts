@@ -1,7 +1,7 @@
 import type { Scope, Thread, ThreadStatus } from "@karmi/core";
 import { AGENTS, ASSISTANT, presets, SCOPE_CONFIG, shopPolicy, shopPolicyArgs, startingSpec } from "./assistant";
 import { decodeDispatch, decodeReport, DISPATCH, reportBooking, TURNS } from "./dispatch";
-import { COMPACTION, CONTEXT, decodeHold, decodeLedger, LEDGER, type Ledger } from "./ledger";
+import { COMPACTION, CONTEXT, decodeHold, decodeLedger, isHeld, LEDGER, readLedgerOf, writeLedger } from "./ledger";
 import { decodeOrder, REFUND } from "./refund";
 import { routeError } from "./route-error";
 import { sampleData, type SampleDataDO } from "./sample-data";
@@ -55,13 +55,20 @@ const reportJob: ScenarioAction = async (stub, open, request) => {
  * has no boolean `held`.
  */
 const holdLedger: ScenarioAction = async (stub, _open, request) => {
-  const held = decodeHold(await request.json().catch(() => undefined));
-  if (held === undefined)
-    return routeError(400, "http.badRequest", 'The body must be {"held":true} or {"held":false}.');
-  const ledger = decodeLedger((await stub.read()).data);
-  await stub.write(JSON.stringify({ ...ledger, held } satisfies Ledger));
+  const hold = decodeHold(await request.json().catch(() => undefined));
+  if (!hold)
+    return routeError(
+      400,
+      "http.badRequest",
+      'The body must be {"held":true}, {"held":true,"from":8} or {"held":false}.',
+    );
+  const { holdFrom: _, ...ledger } = await readLedgerOf(stub);
+  await writeLedger(stub, hold.held ? { ...ledger, holdFrom: hold.from ?? ledger.entries.length } : ledger);
   return undefined;
 };
+
+/** The Turn state that a page shows next to the conversation, without the event log. */
+const turnView = (status: ThreadStatus) => ({ state: status.state, paused: status.paused });
 
 /** The server side of one scenario: its Agent and what the page shows next to the conversation. */
 export interface Runtime {
@@ -132,17 +139,16 @@ export function scenarioRuntimes(scope: () => Scope, model: string): Record<stri
       view: (stored, status) => ({
         dispatch: decodeDispatch(stored),
         // The page shows the Turn state, thus pending work and its budget are visible without the event log.
-        turn: { state: status.state, paused: status.paused, budget: status.budget },
+        turn: { ...turnView(status), budget: status.budget },
       }),
     },
     [COMPACTION]: {
       agent: LEDGER,
       actions: { hold: holdLedger },
-      view: (stored, status) => ({
-        ledger: decodeLedger(stored),
-        context: CONTEXT,
-        turn: { state: status.state, paused: status.paused },
-      }),
+      view: (stored, status) => {
+        const ledger = decodeLedger(stored);
+        return { ledger: { ...ledger, held: isHeld(ledger) }, context: CONTEXT, turn: turnView(status) };
+      },
     },
     [STOCKROOM]: {
       agent: STOCKROOM,

@@ -16,7 +16,7 @@ const PATH = "/api/scenarios/compaction";
 
 const stateSchema = z.looseObject({
   threadKey: z.string(),
-  ledger: ledgerSchema,
+  ledger: ledgerSchema.extend({ held: z.boolean() }),
   context: z.object({ window: z.number(), reserveTokens: z.number(), keepRecentTokens: z.number() }),
   turn: z.looseObject({ state: z.string(), paused: z.optional(z.string()) }),
 });
@@ -24,9 +24,9 @@ const stateSchema = z.looseObject({
 /** Reads the state of the scenario through its route. */
 const state = async () => stateSchema.parse(await (await api("GET", PATH)).json());
 
-/** Holds or releases the sample ledger through its route. */
-async function hold(held: boolean) {
-  const answer = await api("POST", `${PATH}/hold`, { held });
+/** Holds or releases the sample ledger through its route. `from` holds it once it has this number of entries. */
+async function hold(held: boolean, from?: number) {
+  const answer = await api("POST", `${PATH}/hold`, { held, ...(from !== undefined && { from }) });
   expect(answer.status).toBe(200);
   return stateSchema.parse(await answer.json());
 }
@@ -72,13 +72,17 @@ beforeEach(async () => {
 describe("the state of the scenario", () => {
   it("starts with the sample ledger, the context limits of the Agent and an idle Thread", async () => {
     const now = await state();
-    expect(now.ledger).toEqual(STARTING_LEDGER);
+    expect(now.ledger).toEqual({ ...STARTING_LEDGER, held: false });
     expect(now.context).toEqual(CONTEXT);
     expect(now.turn.state).toBe("idle");
   });
 
-  it("refuses a hold request without a boolean", async () => {
+  it("holds the ledger now or from a number of entries, and refuses a request without a boolean", async () => {
+    expect((await hold(true)).ledger).toMatchObject({ held: true, holdFrom: STARTING_LEDGER.entries.length });
+    expect((await hold(false)).ledger).toMatchObject({ held: false });
+    expect((await hold(true, 8)).ledger).toMatchObject({ held: false, holdFrom: 8 });
     expect((await api("POST", `${PATH}/hold`, { held: "yes" })).status).toBe(400);
+    expect((await api("POST", `${PATH}/hold`, { held: true, from: -1 })).status).toBe(400);
   });
 });
 
@@ -209,7 +213,7 @@ describe("the reset of the scenario", () => {
     await until(threadKey, "tool.call");
     const after = stateSchema.parse(await (await api("POST", `${PATH}/reset`)).json());
     expect(after.threadKey).not.toBe(threadKey);
-    expect(after.ledger).toEqual(STARTING_LEDGER);
+    expect(after.ledger).toEqual({ ...STARTING_LEDGER, held: false });
     expect(after.turn.state).toBe("idle");
   });
 
