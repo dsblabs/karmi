@@ -109,19 +109,22 @@ async function putSpec(scope: Scope, request: Request): Promise<Response | undef
 }
 
 /**
- * Ends the Thread of a scenario and resets its sample data. The next generation gets a new Thread. `restore`
- * then restores what the scenario stores outside its sample data, when given.
+ * Ends the Thread of a scenario and its child Threads, and resets its sample data. The next generation gets a
+ * new Thread. `restore` then restores what the scenario stores outside its sample data, when given.
  */
 async function resetScenario(
   stub: DurableObjectStub<SampleDataDO>,
   thread: Thread,
-  restore: (() => Promise<void>) | undefined,
+  runtime: Runtime,
+  restore: boolean,
 ): Promise<void> {
-  // The order matters: the cancel stops a Turn that could still change the data which the reset restores.
+  // The order matters: the cancel stops a Turn that could still change the data which the reset restores. It also
+  // cancels each child Thread. A delete does not reach a child, thus the reset deletes each one.
   await thread.cancel();
+  for (const child of (await runtime.children?.(thread)) ?? []) await child.delete();
   await thread.delete();
   await stub.reset();
-  await restore?.();
+  if (restore) await runtime.restore?.();
 }
 
 /**
@@ -150,7 +153,7 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
     const thread = threadOf(runtime, state.generation);
     // A key opens a Thread but never creates it. The status call through the identity creates the Thread.
     const status = await thread.status();
-    return Response.json({ ...(await runtime.view(state.data, status)), threadKey: thread.key });
+    return Response.json({ ...(await runtime.view(state.data, status, thread)), threadKey: thread.key });
   }
 
   async function api(request: Request, path: string): Promise<Response> {
@@ -171,7 +174,7 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
     const restart = async (restore: boolean) => {
       const stub = sampleData(data, SCOPE, id);
       const thread = threadOf(runtime, (await stub.read()).generation);
-      await resetScenario(stub, thread, restore ? runtime.restore : undefined);
+      await resetScenario(stub, thread, runtime, restore);
       return scenarioState(id, runtime);
     };
     if (action === "reset" && request.method === "POST") return restart(true);

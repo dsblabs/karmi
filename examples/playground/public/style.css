@@ -89,6 +89,8 @@ main { display: flex; flex-direction: column; gap: 1rem; padding: 1.25rem 1.5rem
 .tool.failed .state { color: var(--bad); }
 .tool h4, .card h4 { margin: 0.6rem 0 0.2rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .tool pre, .card pre { background: var(--panel); border-radius: 6px; padding: 0.4rem 0.6rem; }
+.tool.child > .items { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; padding-left: 0.6rem; border-left: 2px solid var(--line); }
+.tool.child .you, .tool.child .agent { font-size: 0.88rem; }
 .tool.waiting { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .tool.waiting .state { color: var(--accent); font-weight: 600; }
 .ask { margin: 0.7rem 0 0; }

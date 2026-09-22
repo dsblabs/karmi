@@ -375,3 +375,56 @@ test("a held ledger keeps the Tool call running until the operator releases it",
   await page.getByRole("button", { name: "Reset scenario" }).click();
   await expect(page.locator("#ledger")).not.toContainText("Window cleaning");
 });
+
+async function openDelegation(page: Page): Promise<void> {
+  await openScenario(page, "delegation");
+  await expect(page.locator("#children")).toContainText("starts a child Thread");
+}
+
+test("the parent shows the child Thread and its Approval, and allow places the order", async ({ page }) => {
+  await openDelegation(page);
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps")).toContainText("started the child Thread");
+  // The child card shows the events of the child. The parent log has the Approval of the child only.
+  await expect(page.locator("#steps .child")).toContainText("list_suppliers");
+  await expect(page.locator("#steps .approval")).toContainText("Tool call of the child Thread: place_order");
+  await expect(page.locator("#children")).toContainText("your Approval");
+  await expect(page.locator("#turn")).toContainText("the child Thread");
+  await expect(page.locator("#turn")).toContainText("1 started, 1 active");
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page.locator("#steps .child")).toContainText("I placed the order.");
+  await expect(page.locator("#steps .child")).toContainText("Result for the parent");
+  await expect(page.locator("#steps .agent").last()).toContainText("The purchase desk says");
+  await expect(page.locator("#purchases")).toContainText("O-1");
+  await expect(page.locator("#children")).toContainText("idle");
+  await expect(page.locator("#usage")).toContainText("buyer, model");
+  await expect(page.locator("#usage")).toContainText("for the call");
+  await expect(page.locator("#steps .child")).toContainText("Child Thread for the call");
+  await page.locator(".events summary").click();
+  await expect(page.locator("#log")).not.toContainText('"name":"list_suppliers"');
+});
+
+test("deny leaves the purchase system unchanged, and the child reports it", async ({ page }) => {
+  await openDelegation(page);
+  await page.getByRole("button", { name: "Run" }).click();
+  await page.getByRole("button", { name: "Deny" }).click();
+  await expect(page.locator("#steps .child")).toContainText("No order was placed.");
+  await expect(page.locator("#steps .agent").last()).toContainText("The purchase desk says");
+  await expect(page.locator("#purchases")).toContainText("placed no order yet");
+});
+
+test("cancel of the parent Turn stops the child, and reset deletes the children", async ({ page }) => {
+  await openDelegation(page);
+  await page.getByRole("button", { name: "Two children", exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps .approval")).toHaveCount(2);
+  await expect(page.locator("#turn")).toContainText("2 started, 2 active");
+  await page.getByRole("button", { name: "Cancel the Turn" }).click();
+  await expect(page.locator("#steps")).toContainText("You cancelled the Turn.");
+  await expect(page.locator("#steps .child .state").first()).toHaveText("cancelled with the parent Turn");
+  await expect(page.locator("#steps .child .state").last()).toHaveText("cancelled with the parent Turn");
+  await expect(page.locator("#purchases")).toContainText("placed no order yet");
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#children")).toContainText("starts a child Thread");
+  await expect(page.locator("#usage")).toContainText("No model call ran yet");
+});

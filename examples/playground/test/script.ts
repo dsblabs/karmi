@@ -79,6 +79,30 @@ const ledgerReplies: ReplyScript = ({ request }) => {
   return results.length === 0 ? [reply.toolCall("read_ledger", {})] : "The total is 304.";
 };
 
+/**
+ * The script of the Delegation scenario. The parent gives one task to the purchase desk for each order that the
+ * operator asks for. The child lists the suppliers, places the order and reports in one sentence.
+ */
+export const delegationReplies: ReplyScript = ({ request }) => {
+  const results = request.messages.filter((message) => message.role === "toolResult");
+  if (request.system?.includes("manage a small shop")) {
+    if (results.length > 0)
+      return `The purchase desk says: ${results
+        .map((result) => result.content.map((block) => ("text" in block ? block.text : "")).join(" "))
+        .join(" ")}`;
+    const asked = JSON.stringify(request.messages.at(-1));
+    const tasks = ["Order 20 bags of espresso beans from the cheapest supplier."];
+    if (asked.includes("filter paper")) tasks.push("Order 10 boxes of filter paper.");
+    return tasks.map((task) => reply.toolCall("delegate", { agent: "buyer", task }));
+  }
+  const task = JSON.stringify(request.messages[0]);
+  const paper = task.includes("filter paper");
+  if (results.length === 0) return [reply.toolCall("list_suppliers", {})];
+  if (results.length === 1)
+    return [reply.toolCall("place_order", { supplierId: paper ? "S-3" : "S-2", quantity: paper ? 10 : 20 })];
+  return results.at(-1)?.isError ? "No order was placed." : "I placed the order.";
+};
+
 /** The script of the browser checks. It selects the replies from the Prompt, thus one Provider serves each scenario. */
 export const playgroundReplies: ReplyScript = (ctx) => {
   const system = ctx.request.system ?? "";
@@ -87,6 +111,7 @@ export const playgroundReplies: ReplyScript = (ctx) => {
   if (system.includes("dispatch desk")) return dispatchReplies(ctx);
   if (system.includes("reminder desk")) return reminderReplies(ctx);
   if (system.includes("ledger") || system.includes("compacting")) return ledgerReplies(ctx);
+  if (system.includes("manage a small shop") || system.includes("purchase desk")) return delegationReplies(ctx);
   if (system.includes("attached file")) return "I received the sample file.";
   const days = /for (\d+) days/.exec(system)?.[1];
   return system.includes("pirate") ? `Arr, ye have ${days} days.` : `You can return it for ${days} days.`;

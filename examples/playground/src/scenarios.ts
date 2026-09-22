@@ -3,6 +3,7 @@ import { DISPATCH_PROMPTS, MAX_STEPS, TURNS } from "./dispatch";
 import { COMPACTION, CONTEXT, LEDGER_PROMPTS } from "./ledger";
 import { FORKS, FORKS_PROMPT } from "./media-forks";
 import type { ProviderSetup } from "./provider-options";
+import { DELEGATION, PURCHASE_PROMPTS } from "./purchases";
 import { REFUND, REFUND_PROMPT } from "./refund";
 import { REMINDER_PROMPTS, SCHEDULES } from "./reminders";
 import { STOCKROOM, STOCKROOM_PROMPTS } from "./stockroom";
@@ -128,7 +129,19 @@ export const SCENARIOS: readonly Scenario[] = [
     code: `${CODE}/src/media-forks.ts`,
     upload: true,
   },
-  notBuilt("delegation", "Delegation", "Child Threads and their Approvals"),
+  {
+    id: DELEGATION,
+    group: "Delegation",
+    title: "Child Threads and their Approvals",
+    summary:
+      "A shop manager Agent gives each purchase task to a purchase desk Agent. The child runs in its own Thread with new context. The parent shows the Approval of the child and gets its final answer as the Tool result. Cancel the parent Turn, and the child stops too.",
+    built: true,
+    prerequisites: [],
+    needs: ["toolCalls"],
+    prompts: PURCHASE_PROMPTS,
+    code: `${CODE}/src/purchases.ts`,
+    controls: true,
+  },
   {
     id: SCHEDULES,
     group: "Schedules and delivery",
@@ -226,6 +239,7 @@ const turns = row(TURNS);
 const forks = row(FORKS);
 const schedules = row(SCHEDULES);
 const compaction = row(COMPACTION);
+const delegation = row(DELEGATION);
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
@@ -264,6 +278,31 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Interrupted Tool calls",
     "Development and operations",
     "A read-only call runs again. A call without idempotentHint gets an error result with interrupted.",
+  ),
+  delegation(
+    "Delegation",
+    "Delegation",
+    "The delegate Tool starts a child Thread. The parent Turn parks until the child answers, and the answer is the Tool result.",
+  ),
+  delegation(
+    "Parent and child Threads",
+    "Delegation",
+    "The Child Threads card shows each child with its parent key and call id. The conversation shows the child in its own card.",
+  ),
+  delegation(
+    "Approvals of a child",
+    "Delegation",
+    "The parent shows the Approval of the child. Allow places the order. Deny gives the child an error result.",
+  ),
+  delegation(
+    "Cancellation of a child",
+    "Delegation",
+    "Cancel the parent Turn while the child waits. The child Turn fails with cancelled. Reset deletes each child.",
+  ),
+  delegation(
+    "Usage records of a Delegation",
+    "Observability",
+    "The Usage records card lists the records of the parent and of each child. A child record names its parent. No record occurs two times.",
   ),
   turns("Capability grants", "Agents", `The longRunning grant gives the Turn ${String(MAX_STEPS)} Steps.`),
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),
