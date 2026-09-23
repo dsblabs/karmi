@@ -444,7 +444,7 @@ export const COVERAGE: readonly CoverageRow[] = [
     scenario: SCRIPTS,
     observable: "On Cloudflare, the CPU limit Script fails with limit_exceeded: cpuMs. Locally, it finishes.",
     verification:
-      "A temporary Cloudflare deployment. No automatic check, because local workerd does not enforce cpuMs.",
+      "Not verified in a Cloudflare account yet. No automatic check can run, because local workerd does not enforce cpuMs.",
   },
   scripts(
     "Script cancellation",
