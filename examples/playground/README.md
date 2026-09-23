@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has eight browser scenarios:
+This version has nine browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -12,6 +12,7 @@ This version has eight browser scenarios:
 - **Schedules, external triggers and offline delivery**
 - **Compaction and recovery**
 - **Child Threads and their Approvals**
+- **User Memory and Scope isolation**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -46,6 +47,8 @@ The terminal shows the credential while you type it.
 ## Access
 
 The Worker checks the access token on each route below `/api` and `/threads`. A request without the token gets a `401` answer. The browser files have no data, so the Worker serves them without the token. There is no signup.
+
+The token opens two sample Scopes, `sample-a` and `sample-b`. A request acts in `sample-a`. A Thread route with the query parameter `scope=sample-b` acts in `sample-b`. Only the Memory scenario uses it. A request that names a different Scope gets a `401` answer.
 
 The browser shows the Provider and the model. No route returns the Provider credential.
 
@@ -271,9 +274,30 @@ A child id is the parent id, then the call id of the `delegate` call. A reset ca
 
 The scenario needs a model that supports Tool calls. A small model can call `place_order` without the supplier list, or put the two tasks in one `delegate` call. The Agents and the Tools are in [`src/purchases.ts`](./src/purchases.ts). The state of the scenario is in [`src/runtimes.ts`](./src/runtimes.ts). The reset route is in [`src/app.ts`](./src/app.ts).
 
+## The Memory and Scope isolation scenario
+
+**User Memory and Scope isolation** has a concierge Agent with a `memory` block in its Spec. The block declares one Profile field, `roast`, and keeps Notes. The block gives the Agent the built-in Tools `remember` and `recall`. At the start of each Turn, the Harness puts a Memory Fragment in the Prompt. The Fragment has the Profile and the 20 most recent Notes of the User.
+
+The scenario runs in two sample Scopes, `sample-a` and `sample-b`, for the same User `operator`. The composer has a select that names the Scope that receives the Turn. Each Scope has a **Memory** card with the Profile, the Notes, the Users with a stored Memory and the count of Threads since the reset.
+
+Do these steps:
+
+1. Select **Run** with the **Remember** prompt. The Agent calls `remember` with the field `roast` and a Note. The **Memory of operator in sample-a** card shows both, and the User is in the list of Users with a Memory.
+2. Select **Start a new Thread** in the card. The conversation is empty, because a new Thread has no earlier event. Select **Run** with the **Ask** prompt. The Agent answers from the Memory Fragment, with no Tool call. Open **Event log** to see that the Thread has no event of the earlier Thread.
+3. Select **Run** with the **Search the Notes** prompt. The Agent calls `recall`, and the result has the Note. `recall` searches the Notes with full-text search, thus a query word must occur in the Note.
+4. Select **Forget the User**. The card is empty. Select **Start a new Thread** and run the **Ask** prompt again. The Agent does not know the preference.
+5. Select **Send in the Scope sample-b** in the composer, then run the **Remember** and the **Ask** prompts. The **Memory of operator in sample-b** card gets its own Memory, and the card of `sample-a` does not change. The same User has one Memory for each Scope.
+6. Select **Read the sample-b Thread as sample-a** in the **Scope boundary** card. The request gets a `404` answer with the code `thread.notFound`. A Thread key names a Thread in the Scope of the request only. karmi has no operation that crosses Scopes.
+
+The **Profile fields of the Agent** card shows the schema of the Profile. The Harness checks each `remember` call against it and refuses a field that the Agent does not declare. The **Memory** cards read the Memory with `scope.users.memory.get` and list the Users with `scope.users.memory.list`. **Forget the User** calls `scope.users.memory.delete`. Only a Turn writes a Memory.
+
+The state stays until you select **Reset scenario**. A reset cancels and deletes each Thread of the scenario in both Scopes, deletes the Memory of the User in both Scopes and starts a new Thread in each one. It does not change another scenario or a Provider credential.
+
+The scenario needs a model that supports Tool calls. A small model can answer from its own guess in place of the Memory Fragment. Check the event log: an answer from the Fragment has no Tool call. The Agent is in [`src/concierge.ts`](./src/concierge.ts). The routes are in [`src/memory-routes.ts`](./src/memory-routes.ts). The mapping of the token to a Scope is in [`src/app.ts`](./src/app.ts).
+
 ## Model limits
 
-The refund scenario, the Tools scenario, the Turn control scenario, the Schedules scenario, the Compaction and recovery scenario and the Delegation scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
+The refund scenario, the Tools scenario, the Turn control scenario, the Schedules scenario, the Compaction and recovery scenario, the Delegation scenario and the Memory scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
 The media scenario shows a separate note about the media types that models can receive. Storage and download do not depend on model support.
 

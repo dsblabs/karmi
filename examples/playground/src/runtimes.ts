@@ -10,6 +10,10 @@ import { adjustStock, checkStock, decodeStock, deleteProduct, STOCKROOM, stockro
 
 /** The sample Scope that the scenarios run in. */
 export const SCOPE = "sample-a";
+/** The second sample Scope. Only the Memory scenario uses it, to show that nothing crosses a Scope. */
+export const OTHER_SCOPE = "sample-b";
+/** The sample Scopes that the access token opens, in the order that the page shows them. */
+export const SAMPLE_SCOPES: readonly string[] = [SCOPE, OTHER_SCOPE];
 /** The User of the one operator. */
 export const USER = "operator";
 

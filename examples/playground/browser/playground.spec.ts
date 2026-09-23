@@ -428,3 +428,64 @@ test("cancel of the parent Turn stops the child, and reset deletes the children"
   await expect(page.locator("#children")).toContainText("starts a child Thread");
   await expect(page.locator("#usage")).toContainText("No model call ran yet");
 });
+
+async function openMemory(page: Page): Promise<void> {
+  await openScenario(page, "memory");
+  await expect(page.locator("#memory-sample-a")).toContainText("Nothing is stored");
+}
+
+/** Runs one suggested prompt of the Memory scenario and waits for the answer of the Agent. */
+async function runConcierge(page: Page, chip: string, answer: string | RegExp): Promise<void> {
+  await expect(page.getByRole("button", { name: "Run" })).toBeEnabled();
+  await page.getByRole("button", { name: chip, exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps .agent").last()).toContainText(answer);
+}
+
+test("a remembered preference reaches a new Thread, and a forget removes it", async ({ page }) => {
+  await openMemory(page);
+  await expect(page.locator(".note")).toContainText("needs a model that supports Tool calls");
+  await runConcierge(page, "Remember", "I will remember that.");
+  await expect(page.locator("#steps .tool")).toContainText("remember");
+  await expect(page.locator("#memory-sample-a")).toContainText("stored");
+  await expect(page.locator("#memory-sample-a")).toContainText('"roast": "dark"');
+  await expect(page.locator("#memory-sample-a")).toContainText("Collects the order on Fridays.");
+  await expect(page.locator("#memory-sample-a")).toContainText("operator");
+
+  await page.locator("#memory-sample-a").getByRole("button", { name: "Start a new Thread" }).click();
+  await expect(page.locator("#saved")).toContainText("A new Thread of operator in sample-a");
+  await expect(page.locator("#steps")).toBeEmpty();
+  await expect(page.locator("#memory-sample-a")).toContainText("Threads since the reset2");
+  await runConcierge(page, "Ask", "You like a dark roast.");
+  await expect(page.locator("#steps .tool")).toHaveCount(0);
+  await runConcierge(page, "Search the Notes", "My notes say: ");
+  await expect(page.locator("#steps .tool").last()).toContainText("recall");
+
+  await page.locator("#memory-sample-a").getByRole("button", { name: "Forget the User" }).click();
+  await expect(page.locator("#memory-sample-a")).toContainText("Nothing is stored");
+  await page.locator("#memory-sample-a").getByRole("button", { name: "Start a new Thread" }).click();
+  await expect(page.locator("#steps")).toBeEmpty();
+  await runConcierge(page, "Ask", "I do not know your preferences yet.");
+});
+
+test("the second sample Scope has no Memory of the User, and a key of it is not reachable through the first", async ({
+  page,
+}) => {
+  await openMemory(page);
+  await runConcierge(page, "Remember", "I will remember that.");
+  await expect(page.locator("#memory-sample-a")).toContainText("stored");
+  await page.getByLabel("Thread that receives the Turn").selectOption({ label: "Send in the Scope sample-b" });
+  await expect(page.locator("#steps")).toBeEmpty();
+  await runConcierge(page, "Ask", "I do not know your preferences yet.");
+  await expect(page.locator("#memory-sample-b")).toContainText("Nothing is stored");
+  await expect(page.locator("#memory-sample-a")).toContainText('"roast": "dark"');
+
+  await page.getByRole("button", { name: "Read the sample-b Thread as sample-a" }).click();
+  await expect(page.locator("#boundary pre")).toContainText("HTTP 404");
+  await expect(page.locator("#boundary pre")).toContainText("thread.notFound");
+
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#memory-sample-a")).toContainText("Nothing is stored");
+  await expect(page.locator("#memory-sample-b")).toContainText("Nothing is stored");
+  await expect(page.locator("#target option:checked")).toHaveText("Send in the Scope sample-a");
+});

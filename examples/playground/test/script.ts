@@ -103,6 +103,29 @@ export const delegationReplies: ReplyScript = ({ request }) => {
   return results.at(-1)?.isError ? "No order was placed." : "I placed the order.";
 };
 
+/**
+ * The script of the Memory scenario. The Agent saves a preference with `remember`, searches the Notes with `recall`,
+ * and answers a question from the Memory Fragment of its Prompt, which the Harness renders under `# Memory`.
+ */
+export const conciergeReplies: ReplyScript = ({ request }) => {
+  const turn = request.messages.slice(request.messages.findLastIndex((message) => message.role === "user"));
+  const asked = JSON.stringify(turn[0]).toLowerCase();
+  const results = turn.filter((message) => message.role === "toolResult");
+  const text = (index: number) =>
+    results[index]?.content.map((block) => ("text" in block ? block.text : "")).join(" ") ?? "";
+  if (asked.includes("remember")) {
+    if (results.length === 0) {
+      const roast = /(light|medium|dark) roast/.exec(asked)?.[1] ?? "dark";
+      return [reply.toolCall("remember", { profile: { roast }, note: "Collects the order on Fridays." })];
+    }
+    return results[0]?.isError ? "I could not save that." : "I will remember that.";
+  }
+  if (asked.includes("search"))
+    return results.length === 0 ? [reply.toolCall("recall", { query: "Fridays" })] : `My notes say: ${text(0)}`;
+  const roast = /- roast: "(\w+)"/.exec(request.system ?? "")?.[1];
+  return roast ? `You like a ${roast} roast.` : "I do not know your preferences yet.";
+};
+
 /** The script of the browser checks. It selects the replies from the Prompt, thus one Provider serves each scenario. */
 export const playgroundReplies: ReplyScript = (ctx) => {
   const system = ctx.request.system ?? "";
@@ -112,6 +135,7 @@ export const playgroundReplies: ReplyScript = (ctx) => {
   if (system.includes("reminder desk")) return reminderReplies(ctx);
   if (system.includes("ledger") || system.includes("compacting")) return ledgerReplies(ctx);
   if (system.includes("manage a small shop") || system.includes("purchase desk")) return delegationReplies(ctx);
+  if (system.includes("concierge")) return conciergeReplies(ctx);
   if (system.includes("attached file")) return "I received the sample file.";
   const days = /for (\d+) days/.exec(system)?.[1];
   return system.includes("pirate") ? `Arr, ye have ${days} days.` : `You can return it for ${days} days.`;

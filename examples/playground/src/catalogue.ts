@@ -1,5 +1,6 @@
 import type { CatalogueInput } from "@karmi/core";
 import { shopPolicy } from "./assistant";
+import { conciergeAgent } from "./concierge";
 import { bookCourier, dispatchAgent, listParcels, packParcel } from "./dispatch";
 import { ledgerAgent, postEntry, readLedger } from "./ledger";
 import { forksAgent } from "./media-forks";
@@ -41,5 +42,6 @@ export const catalogue = (model: string): CatalogueInput => ({
     ledgerAgent(model),
     managerAgent(model),
     buyerAgent(model),
+    conciergeAgent(model),
   ],
 });
