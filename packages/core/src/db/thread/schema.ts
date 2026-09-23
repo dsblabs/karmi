@@ -63,7 +63,7 @@ export const deliveryRoutes = sqliteTable("delivery_route", {
   id: integer().primaryKey(),
   binding: text("json", { mode: "json" }).$type<DeliveryBinding>().notNull(),
 });
-/** This table stores event ranges waiting for offline delivery. */
+/** This table stores event ranges waiting for the Queue, and the cursor of an open Turn. */
 export const deliveries = sqliteTable(
   "deliveries",
   {

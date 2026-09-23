@@ -437,7 +437,9 @@ A UsageHandler is a Catalogue item that the Platform supplies. It receives Usage
 _Avoid_: billing hook, metering, usage callback, meter
 
 **Outbox**:
-An Outbox is a table of a Thread that holds work for the Queue. The Framework writes the row in the same write as the Thread event that causes it. Thus an eviction never loses the work. An Alarm sends the rows to the Queue, and the Queue delivers them at least once. The Usage record Outbox feeds the UsageHandler. The delivery Outbox feeds the Deliverer. The delete of a Thread empties its Outboxes.
+An Outbox is a table of a Thread that holds work the Queue has not accepted. The Framework writes the row in the same write as the Thread event that causes it. Thus an eviction never loses the work. An Alarm sends the work to the Queue. After the Queue accepts it, the Queue message is the retry unit. A range whose Alarm fires while a Subscriber is attached is not handed to the Queue.
+
+A range stays until that Alarm has sent or skipped. The end of a Turn does not cancel the Alarm. The Usage record Outbox feeds the UsageHandler. The delivery Outbox feeds the Deliverer. A delivery range of a Turn that has not ended stays in the Outbox, so the next range of that Turn starts after it. The delete of a Thread empties its Outboxes.
 _Avoid_: queue (that is the Cloudflare Queue), buffer, backlog
 
 **Approval**:

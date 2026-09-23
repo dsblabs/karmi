@@ -1,8 +1,16 @@
-import { createExecutionContext, createMessageBatch, getQueueResult } from "cloudflare:test";
+import { createExecutionContext, createMessageBatch, getQueueResult, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { keys } from "../src/keys";
 import { reply } from "../src/testing/index";
 import { beforeEach, expect, it } from "vitest";
 import { deliveries, karmi, provider, clock, deliveryFailure } from "./worker";
+
+/** The number of ranges that stay in the delivery Outbox of the Thread `threadId` of the Scope "test". */
+const outboxRows = (threadId: string) =>
+  runInDurableObject(
+    env.KARMI_THREADS.getByName(keys.thread("test", threadId)),
+    (_, state) => state.storage.sql.exec<{ n: number }>("SELECT count(*) AS n FROM deliveries").one().n,
+  );
 
 beforeEach(() => {
   deliveries.length = 0;
@@ -72,6 +80,27 @@ it("delivers offline Approvals and the completion as separate ranges", async () 
   await expect.poll(() => deliveries.length).toBe(2);
   expect(deliveries[1]!.events.every((e) => e.seq > approval.seq)).toBe(true);
   expect(deliveries[1]!.events).toContainEvent({ type: "turn.completed" });
+  expect(await outboxRows("approval-delivery")).toBe(0);
+});
+
+it("delivers an Approval range and the completion when both Alarms fire after the Turn ends", async () => {
+  provider.script([[reply.toolCall("book", { room: 12 }, "booking")], "Booked"]);
+  const thread = karmi.scope("test").thread({ agent: "asking", threadId: "both-after-end" });
+  await thread.send({
+    kind: "event",
+    type: "booking.requested",
+    payload: {},
+    channelRef: { deliverer: { name: "receipt", ref: "both" } },
+  });
+  await expect.poll(async () => (await thread.status()).state).toBe("parked");
+  const approval = (await thread.events()).find((e) => e.type === "approval.requested")!;
+  await thread.approve(approval.seq, { decision: "allow" });
+  await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.completed")).toBe(true);
+  await clock.advance(1000);
+  await expect.poll(() => deliveries.length).toBe(2);
+  expect(deliveries.some((item) => item.events.some((e) => e.type === "approval.requested"))).toBe(true);
+  expect(deliveries.some((item) => item.events.some((e) => e.type === "turn.completed"))).toBe(true);
+  expect(await outboxRows("both-after-end")).toBe(0);
 });
 
 it("keeps output available for polling without a Deliverer", async () => {
@@ -82,6 +111,43 @@ it("keeps output available for polling without a Deliverer", async () => {
   await clock.advance(1000);
   expect(deliveries).toEqual([]);
   expect(await thread.events()).toContainEvent({ type: "turn.completed", message: [{ type: "text", text: "Stored" }] });
+});
+
+it("hands the binding to the Queue so a retry still delivers after the Outbox drops the range", async () => {
+  provider.script(["Receipt"]);
+  const tenant = karmi.scope("test");
+  const thread = tenant.thread({ agent: "concierge", threadId: "settled" });
+  await thread.send({
+    kind: "event",
+    type: "payment.received",
+    payload: {},
+    channelRef: { deliverer: { name: "receipt", ref: "settled" } },
+  });
+  await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.completed")).toBe(true);
+  await clock.advance(1000);
+  await expect.poll(() => deliveries.length).toBe(1);
+  const events = await thread.events();
+  const range = { fromSeq: events[0]!.seq, toSeq: events.at(-1)!.seq };
+  const consume = async (body: object) => {
+    const batch = createMessageBatch("karmi-test-queue", [{ id: "again", timestamp: new Date(), body, attempts: 1 }]);
+    const ctx = createExecutionContext();
+    await karmi.queueHandler(batch, env, ctx);
+    return getQueueResult(batch, ctx);
+  };
+  expect(await consume({ kind: "delivery", scope: tenant.id, threadKey: thread.key, ...range })).toMatchObject({
+    explicitAcks: ["again"],
+  });
+  expect(deliveries).toHaveLength(1);
+  expect(
+    await consume({
+      kind: "delivery",
+      scope: tenant.id,
+      threadKey: thread.key,
+      ...range,
+      binding: { name: "receipt", ref: "settled" },
+    }),
+  ).toMatchObject({ explicitAcks: ["again"] });
+  expect(deliveries).toHaveLength(2);
 });
 
 it("retries a failed delivery without failing its Turn and no-ops queued work after Scope destruction", async () => {

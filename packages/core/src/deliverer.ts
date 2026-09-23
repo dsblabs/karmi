@@ -1,4 +1,4 @@
-import { and, eq, max } from "drizzle-orm";
+import { eq, inArray, max } from "drizzle-orm";
 import type { ThreadDatabase } from "./db/thread/database";
 import { deliveries, deliveryRoutes } from "./db/thread/schema";
 import { KarmiError } from "./errors";
@@ -48,7 +48,16 @@ export function defineDeliverer(input: Deliverer): Deliverer {
  */
 export function deliveryBinding(channelRef: unknown): DeliveryBinding | undefined {
   if (typeof channelRef !== "object" || channelRef === null || !("deliverer" in channelRef)) return;
-  const value = channelRef.deliverer;
+  return decodeDeliveryRoute(channelRef.deliverer, "channelRef.deliverer requires { name, ref }.");
+}
+
+/**
+ * Reads `{ name, ref }` as a Deliverer route. Throws `deliverer.invalid` when the shape is wrong.
+ */
+export function decodeDeliveryRoute(
+  value: unknown,
+  invalid = "A delivery route requires { name, ref }.",
+): DeliveryBinding {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -56,7 +65,7 @@ export function deliveryBinding(channelRef: unknown): DeliveryBinding | undefine
     typeof value.name !== "string" ||
     !("ref" in value)
   )
-    throw new KarmiError("deliverer.invalid", "channelRef.deliverer requires { name, ref }.");
+    throw new KarmiError("deliverer.invalid", invalid);
   assertName("deliverer", value.name);
   return { name: value.name, ref: value.ref };
 }
@@ -65,8 +74,8 @@ export function deliveryBinding(channelRef: unknown): DeliveryBinding | undefine
 const decodeBinding = (value: DeliveryBinding): DeliveryBinding => value;
 
 /**
- * The Outbox of one Thread for event ranges that wait for a Deliverer, and the route that the last Turn input
- * selected. It never sends a range and never sets an Alarm.
+ * The Outbox of one Thread for event ranges the Queue has not accepted, and the route that the last Turn
+ * input selected. It never sends a range and never sets an Alarm.
  */
 export class DeliveryOutbox {
   constructor(private db: ThreadDatabase) {}
@@ -99,20 +108,31 @@ export class DeliveryOutbox {
     return true;
   }
 
+  /** The range that ends at `toSeq`, or undefined when no such range waits. */
+  range(toSeq: number): { fromSeq: number; turn: number; binding: DeliveryBinding } | undefined {
+    const row = this.db.select().from(deliveries).where(eq(deliveries.toSeq, toSeq)).get();
+    return row && { fromSeq: row.fromSeq, turn: row.turn, binding: decodeBinding(row.binding) };
+  }
+
   /** The first `seq` of the range that ends at `toSeq`, or undefined when no such range waits. */
   fromSeq(toSeq: number): number | undefined {
-    return this.db.select({ fromSeq: deliveries.fromSeq }).from(deliveries).where(eq(deliveries.toSeq, toSeq)).get()
-      ?.fromSeq;
+    return this.range(toSeq)?.fromSeq;
   }
 
   /** The route that the range had when it was added, or undefined when no such range waits. */
   binding(fromSeq: number, toSeq: number): DeliveryBinding | undefined {
-    const row = this.db
-      .select({ binding: deliveries.binding })
-      .from(deliveries)
-      .where(and(eq(deliveries.fromSeq, fromSeq), eq(deliveries.toSeq, toSeq)))
-      .get();
-    return row && decodeBinding(row.binding);
+    const row = this.range(toSeq);
+    return row?.fromSeq === fromSeq ? row.binding : undefined;
+  }
+
+  /**
+   * Removes every range whose Alarm has run, except the ranges of `openTurn`. `enqueue` needs those as the
+   * cursor of the Turn. Leaves the route.
+   */
+  dropSent(openTurn: number | undefined, pending: (toSeq: number) => boolean): void {
+    const rows = this.db.select({ toSeq: deliveries.toSeq, turn: deliveries.turn }).from(deliveries).all();
+    const sent = rows.filter((row) => row.turn !== openTurn && !pending(row.toSeq)).map((row) => row.toSeq);
+    if (sent.length > 0) this.db.delete(deliveries).where(inArray(deliveries.toSeq, sent)).run();
   }
 
   /** Removes every range and the route. */
