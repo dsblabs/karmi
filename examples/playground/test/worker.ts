@@ -21,6 +21,7 @@ const playground = createPlayground({
   token: TOKEN,
   data: env.PLAYGROUND_DATA,
   media: env.KARMI_MEDIA,
+  loader: env.KARMI_LOADER !== undefined,
 });
 /** The same routes before `pnpm setup` ran: no Provider and no access token. */
 export const bare = createPlayground({
@@ -30,6 +31,7 @@ export const bare = createPlayground({
   token: undefined,
   data: env.PLAYGROUND_DATA,
   media: env.KARMI_MEDIA,
+  loader: env.KARMI_LOADER !== undefined,
 });
 
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;

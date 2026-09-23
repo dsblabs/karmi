@@ -28,6 +28,8 @@ export interface PlaygroundOptions {
   data: DurableObjectNamespace<SampleDataDO>;
   /** The media bucket used by the authenticated download route. */
   media: R2Bucket | undefined;
+  /** Whether the Worker has the `KARMI_LOADER` binding. Without it, the isolate Scripts scenario is unavailable. */
+  loader: boolean;
 }
 
 /** The Playground as a Worker `fetch`. */
@@ -161,7 +163,7 @@ function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, media: R2Bucket 
  * Creates the Playground routes on a karmi. The access token guards each route: the Thread routes of
  * `@karmi/http` and the routes below `/api`. No route returns a credential.
  */
-export function createPlayground({ karmi, model, setup, token, data, media }: PlaygroundOptions): Playground {
+export function createPlayground({ karmi, model, setup, token, data, media, loader }: PlaygroundOptions): Playground {
   // A browser cannot set headers on an EventSource, so the token can also be a query parameter.
   const authenticate = authentication(token);
   const http = createHttpHandler({ karmi, authenticate });
@@ -191,7 +193,7 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
         provider: setup
           ? { id: setup.option.id, label: setup.option.label, model: setup.model, baseUrl: setup.baseUrl }
           : null,
-        scenarios: SCENARIOS.map((scenario) => viewScenario(scenario, setup)),
+        scenarios: SCENARIOS.map((scenario) => viewScenario(scenario, setup, loader)),
         coverage: COVERAGE,
       });
     const answered = await ownRoutes(own, request, path);

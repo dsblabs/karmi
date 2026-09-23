@@ -6,6 +6,7 @@ import {
   parseDeploymentArguments,
   remove,
   selectAccount,
+  selectBindings,
   type CommandRequest,
   type DeploymentManifest,
 } from "../setup/deployment.ts";
@@ -40,6 +41,15 @@ describe("Cloudflare deployment", () => {
       queue: { name: "shared-queue", owned: false },
       deadLetterQueue: { owned: true },
     });
+  });
+
+  it("adds the Worker Loader binding only when the deployment selected isolate Scripts", () => {
+    const base = { name: "karmi-playground", worker_loaders: [{ binding: "KARMI_LOADER" }] };
+    const plain = createManifest("plain-deployment", account);
+    expect(plain.isolateScripts).toBe(false);
+    expect(selectBindings(base, plain)).toEqual({ name: "karmi-playground" });
+    const scripts = createManifest("scripts-deployment", account, {}, true);
+    expect(selectBindings(base, scripts)).toEqual(base);
   });
 
   it("checkpoints creation and retries only unfinished resources", async () => {

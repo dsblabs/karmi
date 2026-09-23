@@ -32,6 +32,11 @@ export interface DeploymentManifest {
   deadLetterQueue: DeploymentResource;
   /** The R2 storage resource. */
   bucket: DeploymentResource;
+  /**
+   * Whether the Worker gets the Worker Loader binding of isolate Scripts. Dynamic Workers need the Workers Paid
+   * plan. The binding is part of the Worker, thus it creates no resource and removal has nothing more to delete.
+   */
+  isolateScripts: boolean;
 }
 
 /** Options for resources that an operator supplies instead of creating. */
@@ -97,16 +102,31 @@ export function createManifest(
   name: string,
   account: CloudflareAccount,
   supplied: SuppliedResources = {},
+  isolateScripts = false,
 ): DeploymentManifest {
   return {
     version: 1,
     name,
     account,
+    isolateScripts,
     worker: resource(name, true),
     queue: resource(supplied.queue ?? `${name}-queue`, supplied.queue === undefined),
     deadLetterQueue: resource(supplied.deadLetterQueue ?? `${name}-dlq`, supplied.deadLetterQueue === undefined),
     bucket: resource(supplied.bucket ?? `${name}-media`, supplied.bucket === undefined),
   };
+}
+
+/**
+ * Returns the base Wrangler configuration with the optional bindings that the deployment selected. Without isolate
+ * Scripts, the Worker gets no Worker Loader binding, thus an account without the Workers Paid plan can deploy it.
+ */
+export function selectBindings(
+  base: Readonly<Record<string, unknown>>,
+  manifest: DeploymentManifest,
+): Record<string, unknown> {
+  if (manifest.isolateScripts) return { ...base };
+  const { worker_loaders: _, ...rest } = base;
+  return rest;
 }
 
 /** Decodes Wrangler's authenticated account response. */

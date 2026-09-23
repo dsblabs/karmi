@@ -134,6 +134,7 @@ function intro(scenario, ...actions) {
     el("p", { textContent: scenario.summary }),
     scenario.reason && el("p", { className: "note", textContent: scenario.reason }),
     ...scenario.modelNotes.map((note) => el("p", { className: "note", textContent: note })),
+    ...(scenario.notes ?? []).map((note) => el("p", { className: "note", textContent: note })),
     scenario.prerequisites.length > 0 &&
       el(
         "div",
@@ -1282,6 +1283,103 @@ function observabilityCards({ usage, handler, logs, redaction, exampleChild }, o
   ];
 }
 
+// The badge text of each state of a Script run.
+const RUN_STATES = { running: "running", done: "done", failed: "failed", stopped: "stopped, the Turn ended" };
+
+function scriptCards({ orders, grant, policy, runs }) {
+  return [
+    el(
+      "div",
+      { className: "card", id: "script-orders" },
+      el("h3", { textContent: "Order system" }),
+      el(
+        "ul",
+        {},
+        ...orders.map((order) =>
+          el(
+            "li",
+            {},
+            `${order.id}, ${order.customer}, $${order.total} `,
+            el("span", { className: `badge ${order.status}`, textContent: order.status }),
+          ),
+        ),
+      ),
+      el("p", {
+        className: "fine",
+        textContent: "This is sample data. pack_box packs an open order. Reset restores each order.",
+      }),
+    ),
+    el(
+      "div",
+      { className: "card titled", id: "script-runs" },
+      el("h3", {}, "Script runs", el("span", { className: "badge", textContent: String(runs.length) })),
+      runs.length > 0
+        ? el(
+            "ul",
+            {},
+            ...runs.map((run) =>
+              el(
+                "li",
+                {},
+                // A call id is data of the Framework, thus it is not in an h4, which shows its text in capitals.
+                el(
+                  "p",
+                  {},
+                  el("strong", { textContent: "run_script " }),
+                  el("code", { textContent: run.callId }),
+                  " ",
+                  el("span", { className: `badge ${run.state}`, textContent: RUN_STATES[run.state] }),
+                ),
+                run.state === "done" && el("pre", { textContent: JSON.stringify(run.value, null, 2) }),
+                run.error && el("pre", { className: "error", textContent: run.error }),
+                run.explanation && el("p", { className: "outcome", textContent: run.explanation }),
+                run.logs.length > 0 && el("h4", { textContent: `Logs (${run.logs.length})` }),
+                run.logs.length > 0 && el("pre", { textContent: run.logs.join("\n") }),
+                el("h4", { textContent: `Tool calls of the Script (${run.calls.length})` }),
+                run.calls.length > 0
+                  ? el(
+                      "ol",
+                      {},
+                      ...run.calls.map((call) =>
+                        el(
+                          "li",
+                          {},
+                          el("code", { textContent: call.name }),
+                          ` ${call.isError === undefined ? "running" : call.isError ? "error" : "ok"}, call `,
+                          el("code", { textContent: call.callId }),
+                          ", parent ",
+                          el("code", { textContent: call.parentCallId }),
+                        ),
+                      ),
+                    )
+                  : el("p", { className: "muted", textContent: "The Script called no Tool." }),
+              ),
+            ),
+          )
+        : el("p", { className: "muted", textContent: "No Script ran yet. Run a suggested prompt." }),
+      el("p", {
+        className: "fine",
+        textContent:
+          "The model sees only the result of run_script. It does not see the nested Tool calls. Each one has the parentCallId of its Script.",
+      }),
+    ),
+    el(
+      "details",
+      { className: "card", id: "script-grant" },
+      el("summary", { textContent: "Script grant and Permission Policy (2)" }),
+      el("h4", { textContent: "capabilities.scripts" }),
+      el("pre", { textContent: JSON.stringify(grant, null, 2) }),
+      el("h4", { textContent: "policy" }),
+      el("pre", { textContent: JSON.stringify(policy, null, 2) }),
+      el("p", {
+        className: "fine",
+        textContent:
+          "A Script gets each Tool that the Policy allows. No rule matches cancel_order, thus it needs an Approval, and a Script cannot wait for one.",
+      }),
+    ),
+  ];
+}
+
 // The cards next to the conversation, by scenario id.
 const PANELS = {
   refund: (state) => [orderCard(state.order)],
@@ -1294,6 +1392,7 @@ const PANELS = {
   delegation: purchaseCards,
   memory: memoryCards,
   observability: observabilityCards,
+  scripts: scriptCards,
 };
 
 /**
@@ -1639,6 +1738,29 @@ async function renderScenario(scenario) {
     refreshSoon();
   };
 
+  // The Tool call lists of the run_script cards, by the seq of the run_script call. The parentCallId of a Tool call of
+  // a Script is `{threadId}:{seq}` of that call.
+  const scripts = new Map();
+  const scriptCard = (event) => {
+    const card = tools.get(event.id);
+    const items = el("div", { className: "items" });
+    card.classList.add("script");
+    card.open = true;
+    card.append(
+      el("h4", { textContent: "Tool calls of the Script" }),
+      el("p", {
+        className: "fine",
+        textContent: "Each call runs through the Policy, the input schema and the Hooks. The model does not see it.",
+      }),
+      items,
+    );
+    scripts.set(String(event.seq), items);
+  };
+  const scriptLine = (parentCallId, ...nodes) =>
+    scripts
+      .get(parentCallId.slice(parentCallId.lastIndexOf(":") + 1))
+      ?.append(el("p", { className: "outcome" }, ...nodes));
+
   // Answers one Approval. The card turns its buttons off, because the Thread rejects a second answer.
   const ask = (seq, decision) => async (click) => {
     click.target
@@ -1755,7 +1877,18 @@ async function renderScenario(scenario) {
         live = undefined;
         break;
       case "tool.call":
+        if (event.parentCallId) {
+          scriptLine(
+            event.parentCallId,
+            "Tool call ",
+            el("code", { textContent: event.name }),
+            " ",
+            el("code", { textContent: JSON.stringify(event.input) }),
+          );
+          break;
+        }
         toolCard(event.id, event.name, event.input);
+        if (event.name === "run_script") scriptCard(event);
         break;
       case "delegation.started":
         add(
@@ -1786,6 +1919,16 @@ async function renderScenario(scenario) {
         break;
       }
       case "tool.result": {
+        if (event.parentCallId) {
+          scriptLine(
+            event.parentCallId,
+            `${event.isError ? "Error result" : "Result"} of `,
+            el("code", { textContent: event.name }),
+            `: ${event.content.map((block) => block.text ?? "").join(" ")}`,
+          );
+          refreshSoon();
+          break;
+        }
         const card = toolCard(event.id, event.name, undefined);
         card.classList.add(event.isError ? "failed" : "done");
         card.state.textContent = event.interrupted ? "interrupted" : event.isError ? "error" : "done";
@@ -2098,6 +2241,7 @@ async function renderScenario(scenario) {
     log.replaceChildren();
     tools.clear();
     children.clear();
+    scripts.clear();
     logCount.textContent = "0";
     lastSeq = 0;
     live = undefined;

@@ -43,6 +43,7 @@ Use these classes. Add a component only when none of them fits, and add it to th
 | `.thread-events` | A closed event list for one Thread in a scenario that compares Threads. |
 | `.tool.compacted` | The Compaction card of the conversation: the summary and the first kept event. |
 | `.tool.child` | The card of one child Thread in the conversation. Its `.items` hold the task, the Tool calls and the answer of the child, from the stream of the child. |
+| `.tool.script` | The card of one `run_script` call in the conversation. Its `.items` hold the Tool calls of the Script and their results. |
 | `.you`, `.agent`, `.tool` | The items of the conversation. One `.tool` card holds the input, the Approval and the result of one Tool call. A `continue` Approval uses the same card for the budget of the Turn. |
 
 An empty list shows a `.muted` sentence that tells what fills it. Do not show an empty card.
@@ -63,6 +64,8 @@ An empty list shows a `.muted` sentence that tells what fills it. Do not show an
 - The **Usage records** card shows the fields that each record of the Thread shares in `rows`, with the sum of the reported costs. A `.table` then has one row for each record: its `seq`, its tokens, its cost and the source of the cost. A record without a cost says **Not reported**.
 - The Queue delivers Usage records after the Turn, and no Thread event tells the page. While the scenario state has `handler.waiting`, the **UsageHandler** card shows a `waiting for the Queue` badge, and the `awaitQueue` function reads the state again every 2 seconds, for at most one minute.
 - The **Logs** card shows each log line as an `h4` with the level and the message, and a `pre` with the fields.
+- The isolate Scripts scenario gets an **Order system** card, a **Script runs** card and a closed card with the Script grant and the Permission Policy. A `tool.call` or `tool.result` event with a `parentCallId` goes in the `.items` of the `run_script` card that it names, not in a card of its own. The `scripts` map holds these lists by the `seq` of the `run_script` call.
+- The **Script runs** card shows one item for each Script: its call id in `code`, its state in a `.badge`, the value in a `pre` or the error in a `pre.error`, the explanation in an `.outcome`, the logs and the nested calls with their `parentCallId`.
 - The Schedules scenario gets a **Subscriber of this page** card. **Detach the Subscriber** closes the socket of the page. The page then reads new events and the scenario state on a timer. The `setAttached` function owns this state. The socket connects again after one second. The `listen` function does nothing when the operator opened a different view in that time.
 - The `add` function appends to the conversation. It scrolls only when the operator is at the end.
 - A card gets the `changed` class when its data changes. The operator then sees the effect of a Tool call.

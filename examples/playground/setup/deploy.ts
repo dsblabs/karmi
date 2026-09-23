@@ -52,7 +52,10 @@ async function createNewManifest(
   while (!account) account = selectAccount(accounts, await terminal.question("Account: "));
   console.log("\nThe base deployment creates one Worker, two Queues and one R2 bucket.");
   console.log("It does not create optional services.");
-  return createManifest(name, account, supplied);
+  console.log("\nThe isolate Scripts scenario needs Dynamic Workers, which need the Workers Paid plan.");
+  console.log("The Worker then gets a Worker Loader binding. It creates no other resource.");
+  const scripts = await terminal.question("Enable isolate Scripts? [y/N]: ");
+  return createManifest(name, account, supplied, /^y(es)?$/i.test(scripts.trim()));
 }
 
 async function main(): Promise<void> {
@@ -72,7 +75,9 @@ async function main(): Promise<void> {
     let manifest;
     try {
       manifest = await readManifest(manifestFile);
-      console.log(`Resume ${name} in ${manifest.account.name}.`);
+      console.log(
+        `Resume ${name} in ${manifest.account.name}${manifest.isolateScripts ? ", with isolate Scripts" : ""}.`,
+      );
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("ENOENT")) throw error;
       manifest = await createNewManifest(name, arguments_.supplied, terminal, runner);

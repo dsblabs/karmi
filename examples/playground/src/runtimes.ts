@@ -16,6 +16,7 @@ import {
 import { decodeOrder, REFUND } from "./refund";
 import { routeError } from "./route-error";
 import { sampleData, type SampleDataDO } from "./sample-data";
+import { decodeScriptOrders, SCRIPT_LIMITS, scriptRuns, scriptsAgent, SCRIPTS } from "./scripts";
 import { adjustStock, checkStock, decodeStock, deleteProduct, STOCKROOM, stockroomAgent } from "./stockroom";
 
 /** The sample Scope that the scenarios run in. */
@@ -149,6 +150,59 @@ function delegationRuntime(scope: () => Scope): Runtime {
   };
 }
 
+/**
+ * The runtime of the isolate Scripts scenario. The page shows the sample orders, the grant and each Script of the
+ * Thread with its nested Tool calls, which it reads from the event log.
+ */
+function scriptsRuntime(model: string): Runtime {
+  const { capabilities, policy } = scriptsAgent(model).spec;
+  return {
+    agent: SCRIPTS,
+    async view(stored, status, thread) {
+      return {
+        orders: decodeScriptOrders(stored),
+        grant: { ...capabilities?.scripts, limits: SCRIPT_LIMITS },
+        policy,
+        runs: scriptRuns(thread.identity.threadId, await thread.events()),
+        turn: turnView(status),
+      };
+    },
+  };
+}
+
+/** The runtime of the Usage and logging scenario. The page shows the Usage records, the UsageHandler and the logs. */
+function observabilityRuntime(): Runtime {
+  return {
+    agent: OBSERVABILITY,
+    actions: {
+      fail: async (stub) => {
+        await failNextDelivery(stub);
+        return undefined;
+      },
+      replay: (stub, open) => replayLastBatch(stub, open),
+      redact: async (stub) => {
+        await storeRedaction(stub);
+        return undefined;
+      },
+    },
+    async view(stored, _status, thread) {
+      const data = currentThread(decodeObservability(stored), thread.identity.threadId);
+      const usage = await usageRecordsOf(thread);
+      return {
+        usage,
+        handler: {
+          failNext: data.failNext,
+          deliveries: data.deliveries,
+          waiting: awaitsDelivery(usage, data.deliveries),
+        },
+        logs: data.logs,
+        ...(data.redaction && { redaction: data.redaction }),
+        exampleChild: EXAMPLE_CHILD_RECORD,
+      };
+    },
+  };
+}
+
 /** The runtime of the Agent Spec scenario. Its Agent is stored data, thus the runtime stores the starting Spec. */
 function assistantRuntime(scope: () => Scope, model: string): Runtime {
   const storeStartingSpec = async () => {
@@ -222,34 +276,7 @@ export function scenarioRuntimes(scope: () => Scope, model: string): Record<stri
     },
     [AGENTS]: assistantRuntime(scope, model),
     [DELEGATION]: delegationRuntime(scope),
-    [OBSERVABILITY]: {
-      agent: OBSERVABILITY,
-      actions: {
-        fail: async (stub) => {
-          await failNextDelivery(stub);
-          return undefined;
-        },
-        replay: (stub, open) => replayLastBatch(stub, open),
-        redact: async (stub) => {
-          await storeRedaction(stub);
-          return undefined;
-        },
-      },
-      async view(stored, _status, thread) {
-        const data = currentThread(decodeObservability(stored), thread.identity.threadId);
-        const usage = await usageRecordsOf(thread);
-        return {
-          usage,
-          handler: {
-            failNext: data.failNext,
-            deliveries: data.deliveries,
-            waiting: awaitsDelivery(usage, data.deliveries),
-          },
-          logs: data.logs,
-          ...(data.redaction && { redaction: data.redaction }),
-          exampleChild: EXAMPLE_CHILD_RECORD,
-        };
-      },
-    },
+    [SCRIPTS]: scriptsRuntime(model),
+    [OBSERVABILITY]: observabilityRuntime(),
   };
 }

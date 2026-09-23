@@ -59,9 +59,9 @@ main { display: flex; flex-direction: column; gap: 1rem; padding: 1.25rem 1.5rem
 .title .actions { margin-left: auto; display: flex; gap: 0.75rem; align-items: center; font-size: 0.9rem; }
 .intro > p { margin: 0.4rem 0 0; color: var(--muted); max-width: 46rem; }
 .badge { font-size: 0.7rem; font-weight: 500; padding: 0.1rem 0.5rem; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
-.badge.ready, .badge.refunded, .badge.collected, .badge.stored { color: var(--good); border-color: currentColor; }
-.badge.waiting, .badge.held, .badge.duplicate { color: var(--accent); border-color: currentColor; }
-.badge.failed, .badge.deleted { color: var(--bad); border-color: currentColor; }
+.badge.ready, .badge.refunded, .badge.collected, .badge.stored, .badge.packed, .badge.done { color: var(--good); border-color: currentColor; }
+.badge.waiting, .badge.held, .badge.duplicate, .badge.running { color: var(--accent); border-color: currentColor; }
+.badge.failed, .badge.deleted, .badge.cancelled, .badge.stopped { color: var(--bad); border-color: currentColor; }
 .badge.unavailable { color: var(--warn); border-color: currentColor; }
 .intro > p.note { color: var(--text); border-left: 3px solid var(--warn); background: light-dark(#fef3c766, #fbbf2414); border-radius: 0 7px 7px 0; padding: 0.45rem 0.8rem; margin-top: 0.7rem; font-size: 0.9rem; }
 .card { border: 1px solid var(--line); border-radius: 10px; padding: 0.9rem 1rem; background: var(--bg); }
@@ -89,7 +89,7 @@ main { display: flex; flex-direction: column; gap: 1rem; padding: 1.25rem 1.5rem
 .tool.failed .state { color: var(--bad); }
 .tool h4, .card h4 { margin: 0.6rem 0 0.2rem; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 .tool pre, .card pre { background: var(--panel); border-radius: 6px; padding: 0.4rem 0.6rem; }
-.tool.child > .items { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; padding-left: 0.6rem; border-left: 2px solid var(--line); }
+.tool.child > .items, .tool.script > .items { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; padding-left: 0.6rem; border-left: 2px solid var(--line); }
 .tool.child .you, .tool.child .agent { font-size: 0.88rem; }
 .tool.waiting { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .tool.waiting .state { color: var(--accent); font-weight: 600; }

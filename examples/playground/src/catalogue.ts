@@ -8,6 +8,7 @@ import { buyerAgent, listSuppliers, managerAgent, placeOrder } from "./purchases
 import { getOrder, refundAgent, refundOrder } from "./refund";
 import { remindersAgent, sampleInbox, sendReminder } from "./reminders";
 import { lookupTicket, observabilityAgent, sampleUsageHandler } from "./observability";
+import { cancelOrder, findOrders, packBox, readOrder, scriptsAgent } from "./scripts";
 import { adjustStock, checkStock, deleteProduct, restock, stockAudit, stockroomAgent } from "./stockroom";
 
 /**
@@ -30,6 +31,10 @@ export const catalogue = (model: string): CatalogueInput => ({
     listSuppliers,
     placeOrder,
     lookupTicket,
+    findOrders,
+    readOrder,
+    packBox,
+    cancelOrder,
   ],
   fragments: [shopPolicy],
   skills: [restock],
@@ -46,6 +51,7 @@ export const catalogue = (model: string): CatalogueInput => ({
     buyerAgent(model),
     conciergeAgent(model),
     observabilityAgent(model),
+    scriptsAgent(model),
   ],
   usageHandler: sampleUsageHandler,
 });

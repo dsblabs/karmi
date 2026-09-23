@@ -70,7 +70,7 @@ test("reset cancels the pending Approval and restores the scenario", async ({ pa
 
 test("a scenario that is not built shows its status and prerequisites", async ({ page }) => {
   await open(page);
-  await page.getByRole("link", { name: /Isolate and container Scripts/ }).click();
+  await page.getByRole("link", { name: /Container Scripts/ }).click();
   await expect(page.locator("main")).toContainText("incomplete");
   await expect(page.locator("main")).toContainText("Docker");
   await page.getByRole("link", { name: "Feature coverage" }).click();
@@ -558,4 +558,54 @@ test("a reconnect timer of the Schedules page does not take the stream of the ne
   await page.waitForTimeout(1500);
   await page.getByRole("button", { name: "Run" }).click();
   await expect(page.locator(".approval")).toContainText("refund_order");
+});
+
+async function runScript(page: Page, chip: string): Promise<void> {
+  await page.getByRole("button", { name: chip, exact: true }).click();
+  await expect(page.getByLabel("Prompt")).toHaveValue(/run_script/);
+  await page.getByRole("button", { name: "Run" }).click();
+}
+
+test("a Script calls sample Tools, and each nested call shows under its Script", async ({ page }) => {
+  await openScenario(page, "scripts");
+  await expect(page.locator(".note", { hasText: "cpuMs" })).toContainText("does not enforce cpuMs");
+  await expect(page.getByRole("link", { name: "Example code" })).toHaveAttribute("href", /src\/scripts\.ts$/);
+  await runScript(page, "Tool calls");
+  await expect(page.locator("#steps")).toContainText("The Script finished.");
+  await expect(page.locator("#steps .tool.script .items")).toContainText("read_order");
+  await expect(page.locator("#script-runs")).toContainText("Read 3 open orders");
+  await expect(page.locator("#script-runs")).toContainText('"total": 105');
+  await expect(page.locator("#script-runs li li")).toHaveCount(4);
+  await expect(page.locator("#script-runs li li").first()).toContainText("parent");
+});
+
+test("a Script cannot reach a Tool that needs an Approval or the network", async ({ page }) => {
+  await openScenario(page, "scripts");
+  await runScript(page, "Tool that needs an Approval");
+  await expect(page.locator("#script-runs")).toContainText("cancel_order is not a function");
+  await expect(page.locator("#script-runs")).toContainText("cannot wait for an Approval");
+  await expect(page.locator(".approval")).toHaveCount(0);
+  await expect(page.locator("#script-orders")).not.toContainText("cancelled");
+  await runScript(page, "Network");
+  await expect(page.locator("#script-runs")).toContainText("A Script has no network access");
+});
+
+test("the Harness ends a Script at maxToolCalls", async ({ page }) => {
+  await openScenario(page, "scripts");
+  await runScript(page, "Tool-call limit");
+  await expect(page.locator("#script-runs")).toContainText("limit_exceeded: maxToolCalls");
+  await expect(page.locator("#script-runs")).toContainText("Tool calls of the Script (10)");
+});
+
+test("cancel stops a Script, keeps its packed box, and reset restores the orders", async ({ page }) => {
+  await openScenario(page, "scripts");
+  await runScript(page, "Cancel");
+  await expect(page.locator("#script-orders")).toContainText("packed");
+  await page.getByRole("button", { name: "Cancel the Turn" }).click();
+  await expect(page.locator("#steps")).toContainText("You cancelled the Turn");
+  await expect(page.locator("#script-runs")).toContainText("stopped");
+  await expect(page.locator("#script-runs")).toContainText("A change that a Tool made before stays.");
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#script-orders")).not.toContainText("packed");
+  await expect(page.locator("#script-runs")).toContainText("No Script ran yet");
 });
