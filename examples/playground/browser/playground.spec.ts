@@ -252,12 +252,15 @@ for (const [name, [width, height]] of Object.entries(VIEWPORTS))
         return { scroll: root.scrollWidth - root.clientWidth, wide };
       });
       expect(overflow, `${view} at ${name}`).toEqual({ scroll: 0, wide: [] });
-      // A control that the operator presses on a phone is at least 40 CSS pixels high.
+      // A control that the operator presses on a phone is at least 40 CSS pixels high. One read measures each
+      // button, because a panel can render again between two reads and replace its buttons.
       if (name === "mobile")
-        for (const button of await page.locator("main button:visible").all())
-          expect((await button.boundingBox())?.height, `${view}: ${await button.textContent()}`).toBeGreaterThanOrEqual(
-            40,
-          );
+        for (const { label, height } of await page
+          .locator("main button:visible")
+          .evaluateAll((buttons) =>
+            buttons.map((button) => ({ label: button.textContent, height: button.getBoundingClientRect().height })),
+          ))
+          expect(height, `${view}: ${label}`).toBeGreaterThanOrEqual(40);
     }
   });
 
