@@ -1,4 +1,5 @@
 import type { KarmiBindings } from "./bindings";
+import type { DeliveryBinding } from "./deliverer";
 import type { Deployment } from "./deployment";
 import { KarmiError, errorMessage } from "./errors";
 import { keys } from "./keys";
@@ -13,16 +14,44 @@ import type { UsageRecord } from "./usage";
  * records for the UsageHandler.
  */
 export type QueueMessage =
-  | { kind: "delivery"; scope: string; threadKey: string; fromSeq: number; toSeq: number }
+  | {
+      kind: "delivery";
+      scope: string;
+      threadKey: string;
+      fromSeq: number;
+      toSeq: number;
+      /**
+       * The route captured when the range was added. Without it, the consumer reads the route from the
+       * Thread Outbox.
+       */
+      binding?: DeliveryBinding;
+    }
   | { kind: "usage"; records: UsageRecord[] };
 
 // The Thread Durable Object is the only producer, so the body is trusted once its `kind` is known.
 function decodeQueueMessage(body: unknown): QueueMessage {
   if (typeof body === "object" && body !== null && "kind" in body) {
-    if (body.kind === "delivery" || body.kind === "usage") return body as QueueMessage;
+    if (body.kind === "usage") return body as QueueMessage;
+    if (body.kind === "delivery") {
+      const message = body as Extract<QueueMessage, { kind: "delivery" }>;
+      if (!("binding" in body) || body.binding === undefined) return message;
+      return { ...message, binding: decodeQueueBinding(body.binding) };
+    }
     throw new KarmiError("queue.unhandled", `Unknown Queue job "${String(body.kind)}".`);
   }
   throw new KarmiError("queue.unhandled", "A Queue message without a kind.");
+}
+
+function decodeQueueBinding(value: unknown): DeliveryBinding {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("name" in value) ||
+    typeof value.name !== "string" ||
+    !("ref" in value)
+  )
+    throw new KarmiError("deliverer.invalid", "A delivery route requires { name, ref }.");
+  return { name: value.name, ref: value.ref };
 }
 
 /**
@@ -59,7 +88,7 @@ async function deliver(
   const identity = decodeKey(body.threadKey);
   const stub = remote<ThreadDurableObject>(bindings.KARMI_THREADS, keys.thread(body.scope, identity.threadId));
   const delivery = await unwrap(
-    stub.delivery({ ...identity, scope: body.scope, create: false }, body.fromSeq, body.toSeq),
+    stub.delivery({ ...identity, scope: body.scope, create: false }, body.fromSeq, body.toSeq, body.binding),
   );
   if (!delivery) return;
   const deliverer = deployment.catalogue.deliverers.get(delivery.binding.name);

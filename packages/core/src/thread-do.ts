@@ -627,11 +627,12 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     address: ThreadAddress,
     fromSeq: number,
     toSeq: number,
+    route?: DeliveryBinding,
   ): Outcome<{ binding: DeliveryBinding; events: ThreadEvent[] } | null> {
     const entered = this.enter(address);
     if (!entered.ok) return entered;
     if (this.ctx.getWebSockets().length > 0) return ok(null);
-    const binding = this.deliveries.binding(fromSeq, toSeq);
+    const binding = route ?? this.deliveries.binding(fromSeq, toSeq);
     if (!binding) return ok(null);
     const deliverer = this.deployment.catalogue.deliverers.get(binding.name);
     if (!deliverer) return fail(new KarmiError("deliverer.notFound", `Unknown Deliverer "${binding.name}".`));
@@ -1776,26 +1777,37 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   /** Hands the range that ends at `toSeq` to the Queue, unless a Subscriber is attached or the Scope is going away. */
   private async queueDelivery(toSeq: number): Promise<void> {
+    const range = this.deliveries.peek(toSeq);
+    if (range === undefined) return;
     // Any attached Subscriber suppresses delivery. Socket tags can distinguish audiences if needed.
-    if (this.ctx.getWebSockets().length > 0) return;
-    const fromSeq = this.deliveries.fromSeq(toSeq);
-    if (fromSeq === undefined) return;
+    if (this.ctx.getWebSockets().length === 0) {
+      const row = this.row();
+      const status = await this.scopeStub(row).status(row.scope_id);
+      if (!status.ok) throw new KarmiError(status.code, status.message);
+      if (status.value.state !== "destroying" && status.value.state !== "destroyed") {
+        if (!this.env.KARMI_QUEUE) throw new KarmiError("bindings.missing", "Offline delivery requires KARMI_QUEUE.");
+        await this.env.KARMI_QUEUE.send({
+          kind: "delivery",
+          scope: row.scope_id,
+          threadKey: encodeKey({
+            agent: row.agent_id,
+            threadId: row.thread_id,
+            ...(row.user_id !== null && { user: row.user_id }),
+          }),
+          fromSeq: range.fromSeq,
+          toSeq,
+          binding: range.binding,
+        } satisfies QueueMessage);
+      }
+    }
+    this.releaseDeliveryTurn(range.turn);
+  }
+
+  /** Drops the ranges of `turn` once that Turn can no longer enqueue another range. */
+  private releaseDeliveryTurn(turn: number): void {
     const row = this.row();
-    const status = await this.scopeStub(row).status(row.scope_id);
-    if (!status.ok) throw new KarmiError(status.code, status.message);
-    if (status.value.state === "destroying" || status.value.state === "destroyed") return;
-    if (!this.env.KARMI_QUEUE) throw new KarmiError("bindings.missing", "Offline delivery requires KARMI_QUEUE.");
-    await this.env.KARMI_QUEUE.send({
-      kind: "delivery",
-      scope: row.scope_id,
-      threadKey: encodeKey({
-        agent: row.agent_id,
-        threadId: row.thread_id,
-        ...(row.user_id !== null && { user: row.user_id }),
-      }),
-      fromSeq,
-      toSeq,
-    });
+    if ((row.state === "running" || row.state === "parked") && row.turn === turn) return;
+    this.deliveries.dropTurn(turn);
   }
 
   /**

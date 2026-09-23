@@ -164,7 +164,7 @@ export async function paymentReceived(karmi: Karmi, payer: string, amount: numbe
 - The Harness delivers at the end of a Turn and at an Approval request.
 - A connected socket, `subscribe()` stream or SSE stream stops offline delivery. The Harness waits one second before delivery, so that a client can connect again.
 - `granularity` is `part` by default. `delta` includes streaming chunks.
-- Delivery is at-least-once. Use the Thread key and the event `seq` to ignore a duplicate.
+- Delivery is at-least-once. Use the Thread key and the event `seq` to ignore a duplicate. A `delivery` Queue message carries the Deliverer route, so a retry still works after the Thread drops the Outbox range.
 - Offline delivery needs the `KARMI_QUEUE` binding. The Worker must export `karmi.queueHandler` as its `queue` handler.
 
 Without a Deliverer, the output stays available through `events()` and `subscribe()`.

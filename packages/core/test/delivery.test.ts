@@ -84,6 +84,43 @@ it("keeps output available for polling without a Deliverer", async () => {
   expect(await thread.events()).toContainEvent({ type: "turn.completed", message: [{ type: "text", text: "Stored" }] });
 });
 
+it("hands the binding to the Queue so a retry still delivers after the Outbox drops the range", async () => {
+  provider.script(["Receipt"]);
+  const tenant = karmi.scope("test");
+  const thread = tenant.thread({ agent: "concierge", threadId: "settled" });
+  await thread.send({
+    kind: "event",
+    type: "payment.received",
+    payload: {},
+    channelRef: { deliverer: { name: "receipt", ref: "settled" } },
+  });
+  await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.completed")).toBe(true);
+  await clock.advance(1000);
+  await expect.poll(() => deliveries.length).toBe(1);
+  const events = await thread.events();
+  const range = { fromSeq: events[0]!.seq, toSeq: events.at(-1)!.seq };
+  const consume = async (body: object) => {
+    const batch = createMessageBatch("karmi-test-queue", [{ id: "again", timestamp: new Date(), body, attempts: 1 }]);
+    const ctx = createExecutionContext();
+    await karmi.queueHandler(batch, env, ctx);
+    return getQueueResult(batch, ctx);
+  };
+  expect(await consume({ kind: "delivery", scope: tenant.id, threadKey: thread.key, ...range })).toMatchObject({
+    explicitAcks: ["again"],
+  });
+  expect(deliveries).toHaveLength(1);
+  expect(
+    await consume({
+      kind: "delivery",
+      scope: tenant.id,
+      threadKey: thread.key,
+      ...range,
+      binding: { name: "receipt", ref: "settled" },
+    }),
+  ).toMatchObject({ explicitAcks: ["again"] });
+  expect(deliveries).toHaveLength(2);
+});
+
 it("retries a failed delivery without failing its Turn and no-ops queued work after Scope destruction", async () => {
   provider.script(["Receipt"]);
   const tenant = karmi.scope("delivery-tenant");

@@ -32,6 +32,19 @@ it("starts the first range of a Turn at its first event and each later range aft
   });
 });
 
+it("drops every range of one Turn and leaves the ranges of other Turns", async () => {
+  await run("drop-turn", (outbox) => {
+    outbox.route({ name: "push", ref: "a" });
+    outbox.enqueue(1, 6, () => 2);
+    outbox.enqueue(1, 9, () => 2);
+    outbox.enqueue(2, 14, () => 10);
+    outbox.dropTurn(1);
+    expect([outbox.fromSeq(6), outbox.fromSeq(9), outbox.fromSeq(14)]).toEqual([undefined, undefined, 10]);
+    expect(outbox.peek(14)).toEqual({ fromSeq: 10, turn: 2, binding: { name: "push", ref: "a" } });
+    expect(outbox.peek(9)).toBeUndefined();
+  });
+});
+
 it("keeps for each range the route that the Thread had when the range was added", async () => {
   await run("binding", (outbox) => {
     outbox.route({ name: "push", ref: "a" });

@@ -1,4 +1,4 @@
-import { and, eq, max } from "drizzle-orm";
+import { eq, max } from "drizzle-orm";
 import type { ThreadDatabase } from "./db/thread/database";
 import { deliveries, deliveryRoutes } from "./db/thread/schema";
 import { KarmiError } from "./errors";
@@ -65,8 +65,8 @@ export function deliveryBinding(channelRef: unknown): DeliveryBinding | undefine
 const decodeBinding = (value: DeliveryBinding): DeliveryBinding => value;
 
 /**
- * The Outbox of one Thread for event ranges that wait for a Deliverer, and the route that the last Turn input
- * selected. It never sends a range and never sets an Alarm.
+ * The Outbox of one Thread for event ranges the Queue has not accepted, and the route that the last Turn
+ * input selected. It never sends a range and never sets an Alarm.
  */
 export class DeliveryOutbox {
   constructor(private db: ThreadDatabase) {}
@@ -99,20 +99,26 @@ export class DeliveryOutbox {
     return true;
   }
 
+  /** The range that ends at `toSeq`, or undefined when no such range waits. */
+  peek(toSeq: number): { fromSeq: number; turn: number; binding: DeliveryBinding } | undefined {
+    const row = this.db.select().from(deliveries).where(eq(deliveries.toSeq, toSeq)).get();
+    return row && { fromSeq: row.fromSeq, turn: row.turn, binding: decodeBinding(row.binding) };
+  }
+
   /** The first `seq` of the range that ends at `toSeq`, or undefined when no such range waits. */
   fromSeq(toSeq: number): number | undefined {
-    return this.db.select({ fromSeq: deliveries.fromSeq }).from(deliveries).where(eq(deliveries.toSeq, toSeq)).get()
-      ?.fromSeq;
+    return this.peek(toSeq)?.fromSeq;
   }
 
   /** The route that the range had when it was added, or undefined when no such range waits. */
   binding(fromSeq: number, toSeq: number): DeliveryBinding | undefined {
-    const row = this.db
-      .select({ binding: deliveries.binding })
-      .from(deliveries)
-      .where(and(eq(deliveries.fromSeq, fromSeq), eq(deliveries.toSeq, toSeq)))
-      .get();
-    return row && decodeBinding(row.binding);
+    const row = this.peek(toSeq);
+    return row?.fromSeq === fromSeq ? row.binding : undefined;
+  }
+
+  /** Removes every range of `turn`. Leaves the route and the ranges of other Turns. */
+  dropTurn(turn: number): void {
+    this.db.delete(deliveries).where(eq(deliveries.turn, turn)).run();
   }
 
   /** Removes every range and the route. */
