@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   selectBindings,
+  type BucketCleaner,
   type CommandRequest,
   type CommandRunner,
   type DeploymentManifest,
@@ -35,6 +36,66 @@ export class WranglerRunner implements CommandRunner {
       child.stdin?.end(request.input);
     });
   }
+}
+
+/** Empties an R2 bucket through the Cloudflare API with the credentials of Wrangler. */
+export class CloudflareBucketCleaner implements BucketCleaner {
+  readonly #runner: CommandRunner;
+
+  /** Creates a cleaner that reads credentials through the given Wrangler runner. */
+  constructor(runner: CommandRunner) {
+    this.#runner = runner;
+  }
+
+  /** Lists and deletes objects one page at a time until the bucket is empty. */
+  async empty(accountId: string, bucket: string): Promise<void> {
+    const headers = decodeAuthHeaders(JSON.parse(await this.#runner.run({ args: ["auth", "token", "--json"] })));
+    const base = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/r2/buckets/${encodeURIComponent(bucket)}/objects`;
+    for (;;) {
+      // Each pass lists from the start, because the deletes of the pass remove the listed keys.
+      const page = decodeObjectPage(await cloudflareRequest(`${base}?per_page=1000`, "GET", headers));
+      if (page.length === 0) return;
+      for (let index = 0; index < page.length; index += 50) {
+        await Promise.all(
+          page
+            .slice(index, index + 50)
+            .map((key) => cloudflareRequest(`${base}/${encodeURIComponent(key)}`, "DELETE", headers)),
+        );
+      }
+    }
+  }
+}
+
+function decodeAuthHeaders(value: unknown): Record<string, string> {
+  if (typeof value === "object" && value !== null) {
+    if ("token" in value && typeof value.token === "string") return { Authorization: `Bearer ${value.token}` };
+    if ("key" in value && "email" in value && typeof value.key === "string" && typeof value.email === "string")
+      return { "X-Auth-Key": value.key, "X-Auth-Email": value.email };
+  }
+  throw new Error("Wrangler returned no Cloudflare credentials. Run `pnpm exec wrangler login`.");
+}
+
+function decodeObjectPage(value: unknown): string[] {
+  if (typeof value === "object" && value !== null && "result" in value && Array.isArray(value.result))
+    return value.result.flatMap((entry: unknown) =>
+      typeof entry === "object" && entry !== null && "key" in entry && typeof entry.key === "string" ? [entry.key] : [],
+    );
+  throw new Error("The Cloudflare API returned an unexpected R2 object list.");
+}
+
+async function cloudflareRequest(
+  url: string,
+  method: "GET" | "DELETE",
+  headers: Record<string, string>,
+): Promise<unknown> {
+  const response = await fetch(url, { method, headers });
+  const body: unknown = await response.json().catch(() => undefined);
+  if (response.ok) return body;
+  const errors =
+    typeof body === "object" && body !== null && "errors" in body ? JSON.stringify(body.errors) : response.statusText;
+  throw new Error(
+    `Cloudflare API ${method} ${new URL(url).pathname} failed with ${String(response.status)}: ${errors}`,
+  );
 }
 
 /** Stores one deployment manifest as formatted JSON. */

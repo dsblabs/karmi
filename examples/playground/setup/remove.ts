@@ -1,4 +1,4 @@
-import { FileManifestStore, readManifest, WranglerRunner } from "./cloudflare.ts";
+import { CloudflareBucketCleaner, FileManifestStore, readManifest, WranglerRunner } from "./cloudflare.ts";
 import { remove } from "./deployment.ts";
 
 async function main(): Promise<void> {
@@ -6,7 +6,13 @@ async function main(): Promise<void> {
   if (!name) throw new Error("Give the deployment name: `pnpm run remove <name>`. ");
   const manifestFile = new URL(`../.deployments/${name}/manifest.json`, import.meta.url);
   const manifest = await readManifest(manifestFile);
-  const result = await remove(manifest, new WranglerRunner(), new FileManifestStore(manifestFile));
+  const runner = new WranglerRunner();
+  const result = await remove(
+    manifest,
+    runner,
+    new FileManifestStore(manifestFile),
+    new CloudflareBucketCleaner(runner),
+  );
   for (const resource of result.preserved) console.log(`Preserved supplied ${resource}.`);
   if (!result.complete) {
     console.error("Removal is incomplete. These owned resources remain:");

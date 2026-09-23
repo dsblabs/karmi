@@ -444,7 +444,7 @@ Give the exact deployment name to the removal command:
 pnpm run remove karmi-playground-a1b2c3d4
 ```
 
-The command removes the owned Worker, Queues and R2 bucket. Worker deletion removes its Durable Object storage and its Worker Loader binding. The command preserves each external resource in the manifest.
+The command removes the owned Worker, Queues and R2 bucket. It deletes all objects in the owned R2 bucket before it deletes the bucket. Worker deletion removes its Durable Object storage and its Worker Loader binding. The command preserves each external resource in the manifest.
 
 If cleanup fails, the command lists each remaining resource and keeps its ownership record. Fix the reported problem. Then run the command again. A repeated removal skips resources that a prior attempt removed.
 
