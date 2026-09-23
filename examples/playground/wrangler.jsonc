@@ -11,15 +11,23 @@
       { "name": "KARMI_SCOPES", "class_name": "ScopeConfigDO" },
       { "name": "KARMI_MEMORY", "class_name": "MemoryDO" },
       { "name": "KARMI_KNOWLEDGE", "class_name": "KnowledgeDO" },
-      { "name": "PLAYGROUND_DATA", "class_name": "SampleDataDO" }
+      { "name": "PLAYGROUND_DATA", "class_name": "SampleDataDO" },
+      { "name": "KARMI_SANDBOX", "class_name": "KarmiSandbox" }
     ]
   },
   "migrations": [
     { "tag": "karmi-v1", "new_sqlite_classes": ["ThreadDO", "ScopeConfigDO"] },
     { "tag": "karmi-v2", "new_sqlite_classes": ["MemoryDO"] },
     { "tag": "karmi-v3", "new_sqlite_classes": ["KnowledgeDO"] },
-    { "tag": "playground-v1", "new_sqlite_classes": ["SampleDataDO"] }
+    { "tag": "playground-v1", "new_sqlite_classes": ["SampleDataDO"] },
+    { "tag": "karmi-sandbox-v1", "new_sqlite_classes": ["KarmiSandbox"] }
   ],
+  // Container Scripts. `pnpm dev` does not build the image, thus it needs no Docker. `pnpm dev:containers` builds
+  // it with Docker. `pnpm deploy` keeps this entry only when you select container Scripts.
+  "containers": [
+    { "class_name": "KarmiSandbox", "image": "./node_modules/@karmi/sandbox-container/Dockerfile", "max_instances": 2 }
+  ],
+  "dev": { "enable_containers": false },
   "worker_loaders": [{ "binding": "KARMI_LOADER" }],
   "r2_buckets": [{ "binding": "KARMI_MEDIA", "bucket_name": "karmi-playground-media" }],
   "queues": {

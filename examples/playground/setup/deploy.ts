@@ -19,6 +19,8 @@ import {
 } from "./deployment.ts";
 import { parseDevVars } from "./cli.ts";
 
+const yes = (answer: string) => /^y(es)?$/i.test(answer.trim());
+
 function validName(value: string): boolean {
   return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value);
 }
@@ -55,7 +57,16 @@ async function createNewManifest(
   console.log("\nThe isolate Scripts scenario needs Dynamic Workers, which need the Workers Paid plan.");
   console.log("The Worker then gets a Worker Loader binding. It creates no other resource.");
   const scripts = await terminal.question("Enable isolate Scripts? [y/N]: ");
-  return createManifest(name, account, supplied, /^y(es)?$/i.test(scripts.trim()));
+  console.log("\nThe container Scripts scenario needs Cloudflare Containers, which need the Workers Paid plan.");
+  console.log("Wrangler builds the container image on this computer, thus Docker must run here.");
+  console.log("The image is for linux/amd64. On an ARM computer, Docker needs AMD64 emulation.");
+  console.log("A yes creates one container application and pushes its image to the Cloudflare registry.");
+  console.log("Each container that runs is billed by Cloudflare. Removal deletes the application and its images.");
+  const containers = await terminal.question("Enable container Scripts? [y/N]: ");
+  return createManifest(name, account, supplied, {
+    isolateScripts: yes(scripts),
+    containerScripts: yes(containers),
+  });
 }
 
 async function main(): Promise<void> {
@@ -75,9 +86,9 @@ async function main(): Promise<void> {
     let manifest;
     try {
       manifest = await readManifest(manifestFile);
-      console.log(
-        `Resume ${name} in ${manifest.account.name}${manifest.isolateScripts ? ", with isolate Scripts" : ""}.`,
-      );
+      const options = [manifest.isolateScripts && "isolate Scripts", manifest.container && "container Scripts"];
+      const selected = options.filter(Boolean).join(" and ");
+      console.log(`Resume ${name} in ${manifest.account.name}${selected ? `, with ${selected}` : ""}.`);
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("ENOENT")) throw error;
       manifest = await createNewManifest(name, arguments_.supplied, terminal, runner);
@@ -86,6 +97,8 @@ async function main(): Promise<void> {
       PLAYGROUND_PROVIDER: local.PLAYGROUND_PROVIDER ?? "",
       PLAYGROUND_MODEL: local.PLAYGROUND_MODEL ?? "",
       ...(local.PLAYGROUND_BASE_URL && { PLAYGROUND_BASE_URL: local.PLAYGROUND_BASE_URL }),
+      // The Worker offers container Scripts only when this variable names where the containers run.
+      ...(manifest.container && { PLAYGROUND_CONTAINERS: "cloudflare" }),
     };
     await writeCloudflareConfig(configFile, buildCloudflareConfig(await readBaseConfig(), manifest, variables));
     const secrets = {

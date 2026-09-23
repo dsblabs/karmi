@@ -70,9 +70,9 @@ test("reset cancels the pending Approval and restores the scenario", async ({ pa
 
 test("a scenario that is not built shows its status and prerequisites", async ({ page }) => {
   await open(page);
-  await page.getByRole("link", { name: /Container Scripts/ }).click();
+  await page.getByRole("link", { name: /Provider switching/ }).click();
   await expect(page.locator("main")).toContainText("incomplete");
-  await expect(page.locator("main")).toContainText("Docker");
+  await expect(page.locator("main")).toContainText("AI Gateway needs a Cloudflare account");
   await page.getByRole("link", { name: "Feature coverage" }).click();
   await expect(page.locator("table")).toContainText("Approvals");
 });
@@ -685,4 +685,31 @@ test("a bulk ingest runs as a Job, its pages are searchable, and reset restores 
   await expect(page.locator("#corpus-handbook")).toContainText("Documents (3)");
   await expect(page.locator("#bulk")).toContainText("No bulk ingest ran");
   await expect(page.locator("#steps")).toBeEmpty();
+});
+
+test("a container Script reads the sample files, and each artifact downloads", async ({ page }) => {
+  await openScenario(page, "container-scripts");
+  await expect(page.locator(".note", { hasText: "LocalProcessSandbox" })).toContainText("not an isolated sandbox");
+  await expect(page.locator("#container-files")).toContainText("sales.csv");
+  await expect(page.locator("#container-network")).toContainText("example.com");
+  await runScript(page, "Python report");
+  await expect(page.locator("#steps")).toContainText("The Script finished.");
+  await expect(page.locator("#container-runs")).toContainText("Files in /in: sales.csv, returns.csv.");
+  await expect(page.locator("#container-runs")).toContainText("Exit code 0");
+  const download = page.waitForEvent("download");
+  await page.locator("#container-runs").getByRole("link", { name: "Download report.md" }).click();
+  expect((await download).suggestedFilename()).toBe("report.md");
+});
+
+test("a long container Script becomes a Job with progress, and cancel and reset stop it", async ({ page }) => {
+  await openScenario(page, "container-scripts");
+  await runScript(page, "Long process");
+  // The process becomes a Job after wallMs, and the Thread reads its output every five seconds.
+  await expect(page.locator("#container-runs .badge.job")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator("#container-runs")).toContainText("Step 1", { timeout: 15_000 });
+  await page.getByRole("button", { name: "Cancel the Turn" }).click();
+  await expect(page.locator("#container-runs")).toContainText("cancelled");
+  await expect(page.locator("#container-runs")).toContainText("SIGTERM");
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#container-runs")).toContainText("No Script ran yet");
 });

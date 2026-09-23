@@ -1,5 +1,6 @@
-import type { MediaRef, Scope, Thread, ThreadEvent } from "@karmi/core";
+import type { Scope, Thread, ThreadEvent } from "@karmi/core";
 import { decodeForkScenarioData, FORKS, referencedMedia, type ForkScenarioData } from "./media-forks";
+import { mediaDownload } from "./media-download";
 import { routeError } from "./route-error";
 import { sampleData, type SampleDataDO } from "./sample-data";
 
@@ -18,23 +19,6 @@ interface ForkRequest {
 function decodeForkRequest(value: unknown): ForkRequest | undefined {
   if (typeof value !== "object" || value === null || !("seq" in value)) return undefined;
   return typeof value.seq === "number" && Number.isInteger(value.seq) && value.seq > 0 ? { seq: value.seq } : undefined;
-}
-
-async function mediaObject(bucket: R2Bucket, ref: MediaRef): Promise<Response> {
-  const object = await bucket.get(ref.key);
-  if (!object || object.size !== ref.bytes || object.httpMetadata?.contentType !== ref.mimeType) {
-    await object?.body.cancel();
-    return routeError(404, "http.notFound", "The media bytes are not available.");
-  }
-  const name = (ref.name ?? ref.id).replaceAll(/[^\x20-\x21\x23-\x5b\x5d-\x7e]/g, "_");
-  return new Response(object.body, {
-    headers: {
-      "content-type": ref.mimeType,
-      "content-length": String(ref.bytes),
-      "content-disposition": `attachment; filename="${name}"`,
-      "x-content-type-options": "nosniff",
-    },
-  });
 }
 
 interface ForkContext extends ForkRouteOptions {
@@ -116,7 +100,7 @@ async function download(context: ForkContext, threadKey: string, mediaId: string
         : undefined;
   if (!permitted) return routeError(404, "http.notFound", "No such media.");
   const ref = referencedMedia(await permitted.events()).find((entry) => entry.id === mediaId);
-  return ref ? mediaObject(context.media, ref) : routeError(404, "http.notFound", "No such media.");
+  return ref ? mediaDownload(context.media, ref) : routeError(404, "http.notFound", "No such media.");
 }
 
 async function resetScenario(context: ForkContext): Promise<Response> {

@@ -1,6 +1,7 @@
 import type { CatalogueInput } from "@karmi/core";
 import { shopPolicy } from "./assistant";
 import { conciergeAgent } from "./concierge";
+import { containerAgent, sampleFiles } from "./containers";
 import { bookCourier, dispatchAgent, listParcels, packParcel } from "./dispatch";
 import { ledgerAgent, postEntry, readLedger } from "./ledger";
 import { librarianAgent } from "./librarian";
@@ -37,7 +38,7 @@ export const catalogue = (model: string): CatalogueInput => ({
     packBox,
     cancelOrder,
   ],
-  fragments: [shopPolicy],
+  fragments: [shopPolicy, sampleFiles],
   skills: [restock],
   hooks: [stockAudit],
   deliverers: [sampleInbox],
@@ -54,6 +55,7 @@ export const catalogue = (model: string): CatalogueInput => ({
     observabilityAgent(model),
     scriptsAgent(model),
     librarianAgent(model),
+    containerAgent(model),
   ],
   usageHandler: sampleUsageHandler,
 });

@@ -37,6 +37,19 @@ export interface DeploymentManifest {
    * plan. The binding is part of the Worker, thus it creates no resource and removal has nothing more to delete.
    */
   isolateScripts: boolean;
+  /**
+   * The container application of container Scripts, when the deployment selected them. Its name is also the name of
+   * the images that the deployment pushed to the Cloudflare registry. Removal deletes the application and each image.
+   */
+  container?: DeploymentResource;
+}
+
+/** The optional services that a deployment selects when it is created. */
+export interface OptionalServices {
+  /** Gives the Worker the Worker Loader binding. Dynamic Workers need the Workers Paid plan. */
+  isolateScripts?: boolean;
+  /** Creates the container application of container Scripts. Containers need the Workers Paid plan and Docker. */
+  containerScripts?: boolean;
 }
 
 /** Options for resources that an operator supplies instead of creating. */
@@ -108,13 +121,14 @@ export function createManifest(
   name: string,
   account: CloudflareAccount,
   supplied: SuppliedResources = {},
-  isolateScripts = false,
+  { isolateScripts = false, containerScripts = false }: OptionalServices = {},
 ): DeploymentManifest {
   return {
     version: 1,
     name,
     account,
     isolateScripts,
+    ...(containerScripts && { container: resource(`${name}-sandbox`, true) }),
     worker: resource(name, true),
     queue: resource(supplied.queue ?? `${name}-queue`, supplied.queue === undefined),
     deadLetterQueue: resource(supplied.deadLetterQueue ?? `${name}-dlq`, supplied.deadLetterQueue === undefined),
@@ -122,17 +136,44 @@ export function createManifest(
   };
 }
 
+/** The Durable Object class of the container sandbox, as the Wrangler configuration names it. */
+const SANDBOX_CLASS = "KarmiSandbox";
+
+const namesSandbox = (entry: unknown) =>
+  typeof entry === "object" &&
+  entry !== null &&
+  (("class_name" in entry && entry.class_name === SANDBOX_CLASS) ||
+    ("new_sqlite_classes" in entry &&
+      Array.isArray(entry.new_sqlite_classes) &&
+      entry.new_sqlite_classes.includes(SANDBOX_CLASS)));
+
 /**
  * Returns the base Wrangler configuration with the optional bindings that the deployment selected. Without isolate
- * Scripts, the Worker gets no Worker Loader binding, thus an account without the Workers Paid plan can deploy it.
+ * Scripts, the Worker gets no Worker Loader binding. Without container Scripts, it gets no container, no sandbox
+ * Durable Object and no sandbox migration. Thus an account without the Workers Paid plan can deploy it.
  */
 export function selectBindings(
   base: Readonly<Record<string, unknown>>,
   manifest: DeploymentManifest,
 ): Record<string, unknown> {
-  if (manifest.isolateScripts) return { ...base };
-  const { worker_loaders: _, ...rest } = base;
-  return rest;
+  const { worker_loaders: loaders, containers, ...rest } = base;
+  const selected: Record<string, unknown> = { ...rest, ...(manifest.isolateScripts && { worker_loaders: loaders }) };
+  const { container } = manifest;
+  if (container)
+    return {
+      ...selected,
+      containers: Array.isArray(containers)
+        ? containers.map((entry: unknown) =>
+            namesSandbox(entry) && typeof entry === "object" ? { ...entry, name: container.name } : entry,
+          )
+        : [],
+    };
+  const objects = selected.durable_objects;
+  if (typeof objects === "object" && objects !== null && "bindings" in objects && Array.isArray(objects.bindings))
+    selected.durable_objects = { ...objects, bindings: objects.bindings.filter((entry) => !namesSandbox(entry)) };
+  if (Array.isArray(selected.migrations))
+    selected.migrations = selected.migrations.filter((entry) => !namesSandbox(entry));
+  return selected;
 }
 
 /** Decodes Wrangler's authenticated account response. */
@@ -250,10 +291,75 @@ export async function deploy(
   await createOwnedResource(manifest, "bucket", runner, store);
   await createOwnedResource(manifest, "deadLetterQueue", runner, store);
   await createOwnedResource(manifest, "queue", runner, store);
+  await claimContainer(manifest, runner, store);
   await runner.run(command(["secret", "bulk", "--config", configPath], manifest.account.id, JSON.stringify(secrets)));
+  // Wrangler builds the image, pushes it and creates the container application in the same deploy.
   await runner.run(command(["deploy", "--config", configPath], manifest.account.id));
   manifest.worker.status = "created";
+  if (manifest.container) manifest.container.status = "created";
   await store.save(manifest);
+}
+
+/**
+ * Checks that no container application has the name of the deployment, then records that the deploy creates it.
+ * Thus an interrupted deploy leaves a record that removal can use.
+ */
+async function claimContainer(manifest: DeploymentManifest, runner: CommandRunner, store: ManifestStore) {
+  const { container } = manifest;
+  if (container?.status !== "pending") return;
+  if ((await containerApplications(manifest, runner)).some((application) => application.name === container.name))
+    throw new Error(`container ${container.name} already exists and is not owned by this deployment.`);
+  container.status = "creating";
+  await store.save(manifest);
+}
+
+const listed = (value: unknown): unknown[] => {
+  if (!Array.isArray(value)) throw new Error("Wrangler did not return a JSON list.");
+  return value;
+};
+
+/** Lists the container applications of the account. */
+async function containerApplications(
+  manifest: DeploymentManifest,
+  runner: CommandRunner,
+): Promise<Array<{ id: string; name: string }>> {
+  const output = await runner.run(command(["containers", "list", "--json"], manifest.account.id));
+  return listed(JSON.parse(output)).flatMap((entry) =>
+    typeof entry === "object" &&
+    entry !== null &&
+    "id" in entry &&
+    typeof entry.id === "string" &&
+    "name" in entry &&
+    typeof entry.name === "string"
+      ? [{ id: entry.id, name: entry.name }]
+      : [],
+  );
+}
+
+/** Returns each tag of the registry images with the given name. */
+async function imageTags(manifest: DeploymentManifest, runner: CommandRunner, name: string): Promise<string[]> {
+  const output = await runner.run(command(["containers", "images", "list", "--json"], manifest.account.id));
+  return listed(JSON.parse(output)).flatMap((entry) =>
+    typeof entry === "object" &&
+    entry !== null &&
+    "name" in entry &&
+    entry.name === name &&
+    "tags" in entry &&
+    Array.isArray(entry.tags)
+      ? entry.tags.filter((tag): tag is string => typeof tag === "string")
+      : [],
+  );
+}
+
+/** Deletes the owned container application, then each image with its name. */
+async function removeContainer(manifest: DeploymentManifest, runner: CommandRunner, name: string): Promise<void> {
+  for (const application of await containerApplications(manifest, runner))
+    if (application.name === name)
+      await runner.run(command(["containers", "delete", application.id], manifest.account.id));
+  for (const tag of await imageTags(manifest, runner, name))
+    await runner.run(
+      command(["containers", "images", "delete", `${name}:${tag}`, "--skip-confirmation"], manifest.account.id),
+    );
 }
 
 function errorMessage(error: unknown): string {
@@ -297,11 +403,16 @@ export async function remove(
   const failures: RemovalFailure[] = [];
   const consumerFailure = await removeQueueConsumer(manifest, runner);
   if (consumerFailure) failures.push(consumerFailure);
-  const operations: Array<{ key: "worker" | "queue" | "deadLetterQueue" | "bucket"; args: string[] }> = [
+  const operations: Array<{
+    key: "worker" | "container" | "queue" | "deadLetterQueue" | "bucket";
+    args: string[];
+  }> = [
     {
       key: "worker",
       args: ["delete", manifest.worker.name, "--force"],
     },
+    // The container application goes after the Worker, thus no Durable Object starts a container during removal.
+    { key: "container", args: [] },
     {
       key: "queue",
       args: ["queues", "delete", manifest.queue.name],
@@ -317,6 +428,7 @@ export async function remove(
   ];
   for (const operation of operations) {
     const current = manifest[operation.key];
+    if (!current) continue;
     const label = `${operation.key} ${current.name}`;
     if (!current.owned) {
       preserved.push(label);
@@ -327,7 +439,8 @@ export async function remove(
     try {
       // R2 refuses to delete a bucket that still has objects.
       if (operation.key === "bucket") await cleaner.empty(manifest.account.id, current.name);
-      await runner.run(command(operation.args, manifest.account.id));
+      if (operation.key === "container") await removeContainer(manifest, runner, current.name);
+      else await runner.run(command(operation.args, manifest.account.id));
       current.status = "removed";
       await store.save(manifest);
     } catch (error) {

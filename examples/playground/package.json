@@ -5,6 +5,7 @@
   "scripts": {
     "setup": "node --experimental-strip-types setup/cli.ts",
     "dev": "wrangler dev",
+    "dev:containers": "wrangler dev --enable-containers --var PLAYGROUND_CONTAINERS:docker",
     "deploy": "node --experimental-strip-types setup/deploy.ts",
     "remove": "node --experimental-strip-types setup/remove.ts",
     "typecheck": "tsc --noEmit",
@@ -20,6 +21,7 @@
     "@karmi/anthropic": "workspace:*",
     "@karmi/core": "workspace:*",
     "@karmi/http": "workspace:*",
+    "@karmi/sandbox-container": "workspace:*",
     "@openrouter/ai-sdk-provider": "^3.0.0",
     "zod": "^4.5.4"
   },

@@ -166,6 +166,8 @@ export async function readManifest(file: URL): Promise<DeploymentManifest> {
     bucket: decodeResource(value.bucket),
     // A manifest from before this option has no field. Its Worker has no Worker Loader binding.
     isolateScripts: "isolateScripts" in value && value.isolateScripts === true,
+    // A manifest without the field has no container application.
+    ...("container" in value && value.container !== undefined && { container: decodeResource(value.container) }),
   };
 }
 
@@ -200,9 +202,19 @@ export function buildCloudflareConfig(
           : entry,
       )
     : [];
+  const selected = selectBindings(base, manifest);
+  // The generated configuration is two directories below the base one, thus a relative image path moves too.
+  const containers = Array.isArray(selected.containers)
+    ? selected.containers.map((entry: unknown) =>
+        typeof entry === "object" && entry !== null && "image" in entry && typeof entry.image === "string"
+          ? { ...entry, image: entry.image.startsWith("./") ? `../../${entry.image.slice(2)}` : entry.image }
+          : entry,
+      )
+    : undefined;
   return `${JSON.stringify(
     {
-      ...selectBindings(base, manifest),
+      ...selected,
+      ...(containers && { containers }),
       name: manifest.name,
       main: "../../src/worker.ts",
       assets,

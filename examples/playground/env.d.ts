@@ -9,6 +9,13 @@ declare namespace Cloudflare {
     KARMI_QUEUE: Queue;
     /** The Worker Loader of isolate Scripts. A deployment without isolate Scripts has none. */
     KARMI_LOADER?: WorkerLoader;
+    /** The container sandbox of container Scripts. It works only when `PLAYGROUND_CONTAINERS` is set. */
+    KARMI_SANDBOX?: DurableObjectNamespace<import("@karmi/core").KarmiSandbox>;
+    /**
+     * Where container Scripts run: `docker` for `pnpm dev:containers`, `cloudflare` for a deployment that selected
+     * them. Without it, the Worker offers no container Scripts.
+     */
+    PLAYGROUND_CONTAINERS?: string;
     PLAYGROUND_DATA: DurableObjectNamespace<import("./src/sample-data").SampleDataDO>;
     /** The key ring that encrypts each stored credential. */
     KARMI_KEYRING?: string;

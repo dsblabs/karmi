@@ -12,7 +12,9 @@ import { KNOWLEDGE } from "./librarian";
 import { memoryScenarioRoutes } from "./memory-routes";
 import { OTHER_SCOPE, SAMPLE_SCOPES, scenarioRuntimes, SCOPE, USER, type Runtime } from "./runtimes";
 import { sampleData, type SampleDataDO } from "./sample-data";
-import { COVERAGE, SCENARIOS, viewScenario } from "./scenarios";
+import type { ContainerRuntime } from "./containers";
+import { mediaDownload } from "./media-download";
+import { COVERAGE, SCENARIOS, viewScenario, type Services } from "./scenarios";
 import { scheduleScenarioRoutes, triggerSupplierDelivery } from "./schedule-routes";
 
 export { CONCIERGE, KNOWLEDGE, MEMORY, OTHER_SCOPE, SCOPE, USER };
@@ -32,6 +34,8 @@ export interface PlaygroundOptions {
   media: R2Bucket | undefined;
   /** Whether the Worker has the `KARMI_LOADER` binding. Without it, the isolate Scripts scenario is unavailable. */
   hasLoader: boolean;
+  /** Where container Scripts run. Without it, the container Scripts scenario is unavailable. */
+  containers?: ContainerRuntime | undefined;
 }
 
 /** The Playground as a Worker `fetch`. */
@@ -162,13 +166,31 @@ function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, media: R2Bucket 
   } satisfies Record<string, ScenarioRoutes>;
 }
 
+/**
+ * Answers with one downloadable media file of the current Thread of a scenario. A file of a Thread before a reset is
+ * gone, thus it gets a 404 answer.
+ */
+async function downloadMedia(
+  runtime: Runtime,
+  stub: DurableObjectStub<SampleDataDO>,
+  open: (generation: number) => Thread,
+  media: R2Bucket | undefined,
+  mediaId: string,
+): Promise<Response> {
+  if (!runtime.media) return routeError(404, "http.notFound", "No such route.");
+  if (!media) return routeError(503, "bindings.missing", "Media downloads need the KARMI_MEDIA bucket.");
+  const state = await stub.read();
+  const ref = (await runtime.media(state.data, open(state.generation))).find((entry) => entry.id === mediaId);
+  return ref ? mediaDownload(media, ref) : routeError(404, "http.notFound", "No such media.");
+}
+
 /** The answer of `/api/playground`: the selected Provider without its credential, the scenarios and the coverage. */
-function describePlayground(setup: ProviderSetup | undefined, hasLoader: boolean): Response {
+function describePlayground(setup: ProviderSetup | undefined, services: Services): Response {
   return Response.json({
     provider: setup
       ? { id: setup.option.id, label: setup.option.label, model: setup.model, baseUrl: setup.baseUrl }
       : null,
-    scenarios: SCENARIOS.map((scenario) => viewScenario(scenario, setup, hasLoader)),
+    scenarios: SCENARIOS.map((scenario) => viewScenario(scenario, setup, services)),
     coverage: COVERAGE,
   });
 }
@@ -177,15 +199,8 @@ function describePlayground(setup: ProviderSetup | undefined, hasLoader: boolean
  * Creates the Playground routes on a karmi. The access token guards each route: the Thread routes of
  * `@karmi/http` and the routes below `/api`. No route returns a credential.
  */
-export function createPlayground({
-  karmi,
-  model,
-  setup,
-  token,
-  data,
-  media,
-  hasLoader,
-}: PlaygroundOptions): Playground {
+export function createPlayground(options: PlaygroundOptions): Playground {
+  const { karmi, model, setup, token, data, media } = options;
   // A browser cannot set headers on an EventSource, so the token can also be a query parameter.
   const authenticate = authentication(token);
   const http = createHttpHandler({ karmi, authenticate });
@@ -210,14 +225,17 @@ export function createPlayground({
   }
 
   async function api(request: Request, path: string): Promise<Response> {
-    if (path === "/api/playground" && request.method === "GET") return describePlayground(setup, hasLoader);
+    if (path === "/api/playground" && request.method === "GET") return describePlayground(setup, options);
     const answered = await ownRoutes(own, request, path);
     if (answered) return answered;
-    const [, id, action] =
-      /^\/api\/scenarios\/([^/]+)(?:\/(reset|spec|job|hold|fail|replay|redact))?$/.exec(path) ?? [];
+    const [, id, action, mediaId] =
+      /^\/api\/scenarios\/([^/]+)(?:\/(reset|spec|job|hold|fail|replay|redact|media\/([^/]+)))?$/.exec(path) ?? [];
     const runtime = id === undefined ? undefined : runtimes[id];
     if (id === undefined || !runtime) return routeError(404, "http.notFound", "No such route.");
     if (action === undefined && request.method === "GET") return scenarioState(id, runtime);
+    const open = (generation: number) => threadOf(runtime, generation);
+    if (mediaId !== undefined && request.method === "GET")
+      return downloadMedia(runtime, sampleData(data, SCOPE, id), open, media, mediaId);
     const restart = async (restore: boolean) => {
       const stub = sampleData(data, SCOPE, id);
       const thread = threadOf(runtime, (await stub.read()).generation);
@@ -227,10 +245,7 @@ export function createPlayground({
     if (action === "reset" && request.method === "POST") return restart(true);
     const act = action === undefined ? undefined : runtime.actions?.[action];
     if (act && request.method === "POST")
-      return (
-        (await act(sampleData(data, SCOPE, id), (generation) => threadOf(runtime, generation), request)) ??
-        scenarioState(id, runtime)
-      );
+      return (await act(sampleData(data, SCOPE, id), open, request)) ?? scenarioState(id, runtime);
     // A saved Spec starts a new Thread, thus the earlier answers cannot change what the new version does.
     if (action === "spec" && id === AGENTS && request.method === "PUT")
       return (await putSpec(scope(), request)) ?? restart(false);

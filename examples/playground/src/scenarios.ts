@@ -1,6 +1,7 @@
 import { AGENTS, ASSISTANT_PROMPTS } from "./assistant";
 import { DISPATCH_PROMPTS, MAX_STEPS, TURNS } from "./dispatch";
 import { CONCIERGE_PROMPTS, MEMORY } from "./concierge";
+import { CONTAINER_LIMITS, CONTAINER_PROMPTS, CONTAINERS, EGRESS_ALLOW, type ContainerRuntime } from "./containers";
 import { COMPACTION, CONTEXT, LEDGER_PROMPTS } from "./ledger";
 import { KNOWLEDGE, LIBRARIAN_PROMPTS } from "./librarian";
 import { FORKS, FORKS_PROMPT } from "./media-forks";
@@ -48,6 +49,8 @@ export interface Scenario {
   upload?: boolean;
   /** True when the scenario needs the `KARMI_LOADER` binding of the Worker. */
   needsLoader?: boolean;
+  /** True when the scenario needs a container runtime: Docker in local development, or Cloudflare Containers. */
+  needsContainers?: boolean;
   /** What the operator must know before a run, other than a limit of the model. */
   notes?: string[];
 }
@@ -205,9 +208,27 @@ export const SCENARIOS: readonly Scenario[] = [
       `Local workerd does not enforce cpuMs, thus the CPU limit Script finishes in local development. Only a deployed Worker shows the limit of ${String(SCRIPT_LIMITS.cpuMs)} ms.`,
     ],
   },
-  notBuilt("container-scripts", "Scripts", "Container Scripts, files and artifacts", [
-    "Container Scripts need Docker locally, or a Cloudflare account with Containers.",
-  ]),
+  {
+    id: CONTAINERS,
+    group: "Scripts",
+    title: "Container Scripts, files and artifacts",
+    summary:
+      "The model runs your shell or Python Script in a container Workspace. The Script reads the sample files in /in and writes artifacts to /out, which you can download. A long process becomes a Job with progress, and a cancel stops it. The Worker lets a Script reach only the hostnames of the allow-list.",
+    built: true,
+    prerequisites: [
+      "A container runtime. For local development, run pnpm dev:containers, which needs Docker and builds a linux/amd64 image. A Cloudflare deployment needs the Workers Paid plan: select container Scripts when pnpm deploy asks.",
+    ],
+    needs: ["toolCalls"],
+    prompts: CONTAINER_PROMPTS,
+    code: `${CODE}/src/containers.ts`,
+    controls: true,
+    needsContainers: true,
+    notes: [
+      `The Workspace belongs to the Thread. Its files stay between the Scripts of one Turn. The Harness destroys it when the Turn ends, after ${String(CONTAINER_LIMITS.idleMs / 1000)} seconds without a Script, on a cancel and on a reset. Each call empties /in and /out first.`,
+      `A Script reaches only ${EGRESS_ALLOW.join(", ")}. Cloudflare enforces this rule. The Playground does not claim that local Docker enforces it the same way.`,
+      "The Playground does not use LocalProcessSandbox. That sandbox runs a Script as a process of your computer, with access to your files and with no network rule, thus it is not an isolated sandbox.",
+    ],
+  },
   notBuilt("scopes", "Scopes and credentials", "Scope lifecycle, credentials and key rotation"),
   notBuilt("mcp", "Providers and MCP", "Provider switching, AI Gateway and remote MCP Tools", [
     "A remote MCP server.",
@@ -243,11 +264,20 @@ export interface ScenarioView extends Scenario {
   modelNotes: string[];
 }
 
-/**
- * Adds the state for the current setup to a scenario. `hasLoader` tells whether the Worker has the `KARMI_LOADER`
- * binding. It makes no network call.
- */
-export function viewScenario(scenario: Scenario, setup: ProviderSetup | undefined, hasLoader: boolean): ScenarioView {
+/** The optional services of the Worker that some scenarios need. */
+export interface Services {
+  /** Whether the Worker has the `KARMI_LOADER` binding of isolate Scripts. */
+  hasLoader: boolean;
+  /** Where container Scripts run, when the Worker has a container runtime. */
+  containers?: ContainerRuntime | undefined;
+}
+
+/** Adds the state for the current setup and services to a scenario. It makes no network call. */
+export function viewScenario(
+  scenario: Scenario,
+  setup: ProviderSetup | undefined,
+  { hasLoader, containers }: Services,
+): ScenarioView {
   if (!scenario.built)
     return { ...scenario, status: "incomplete", reason: "This scenario is not built yet.", modelNotes: [] };
   if (scenario.needsLoader && !hasLoader)
@@ -256,6 +286,14 @@ export function viewScenario(scenario: Scenario, setup: ProviderSetup | undefine
       status: "unavailable",
       reason:
         "The Worker has no KARMI_LOADER binding. Deploy again with a new deployment name and select isolate Scripts. Dynamic Workers need the Workers Paid plan.",
+      modelNotes: [],
+    };
+  if (scenario.needsContainers && !containers)
+    return {
+      ...scenario,
+      status: "unavailable",
+      reason:
+        "The Worker has no container runtime. For local development, stop the server and run pnpm dev:containers, which needs Docker. For Cloudflare, deploy with a new deployment name and select container Scripts.",
       modelNotes: [],
     };
   if (!setup)
@@ -314,6 +352,7 @@ const memory = row(MEMORY);
 const observability = row(OBSERVABILITY);
 const scripts = row(SCRIPTS);
 const knowledge = row(KNOWLEDGE);
+const containers = row(CONTAINERS);
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
@@ -462,6 +501,34 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Scripts",
     "Cancel the Turn while the Cancel Script packs boxes. The Script stops. The boxes that it packed stay packed. Reset leaves no Script running.",
   ),
+  containers(
+    "Container execution",
+    "Scripts",
+    "The Python report and the Shell summary Scripts run in the Workspace of the Thread. The Script runs card shows the language, the code, the exit code, stdout and stderr.",
+  ),
+  containers(
+    "Script files",
+    "Scripts",
+    "The Agent gets the refs of sales.csv and returns.csv from a Fragment. The Script reads them in /in.",
+  ),
+  containers(
+    "Script artifacts",
+    "Scripts",
+    "Each file that a Script writes to /out becomes media of the Thread. The Script runs card has a download link for each one.",
+  ),
+  containers(
+    "Script Jobs",
+    "Scripts",
+    "The Long process Script runs longer than wallMs. It becomes a Job, the Turn parks, and progress lines appear. The Job completes with an artifact, or a cancel stops it.",
+  ),
+  {
+    group: "Scripts",
+    feature: "Network rules of a container",
+    scenario: CONTAINERS,
+    observable:
+      "The Allowed host Script gets an answer from example.com. The Denied host Script gets HTTP 520, and stderr names example.org and the grant key.",
+    verification: "Not verified in a Cloudflare account yet. The Worker tests cannot run a real container.",
+  },
   knowledge(
     "Corpus ingestion",
     "Memory and Knowledge",
