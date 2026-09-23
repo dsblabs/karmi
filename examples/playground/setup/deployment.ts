@@ -75,6 +75,12 @@ export interface CommandRunner {
   run(request: CommandRequest): Promise<string>;
 }
 
+/** Deletes the objects in an R2 bucket at the deployment boundary. */
+export interface BucketCleaner {
+  /** Deletes every object in the bucket and rejects when one delete fails. */
+  empty(accountId: string, bucket: string): Promise<void>;
+}
+
 /** Persists the ownership record after each resource operation. */
 export interface ManifestStore {
   /** Saves the complete current manifest. */
@@ -285,6 +291,7 @@ export async function remove(
   manifest: DeploymentManifest,
   runner: CommandRunner,
   store: ManifestStore,
+  cleaner: BucketCleaner,
 ): Promise<RemovalResult> {
   const preserved: string[] = [];
   const failures: RemovalFailure[] = [];
@@ -318,6 +325,8 @@ export async function remove(
     if (current.status === "removed" || current.status === "pending") continue;
     if (operation.key === "worker" && consumerFailure) continue;
     try {
+      // R2 refuses to delete a bucket that still has objects.
+      if (operation.key === "bucket") await cleaner.empty(manifest.account.id, current.name);
       await runner.run(command(operation.args, manifest.account.id));
       current.status = "removed";
       await store.save(manifest);

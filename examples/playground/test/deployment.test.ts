@@ -12,6 +12,7 @@ import {
 } from "../setup/deployment.ts";
 
 const account = { id: "account-1", name: "Example account" };
+const cleaner = { empty: () => Promise.resolve() };
 
 function copy(manifest: DeploymentManifest): DeploymentManifest {
   return structuredClone(manifest);
@@ -149,6 +150,7 @@ describe("Cloudflare deployment", () => {
             return Promise.resolve();
           },
         },
+        cleaner,
       ),
     ).toEqual({ complete: true, preserved: [] });
     expect(calls).toEqual([]);
@@ -173,6 +175,7 @@ describe("Cloudflare deployment", () => {
           return Promise.resolve();
         },
       },
+      cleaner,
     );
     expect(result).toEqual({ complete: true, preserved: ["bucket shared-media"] });
     expect(calls.map((request) => request.args)).toEqual([
@@ -203,6 +206,7 @@ describe("Cloudflare deployment", () => {
           return Promise.resolve();
         },
       },
+      cleaner,
     );
     expect(first).toEqual({
       complete: false,
@@ -224,6 +228,7 @@ describe("Cloudflare deployment", () => {
             return Promise.resolve();
           },
         },
+        cleaner,
       ),
     ).toEqual({ complete: true, preserved: [] });
     expect(retried).toHaveLength(1);
@@ -243,6 +248,7 @@ describe("Cloudflare deployment", () => {
         },
       },
       { save: () => Promise.resolve() },
+      cleaner,
     );
     expect(result).toMatchObject({
       complete: false,
@@ -250,5 +256,53 @@ describe("Cloudflare deployment", () => {
     });
     expect(calls).toHaveLength(1);
     expect(manifest.worker.status).toBe("created");
+  });
+
+  it("empties an owned bucket before it deletes the bucket", async () => {
+    const manifest = createManifest("karmi-playground-test-bucket", account);
+    manifest.bucket.status = "created";
+    const steps: string[] = [];
+    const result = await remove(
+      manifest,
+      {
+        run(request) {
+          steps.push(request.args.join(" "));
+          return Promise.resolve("");
+        },
+      },
+      { save: () => Promise.resolve() },
+      {
+        empty(accountId, bucket) {
+          steps.push(`empty ${accountId} ${bucket}`);
+          return Promise.resolve();
+        },
+      },
+    );
+    expect(result).toEqual({ complete: true, preserved: [] });
+    expect(steps).toEqual([`empty ${account.id} ${manifest.bucket.name}`, `r2 bucket delete ${manifest.bucket.name}`]);
+  });
+
+  it("keeps the bucket retryable when emptying it fails", async () => {
+    const manifest = createManifest("karmi-playground-test-bucket-fail", account);
+    manifest.bucket.status = "created";
+    const calls: CommandRequest[] = [];
+    const result = await remove(
+      manifest,
+      {
+        run(request) {
+          calls.push(request);
+          return Promise.resolve("");
+        },
+      },
+      { save: () => Promise.resolve() },
+      { empty: () => Promise.reject(new Error("Delete failed")) },
+    );
+    expect(result).toEqual({
+      complete: false,
+      preserved: [],
+      failures: [{ resource: `bucket ${manifest.bucket.name}`, message: "Delete failed" }],
+    });
+    expect(calls).toEqual([]);
+    expect(manifest.bucket.status).toBe("created");
   });
 });
