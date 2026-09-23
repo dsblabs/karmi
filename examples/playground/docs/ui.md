@@ -38,6 +38,7 @@ Use these classes. Add a component only when none of them fits, and add it to th
 | `.row` | A primary button with its related controls. Each group has at most one `button.primary`. |
 | `.badge`, `.dot` | A status word, and a status colour in the navigation. |
 | `.note` | A limit that the operator must know before a run. |
+| `.notes` | The grid in the title bar that holds the `.note` items and the Prerequisites card side by side. It uses the full width of the view. |
 | `.fine`, `.muted` | A small explanation, and an empty state. |
 | `.error`, `.outcome` | A failure, and the result of an action. |
 | `.thread-events` | A closed event list for one Thread in a scenario that compares Threads. |
