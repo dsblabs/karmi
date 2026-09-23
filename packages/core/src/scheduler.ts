@@ -68,6 +68,11 @@ export class Scheduler {
     this.rearm();
   }
 
+  /** Whether the Alarm `id` is still scheduled. A running Alarm counts until its handler returns. */
+  has(id: string): boolean {
+    return this.db.select({ id: alarms.id }).from(alarms).where(eq(alarms.id, id)).get() !== undefined;
+  }
+
   cancel(id: string): void {
     this.db.delete(alarms).where(eq(alarms.id, id)).run();
     this.rearm();

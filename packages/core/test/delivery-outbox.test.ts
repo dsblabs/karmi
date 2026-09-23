@@ -32,16 +32,24 @@ it("starts the first range of a Turn at its first event and each later range aft
   });
 });
 
-it("drops one range and leaves the other ranges of the same Turn", async () => {
-  await run("drop-range", (outbox) => {
+it("drops the ranges whose Alarm has run and keeps the ranges of the open Turn", async () => {
+  await run("drop-sent", (outbox) => {
     outbox.route({ name: "push", ref: "a" });
     outbox.enqueue(1, 6, () => 2);
     outbox.enqueue(1, 9, () => 2);
     outbox.enqueue(2, 14, () => 10);
-    outbox.drop(6);
-    expect([outbox.fromSeq(6), outbox.fromSeq(9), outbox.fromSeq(14)]).toEqual([undefined, 7, 10]);
-    expect(outbox.range(14)).toEqual({ fromSeq: 10, turn: 2, binding: { name: "push", ref: "a" } });
-    expect(outbox.range(6)).toBeUndefined();
+    outbox.enqueue(3, 18, () => 15);
+    // Turn 3 is open, and the Alarm of the range that ends at 9 has not run.
+    outbox.dropSent(3, (toSeq) => toSeq === 9);
+    expect([outbox.fromSeq(6), outbox.fromSeq(9), outbox.fromSeq(14), outbox.fromSeq(18)]).toEqual([
+      undefined,
+      7,
+      undefined,
+      15,
+    ]);
+    expect(outbox.range(9)).toEqual({ fromSeq: 7, turn: 1, binding: { name: "push", ref: "a" } });
+    outbox.dropSent(undefined, () => false);
+    expect([outbox.fromSeq(9), outbox.fromSeq(18)]).toEqual([undefined, undefined]);
   });
 });
 

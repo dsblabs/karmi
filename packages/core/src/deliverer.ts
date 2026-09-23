@@ -1,4 +1,4 @@
-import { eq, max } from "drizzle-orm";
+import { eq, inArray, max } from "drizzle-orm";
 import type { ThreadDatabase } from "./db/thread/database";
 import { deliveries, deliveryRoutes } from "./db/thread/schema";
 import { KarmiError } from "./errors";
@@ -125,9 +125,14 @@ export class DeliveryOutbox {
     return row?.fromSeq === fromSeq ? row.binding : undefined;
   }
 
-  /** Removes the range that ends at `toSeq`. Leaves the route and every other range. */
-  drop(toSeq: number): void {
-    this.db.delete(deliveries).where(eq(deliveries.toSeq, toSeq)).run();
+  /**
+   * Removes every range whose Alarm has run, except the ranges of `openTurn`. `enqueue` needs those as the
+   * cursor of the Turn. Leaves the route.
+   */
+  dropSent(openTurn: number | undefined, pending: (toSeq: number) => boolean): void {
+    const rows = this.db.select({ toSeq: deliveries.toSeq, turn: deliveries.turn }).from(deliveries).all();
+    const sent = rows.filter((row) => row.turn !== openTurn && !pending(row.toSeq)).map((row) => row.toSeq);
+    if (sent.length > 0) this.db.delete(deliveries).where(inArray(deliveries.toSeq, sent)).run();
   }
 
   /** Removes every range and the route. */

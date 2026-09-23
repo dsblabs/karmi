@@ -1800,8 +1800,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         } satisfies QueueMessage);
       }
     }
-    const open = (row.state === "running" || row.state === "parked") && row.turn === range.turn;
-    if (!open) this.deliveries.drop(toSeq);
+    // This Alarm is still scheduled until it returns, so its own range counts as sent here.
+    const openTurn = row.state === "running" || row.state === "parked" ? row.turn : undefined;
+    this.deliveries.dropSent(openTurn, (seq) => seq !== toSeq && this.scheduler.has(`delivery:${seq}`));
   }
 
   /**

@@ -1,8 +1,16 @@
-import { createExecutionContext, createMessageBatch, getQueueResult } from "cloudflare:test";
+import { createExecutionContext, createMessageBatch, getQueueResult, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { keys } from "../src/keys";
 import { reply } from "../src/testing/index";
 import { beforeEach, expect, it } from "vitest";
 import { deliveries, karmi, provider, clock, deliveryFailure } from "./worker";
+
+/** The number of ranges that stay in the delivery Outbox of the Thread `threadId` of the Scope "test". */
+const outboxRows = (threadId: string) =>
+  runInDurableObject(
+    env.KARMI_THREADS.getByName(keys.thread("test", threadId)),
+    (_, state) => state.storage.sql.exec<{ n: number }>("SELECT count(*) AS n FROM deliveries").one().n,
+  );
 
 beforeEach(() => {
   deliveries.length = 0;
@@ -72,6 +80,7 @@ it("delivers offline Approvals and the completion as separate ranges", async () 
   await expect.poll(() => deliveries.length).toBe(2);
   expect(deliveries[1]!.events.every((e) => e.seq > approval.seq)).toBe(true);
   expect(deliveries[1]!.events).toContainEvent({ type: "turn.completed" });
+  expect(await outboxRows("approval-delivery")).toBe(0);
 });
 
 it("delivers an Approval range and the completion when both Alarms fire after the Turn ends", async () => {
@@ -91,6 +100,7 @@ it("delivers an Approval range and the completion when both Alarms fire after th
   await expect.poll(() => deliveries.length).toBe(2);
   expect(deliveries.some((item) => item.events.some((e) => e.type === "approval.requested"))).toBe(true);
   expect(deliveries.some((item) => item.events.some((e) => e.type === "turn.completed"))).toBe(true);
+  expect(await outboxRows("both-after-end")).toBe(0);
 });
 
 it("keeps output available for polling without a Deliverer", async () => {
