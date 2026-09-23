@@ -58,10 +58,11 @@ An empty list shows a `.muted` sentence that tells what fills it. Do not show an
 - The Delegation scenario gets a **Child Threads** card and a **Usage records** card. A `delegation.started` event adds a `.tool.child` card and opens a stream of the child Thread. The `childStreams` set holds each one, and `closeStreams` closes them with the stream of the page. An Approval of a child shows in the parent conversation with the label of the child, and its answer goes to the parent route.
 - The Memory scenario gets a **Memory** card for each sample Scope, with **Start a new Thread** and **Forget the User**. Its **Scope boundary** card shows the raw answer of a Thread route in a `pre`. A closed card shows the Profile fields. A new Thread moves the composer to it when the conversation is in that Scope.
 - The Usage and logging scenario gets a **Usage records** card, a **UsageHandler** card and a **Logs** card.
-- **Fail the next batch** and **Deliver the last batch again** act on the sample UsageHandler.
+- **Fail the next batch** and **Deliver the last batch again** act on the sample UsageHandler. **Deliver the last batch again** shows only after the handler stored a batch. Each delivery is one line: its key in `code` and its status in a `.badge`.
 - **Show redaction** writes `redactFields` of a sample object. A closed card shows the `parent` shape of a Delegation child.
-- Each Usage record has a cost line. The line is the reported cost, or that the Provider reported none.
-- The Schedules scenario gets a **Subscriber of this page** card. **Detach the Subscriber** closes the socket of the page. The page then reads new events and the scenario state on a timer. The `setAttached` function owns this state.
+- Each Usage record shows its key, its model, its tokens and a cost line. The cost line is the reported cost, or that the Provider reported none.
+- The **Logs** card shows each log line as an `h4` with the level and the message, and a `pre` with the fields.
+- The Schedules scenario gets a **Subscriber of this page** card. **Detach the Subscriber** closes the socket of the page. The page then reads new events and the scenario state on a timer. The `setAttached` function owns this state. The socket connects again after one second. The `listen` function does nothing when the operator opened a different view in that time.
 - The `add` function appends to the conversation. It scrolls only when the operator is at the end.
 - A card gets the `changed` class when its data changes. The operator then sees the effect of a Tool call.
 - Check `mine === view` after each `await` in a render function. The operator can open a different view during the request.

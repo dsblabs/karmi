@@ -1088,12 +1088,23 @@ function costLine(record) {
   return `${amount} ${currency}, ${source}, ${basis}`;
 }
 
+// A script record has no model and no tokens. A model or Compaction record has both.
+function tokenLine(record) {
+  if (record.input === undefined) return undefined;
+  const cache =
+    record.cacheRead || record.cacheWrite ? `, ${record.cacheRead} cache read, ${record.cacheWrite} cache write` : "";
+  return `${record.input} in, ${record.output} out${cache}`;
+}
+
+// The UsageHandler writes `duplicate` for a key that it stored before, and skips the record.
+const DELIVERY_STATUS = { stored: "stored", duplicate: "duplicate, skipped", failed: "failed, the Queue retries" };
+
 function observabilityCards({ usage, handler, logs, redaction, exampleChild }, onChanged, isCurrent) {
   const path = "/api/scenarios/observability";
   const handlerResult = el("p", { className: "fine" });
   const logResult = el("p", { className: "fine" });
   const changed = (note) => (next) => isCurrent() && onChanged(next, note);
-  const parent = (record) => (record.parent ? `${record.parent.threadKey} / ${record.parent.callId}` : "none");
+  const stored = handler.deliveries.some((item) => item.status === "stored");
   return [
     el(
       "div",
@@ -1108,13 +1119,17 @@ function observabilityCards({ usage, handler, logs, redaction, exampleChild }, o
                 "li",
                 {},
                 rows(
+                  ["Key", el("code", { textContent: `${record.threadId}:${record.seq}` })],
                   ["Kind", record.kind],
+                  record.model && ["Model", el("code", { textContent: `${record.provider}/${record.model}` })],
+                  tokenLine(record) && ["Tokens", tokenLine(record)],
                   ["Scope", record.scope],
                   ["Agent", record.agent],
                   ["User", record.user ?? "none"],
-                  ["Thread", el("code", { textContent: record.threadId })],
-                  ["seq", String(record.seq)],
-                  ["Parent", record.parent ? el("code", { textContent: parent(record) }) : "none"],
+                  record.parent && [
+                    "Parent",
+                    el("code", { textContent: `${record.parent.threadKey} / ${record.parent.callId}` }),
+                  ],
                   ["Cost", costLine(record)],
                 ),
               ),
@@ -1123,7 +1138,8 @@ function observabilityCards({ usage, handler, logs, redaction, exampleChild }, o
         : el("p", { className: "muted", textContent: "No model call ran yet." }),
       el("p", {
         className: "fine",
-        textContent: "karmi writes each record with the Step. It never prices tokens. A missing cost is not zero.",
+        textContent:
+          "The key is threadId:seq. karmi writes each record with the Step. It never prices tokens. A missing cost is not zero.",
       }),
     ),
     el(
@@ -1143,11 +1159,9 @@ function observabilityCards({ usage, handler, logs, redaction, exampleChild }, o
               el(
                 "li",
                 {},
-                rows(
-                  ["Key", el("code", { textContent: item.key })],
-                  ["Status", item.status],
-                  ["Duplicate", item.duplicate ? "yes" : "no"],
-                ),
+                el("code", { textContent: item.key }),
+                " ",
+                el("span", { className: `badge ${item.status}`, textContent: DELIVERY_STATUS[item.status] }),
               ),
             ),
           )
@@ -1161,18 +1175,19 @@ function observabilityCards({ usage, handler, logs, redaction, exampleChild }, o
           changed("The next batch will fail once."),
           handlerResult,
         ),
-        cardAction(
-          "Deliver the last batch again",
-          () => api("POST", `${path}/replay`),
-          changed("The handler received the last batch again."),
-          handlerResult,
-        ),
+        stored &&
+          cardAction(
+            "Deliver the last batch again",
+            () => api("POST", `${path}/replay`),
+            changed("The handler received the last batch again and skipped each duplicate."),
+            handlerResult,
+          ),
       ),
       handlerResult,
       el("p", {
         className: "fine",
         textContent:
-          "The Queue delivers each batch at least once. usageKey is threadId:seq. A thrown error retries the batch. The Turn does not fail.",
+          "The Queue delivers each batch at least once. The handler skips a key that it stored before. A thrown error retries the batch. The Turn does not fail.",
       }),
     ),
     el(
@@ -1180,7 +1195,18 @@ function observabilityCards({ usage, handler, logs, redaction, exampleChild }, o
       { className: "card titled", id: "logs" },
       el("h3", {}, "Logs", el("span", { className: "badge", textContent: String(logs.length) })),
       logs.length > 0
-        ? el("pre", { textContent: JSON.stringify(logs, null, 2) })
+        ? el(
+            "ul",
+            {},
+            ...logs.map((line) =>
+              el(
+                "li",
+                {},
+                el("h4", { textContent: `${line.level}: ${line.message}` }),
+                el("pre", { textContent: JSON.stringify(line.fields, null, 2) }),
+              ),
+            ),
+          )
         : el("p", {
             className: "muted",
             textContent: "No log line of this scenario is stored yet. Run Look up a ticket.",
@@ -1897,6 +1923,8 @@ async function renderScenario(scenario) {
       showThread();
     };
   const listen = () => {
+    // A reconnect timer can fire after the operator opened a different view. The stream is then of that view.
+    if (mine !== view) return;
     stream?.close();
     if (!attached) return;
     const query = [`after=${lastSeq}`, `token=${encodeURIComponent(token)}`];
