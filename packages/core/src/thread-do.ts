@@ -72,7 +72,7 @@ import { errorMessage, KarmiError } from "./errors";
 import type { Compacted, HookContextBase, HookContexts, HookResults, TurnEnd } from "./hook";
 import { hooksAt } from "./hooks";
 import { keys } from "./keys";
-import { bindLogger } from "./logger";
+import { bindLogger, redactText } from "./logger";
 import { sha256Hex } from "./digest";
 import { parseMcpReference } from "./mcp-catalog";
 import { McpRegistry, type McpServerSnapshot } from "./mcp-registry";
@@ -1458,6 +1458,9 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       const reason = fallbackReason(result.error.code);
       const engage =
         reason !== undefined && !engaged && !call.started.fallback && snapshot.fallback?.on.includes(reason);
+      const nextEngaged = engage ? { step: plan.n, attempt: modelAttempt, reason } : engaged;
+      if (modelAttemptTarget(snapshot, nextEngaged, plan.n, modelAttempt + 1) === undefined)
+        return stop(this.finish(this.row(), providerFailure(row.agent_id, result.error)));
       this.update({
         attempt: modelAttempt + 1,
         ...(engage && { fallback_json: { step: plan.n, attempt: modelAttempt, reason } }),
@@ -1510,8 +1513,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const modelAttempt = plan.fresh ? 1 : Math.max(row.attempt, 1);
     const attempt = modelAttempt + (plan.fresh ? 0 : row.recoveries);
     const engaged = decodeFallback(row.fallback_json);
-    const models = [snapshot.spec.model.id, ...(snapshot.spec.model.fallbacks ?? [])];
-    const target = attemptTarget(models, engaged, plan.n, modelAttempt);
+    const target = modelAttemptTarget(snapshot, engaged, plan.n, modelAttempt);
     if (target === undefined)
       return { ok: false, failure: failure("provider", `Every model of Agent "${row.agent_id}" failed.`) };
     if (attempt > MAX_STEP_ATTEMPTS) {
@@ -2996,6 +2998,23 @@ export function isTurnEnd(event: ThreadEventData): event is TurnEnd {
 }
 
 const failure = (reason: string, message: string): TurnEnd => ({ type: "turn.failed", reason, message });
+
+function providerFailure(agent: string, error: ProviderError): TurnEnd {
+  const status = error.status === undefined ? "" : ` (HTTP ${String(error.status)})`;
+  return failure(
+    "provider",
+    `Every model of Agent "${agent}" failed. The final Provider error was ${error.code}${status}: ${redactText(error.message)}`,
+  );
+}
+
+function modelAttemptTarget(
+  snapshot: TurnSnapshot,
+  engaged: FallbackEngaged | undefined,
+  step: number,
+  attempt: number,
+): { model: string; fallback: boolean } | undefined {
+  return attemptTarget([snapshot.spec.model.id, ...(snapshot.spec.model.fallbacks ?? [])], engaged, step, attempt);
+}
 const stop = async (work: Promise<void>): Promise<"stop"> => {
   await work;
   return "stop";

@@ -262,10 +262,26 @@ describe("Turn failure paths", () => {
   });
 
   it("fails the Turn once every model has failed", async () => {
-    provider.script([[reply.error({ code: "unavailable" })], [reply.error({ code: "rate_limit" })]]);
+    provider.script([
+      [reply.error({ code: "unavailable", message: "The first model is unavailable.", status: 503 })],
+      [
+        reply.error({
+          code: "rate_limit",
+          message: "The account has no remaining requests. Authorization: Bearer private-key",
+          status: 429,
+          raw: { headers: { authorization: "Bearer private-key" } },
+        }),
+      ],
+    ]);
     const thread = fresh();
     const events = await thread.send(message("Hi"));
-    expect(events).toContainEvent({ type: "turn.failed", reason: "provider" });
+    expect(events).toContainEvent({
+      type: "turn.failed",
+      reason: "provider",
+      message:
+        'Every model of Agent "concierge" failed. The final Provider error was rate_limit (HTTP 429): The account has no remaining requests. Authorization: Bearer [REDACTED]',
+    });
+    expect(JSON.stringify(events)).not.toContain("private-key");
     expect(await thread.status()).toMatchObject({ state: "idle" });
   });
 

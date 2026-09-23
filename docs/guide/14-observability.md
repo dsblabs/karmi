@@ -8,6 +8,8 @@ karmi gives you two records of what a Deployment does. Usage records tell what e
 
 The event log of a Thread is the trace of each Turn. karmi has no OpenTelemetry export. [Threads](04-threads.md#read-events) tells how to read the events.
 
+A Provider failure ends with `turn.failed { reason: "provider" }`. Its message includes the final error code and message. It includes the HTTP status when the Provider supplies one. karmi redacts credentials and excludes the Provider's raw error body.
+
 ## Usage records
 
 A Usage record is a `usage.recorded` Thread event. The Harness writes it in the same write as the Step that it accounts for. A record has one of three kinds:

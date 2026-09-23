@@ -7,6 +7,14 @@ const REDACTED = "[REDACTED]";
 const SECRET_KEY = /(token|secret|password|passwd|credential|authorization|api[_-]?key|cookie)$/i;
 /** An HTTP credential inside free text. Only the scheme survives. */
 const BEARER = /\b(Bearer|Basic)\s+[A-Za-z0-9\-._~+/]+=*/g;
+/** A named credential inside free text. The field name and separator survive. */
+const NAMED_SECRET =
+  /\b(authorization|x-api-key|api[_ -]?key|token|secret|password|cookie)(\s*[:=]\s*)(?!(?:Bearer|Basic)\s+\[REDACTED\])[^\s,;]+/gi;
+
+/** Redacts HTTP and named credentials from free text before it enters a log or event. */
+export function redactText(value: string): string {
+  return value.replace(BEARER, `$1 ${REDACTED}`).replace(NAMED_SECRET, `$1$2${REDACTED}`);
+}
 
 /**
  * The default Logger. It writes one JSON line per call to the Worker console, so Workers Observability
