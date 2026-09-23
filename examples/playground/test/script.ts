@@ -126,6 +126,26 @@ export const conciergeReplies: ReplyScript = ({ request }) => {
   return roast ? `You like a ${roast} roast.` : "I do not know your preferences yet.";
 };
 
+/**
+ * The script of the Usage and logging scenario. A ticket prompt looks up T-9. Other prompts answer in text and
+ * can report a cost.
+ */
+export const observabilityReplies: ReplyScript = ({ request }) => {
+  const turn = request.messages.slice(request.messages.findLastIndex((message) => message.role === "user"));
+  const asked = JSON.stringify(turn[0]).toLowerCase();
+  const results = turn.filter((message) => message.role === "toolResult");
+  if (asked.includes("ticket") || asked.includes("look up"))
+    return results.length === 0 ? [reply.toolCall("lookup_ticket", { ticketId: "T-9" })] : "Ticket T-9 is open.";
+  return [
+    reply.text("This Thread has the Usage records of its model calls."),
+    reply.usage({
+      input: 8,
+      output: 6,
+      cost: { amount: 0.0042, currency: "USD", source: "openrouter", basis: "billed" },
+    }),
+  ];
+};
+
 /** The script of the browser checks. It selects the replies from the Prompt, thus one Provider serves each scenario. */
 export const playgroundReplies: ReplyScript = (ctx) => {
   const system = ctx.request.system ?? "";
@@ -136,6 +156,7 @@ export const playgroundReplies: ReplyScript = (ctx) => {
   if (system.includes("ledger") || system.includes("compacting")) return ledgerReplies(ctx);
   if (system.includes("manage a small shop") || system.includes("purchase desk")) return delegationReplies(ctx);
   if (system.includes("concierge")) return conciergeReplies(ctx);
+  if (system.includes("Usage desk") || system.includes("Do not invent a cost")) return observabilityReplies(ctx);
   if (system.includes("attached file")) return "I received the sample file.";
   const days = /for (\d+) days/.exec(system)?.[1];
   return system.includes("pirate") ? `Arr, ye have ${days} days.` : `You can return it for ${days} days.`;

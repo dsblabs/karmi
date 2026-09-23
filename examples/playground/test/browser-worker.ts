@@ -3,6 +3,7 @@ import { fakeProvider } from "@karmi/core/testing";
 import { env } from "cloudflare:workers";
 import { createPlayground } from "../src/app";
 import { catalogue } from "../src/catalogue";
+import { playgroundLogger } from "../src/observability";
 import { playgroundReplies } from "./script";
 import { setup, TOKEN } from "./worker-options";
 
@@ -10,6 +11,7 @@ import { setup, TOKEN } from "./worker-options";
 // the scripted Provider itself.
 const karmi = createKarmi({
   catalogue: catalogue("fake/model"),
+  logger: playgroundLogger(),
   providers: { fake: fakeProvider(playgroundReplies) },
   defaults: { providers: { default: { adapter: "fake", models: ["*"] } } },
 });

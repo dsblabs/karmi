@@ -3,6 +3,7 @@ import { DISPATCH_PROMPTS, MAX_STEPS, TURNS } from "./dispatch";
 import { CONCIERGE_PROMPTS, MEMORY } from "./concierge";
 import { COMPACTION, CONTEXT, LEDGER_PROMPTS } from "./ledger";
 import { FORKS, FORKS_PROMPT } from "./media-forks";
+import { OBSERVABILITY, OBSERVABILITY_PROMPTS } from "./observability";
 import type { ProviderSetup } from "./provider-options";
 import { DELEGATION, PURCHASE_PROMPTS } from "./purchases";
 import { REFUND, REFUND_PROMPT } from "./refund";
@@ -179,7 +180,18 @@ export const SCENARIOS: readonly Scenario[] = [
     "AI Gateway needs a Cloudflare account.",
   ]),
   notBuilt("http", "HTTP and media", "WebSocket and reconnects"),
-  notBuilt("observability", "Observability", "Usage records, costs and logs"),
+  {
+    id: OBSERVABILITY,
+    group: "Observability",
+    title: "Usage records, costs and logs",
+    summary:
+      "Run a Turn and inspect Usage records with their Scope, Agent, User, Thread and seq. The page shows a cost only when the Provider or a gateway reported one. A sample UsageHandler receives each record at least once. A Tool log redacts credentials.",
+    built: true,
+    prerequisites: [],
+    needs: ["toolCalls"],
+    prompts: OBSERVABILITY_PROMPTS,
+    code: `${CODE}/src/observability.ts`,
+  },
   notBuilt("operations", "Development and operations", "Test kit, doctor, deployment and removal", [
     "Deployment needs a Cloudflare account.",
   ]),
@@ -254,6 +266,7 @@ const schedules = row(SCHEDULES);
 const compaction = row(COMPACTION);
 const delegation = row(DELEGATION);
 const memory = row(MEMORY);
+const observability = row(OBSERVABILITY);
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
@@ -347,6 +360,26 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Users of a Scope",
     "Scopes and credentials",
     "The Memory card lists each User with a stored Memory in the Scope.",
+  ),
+  observability(
+    "Usage records",
+    "Observability",
+    "The Usage records card lists each usage.recorded event with Scope, Agent, User, Thread and seq. A closed card shows the parent field of a Delegation child. This scenario does not start a child Thread.",
+  ),
+  observability(
+    "Reported costs",
+    "Observability",
+    "A record shows cost only when the Provider or gateway reported it. A missing cost is not zero and is not priced from tokens.",
+  ),
+  observability(
+    "UsageHandler delivery",
+    "Observability",
+    "The Queue delivers each record to the sample UsageHandler. A failed batch retries. A second delivery of the same threadId:seq is a duplicate.",
+  ),
+  observability(
+    "Logs and redaction",
+    "Observability",
+    "The lookup Tool logs credential-shaped fields. The stored line has markers. The redaction route shows `redactFields` on the same sample object.",
   ),
   turns("Capability grants", "Agents", `The longRunning grant gives the Turn ${String(MAX_STEPS)} Steps.`),
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),
