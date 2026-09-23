@@ -39,7 +39,7 @@ const schedulerSchema = { alarms };
  * The timed entries behind a Durable Object's single alarm. A handler may replace or cancel its own entry
  * while running, and the replacement survives the run.
  */
-class Scheduler {
+export class Scheduler {
   private readonly db: DrizzleSqliteDODatabase<typeof schedulerSchema>;
 
   constructor(

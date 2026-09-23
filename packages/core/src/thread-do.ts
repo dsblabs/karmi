@@ -1,5 +1,5 @@
 import { decodeSocketAttachment, handleSocketFrame, excludedEventTypes, type SocketAttachment } from "./thread-sockets";
-import { workspaceSandbox } from "./container-workspace";
+import { ThreadWorkspace } from "./thread-workspace";
 import { cloudflareContainer } from "./cloudflare-container";
 import { containerLimits, type ContainerLimits } from "./container-types";
 import { knowledgeTools, knowledgeFragments } from "./knowledge-tools";
@@ -406,7 +406,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       });
       return;
     }
-    await this.destroyWorkspace(this.row());
+    await this.workspace(this.row()).destroy();
     const bucket = this.env.KARMI_MEDIA;
     if (bucket)
       for (const prefix of keys.threadObjects(address.scope, address.threadId)) {
@@ -428,15 +428,15 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     ).threadForget(address.scope, address.threadId);
     if (!forgotten.ok) throw new KarmiError(forgotten.code, forgotten.message);
     // Each module empties the tables that it owns. The Durable Object names only the tables that have no module.
+    const workspace = this.workspace(this.row());
     this.db.transaction((tx) => {
-      tx.delete(threadSchema.containerRuns).run();
-      tx.delete(threadSchema.containerWorkspaces).run();
       tx.delete(threadSchema.threads).run();
       tx.delete(threadSchema.alarms).run();
       this.log.clear();
       this.inputs.clear();
       this.usageOutbox.clear();
       this.deliveries.clear();
+      workspace.clear();
       this.delegations.clear();
       this.scheduleStore.clear();
     });
@@ -931,8 +931,11 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   protected override async runAlarm(alarm: ScheduledAlarm): Promise<void> {
-    if (alarm.kind === "container-idle") return this.destroyWorkspace(this.row());
-    if (alarm.kind === "container-watchdog") return this.pollContainer();
+    if (alarm.kind === "container-idle" || alarm.kind === "container-watchdog") {
+      const row = this.row();
+      if (await this.workspace(row).alarm(alarm.kind)) await this.settle(row);
+      return;
+    }
     if (alarm.kind === "thread-cleanup") return this.cleanup(decodeCleanup(alarm.payload));
     if (this.db.select({ id: threadSchema.deletedThreads.id }).from(threadSchema.deletedThreads).get()) return;
     if (alarm.kind === "delivery") return this.queueDelivery(decodeDeliveryAlarm(alarm.payload));
@@ -1073,7 +1076,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private async finish(row: ThreadRow, end: TurnEnd): Promise<void> {
-    if (end.type !== "turn.paused") await this.destroyWorkspace(row);
+    if (end.type !== "turn.paused") await this.workspace(row).destroy();
     this.append(row.turn, end, this.log.turnInput(row.turn)?.channelRef);
     if (end.type === "turn.paused") this.update({ state: "parked" });
     else
@@ -2762,132 +2765,46 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     );
   }
 
-  private containerSandbox(row: ThreadRow, snapshot: TurnSnapshot) {
-    if (!this.deployment.sandbox || !snapshot.container) return undefined;
+  /** The container Workspace of this Thread, bound to the row and to the snapshot of its Turn. */
+  private workspace(
+    row: ThreadRow,
+    snapshot = row.snapshot_json ? decodeSnapshot(row.snapshot_json) : undefined,
+  ): ThreadWorkspace {
     const id = keys.workspace(row.scope_id, row.thread_id);
-    const driver =
-      this.deployment.sandbox.driver?.(id) ??
-      (this.env.KARMI_SANDBOX && cloudflareContainer(this.env.KARMI_SANDBOX, id));
-    if (!driver) return undefined;
-    return workspaceSandbox(
-      {
-        readRun: () =>
-          this.db
-            .select({ value: threadSchema.containerRuns.value })
-            .from(threadSchema.containerRuns)
-            .where(eq(threadSchema.containerRuns.id, 1))
-            .get()?.value,
-        saveRun: (run) =>
-          this.db
-            .insert(threadSchema.containerRuns)
-            .values({ id: 1, value: run })
-            .onConflictDoUpdate({ target: threadSchema.containerRuns.id, set: { value: run } })
-            .run(),
-        clearRun: () => {
-          this.db.delete(threadSchema.containerRuns).run();
-        },
-        hasStartedJob: (jobId) => this.log.hasStartedJob(jobId),
-        scope: row.scope_id,
-        threadId: row.thread_id,
-        bucket: this.env.KARMI_MEDIA,
-        media: snapshot.media,
-        now: () => this.deployment.clock.now(),
-        append: (event) => this.append(row.turn, event, this.log.turnInput(row.turn)?.channelRef),
-        schedule: () => this.armContainerWatchdog(),
-      },
-      driver,
-      snapshot.container,
-      snapshot.spec.capabilities?.scripts?.egress?.allow ?? [],
-    );
-  }
-
-  private async reserveWorkspace(row: ThreadRow, limits: ContainerLimits | undefined): Promise<void> {
-    if (!limits) throw new Error("Container limits are unavailable.");
-    // Persist cleanup intent before the remote reservation so eviction cannot leak a Scope slot.
-    this.db.insert(threadSchema.containerWorkspaces).values({ id: 1 }).onConflictDoNothing().run();
-    this.scheduler.cancel("container-idle");
-    const reserved = await this.scopeStub(row).reserveContainer(row.scope_id, row.thread_id);
-    if (!reserved.ok) throw new KarmiError(reserved.code, reserved.message);
-  }
-
-  private scheduleWorkspaceIdle(limits: ContainerLimits | undefined): void {
-    if (limits)
-      this.scheduler.set({
-        id: "container-idle",
-        kind: "container-idle",
-        dueAt: this.deployment.clock.now() + limits.idleMs,
-        payload: {},
-      });
-  }
-
-  private armContainerWatchdog(): void {
-    this.scheduler.set({
-      id: "container-watchdog",
-      kind: "container-watchdog",
-      dueAt: this.deployment.clock.now() + 5000,
-      payload: {},
-    });
-  }
-
-  private async pollContainer(): Promise<void> {
-    if (this.active) {
-      this.armContainerWatchdog();
-      return;
-    }
-    const row = this.row();
-    if (!row.snapshot_json) return;
-    const snapshot = decodeSnapshot(row.snapshot_json);
-    const sandbox = this.containerSandbox(row, snapshot);
-    if (!sandbox) return;
-    const record = this.db
-      .select({ value: threadSchema.containerRuns.value })
-      .from(threadSchema.containerRuns)
-      .where(eq(threadSchema.containerRuns.id, 1))
-      .get();
-    if (!record) return;
-    const run = record.value;
-    const pending = [...this.readTurn(row).jobs.values()].find((job) => job.jobId === run.processId && !job.outcome);
-    if (!pending) return;
-    const result = await sandbox.poll(run);
-    if (!result) {
-      this.armContainerWatchdog();
-      return;
-    }
-    this.scheduleWorkspaceIdle(snapshot.container);
-    this.db.transaction(() => {
-      this.append(
-        row.turn,
-        result.error
-          ? { type: "job.failed", jobId: pending.jobId, message: result.error.message }
-          : {
-              type: "job.completed",
-              jobId: pending.jobId,
-              result: { content: [{ type: "text", text: JSON.stringify(result) }] },
-            },
-        this.log.turnInput(row.turn)?.channelRef,
-      );
-      sandbox.acknowledge();
-      this.scheduler.cancel("container-watchdog");
-    });
-    await this.settle(row);
-  }
-
-  private async destroyWorkspace(row: ThreadRow): Promise<void> {
-    if (!this.db.select({ id: threadSchema.containerWorkspaces.id }).from(threadSchema.containerWorkspaces).get())
-      return;
-    if (row.snapshot_json) await this.containerSandbox(row, decodeSnapshot(row.snapshot_json))?.cancel();
-    else {
-      const id = keys.workspace(row.scope_id, row.thread_id);
-      const driver =
+    return new ThreadWorkspace({
+      db: this.db,
+      scheduler: this.scheduler,
+      scope: row.scope_id,
+      threadId: row.thread_id,
+      bucket: this.env.KARMI_MEDIA,
+      now: () => this.deployment.clock.now(),
+      driver: () =>
         this.deployment.sandbox?.driver?.(id) ??
-        (this.env.KARMI_SANDBOX && cloudflareContainer(this.env.KARMI_SANDBOX, id));
-      if (!driver) throw new Error("Cannot destroy the Workspace without its container runtime.");
-      await driver.destroy();
-    }
-    await this.scopeStub(row).releaseContainer(row.scope_id, row.thread_id);
-    this.db.delete(threadSchema.containerWorkspaces).run();
-    this.scheduler.cancel("container-watchdog");
-    this.scheduler.cancel("container-idle");
+        (this.env.KARMI_SANDBOX ? cloudflareContainer(this.env.KARMI_SANDBOX, id) : undefined),
+      turn: () => {
+        if (!this.deployment.sandbox || !snapshot?.container) return undefined;
+        return {
+          limits: snapshot.container,
+          media: snapshot.media,
+          allow: snapshot.spec.capabilities?.scripts?.egress?.allow ?? [],
+        };
+      },
+      reserve: () => this.scopeStub(row).reserveContainer(row.scope_id, row.thread_id),
+      release: () => this.scopeStub(row).releaseContainer(row.scope_id, row.thread_id),
+      busy: () => this.active,
+      hasStartedJob: (jobId) => this.log.hasStartedJob(jobId),
+      pendingJob: (processId) =>
+        [...this.readTurn(row).jobs.values()].find((job) => job.jobId === processId && !job.outcome)?.jobId,
+      append: (event) => this.append(row.turn, event, this.log.turnInput(row.turn)?.channelRef),
+      recordJob: (jobId, result) =>
+        this.append(
+          row.turn,
+          result.error
+            ? { type: "job.failed", jobId, message: result.error.message }
+            : { type: "job.completed", jobId, result: { content: [{ type: "text", text: JSON.stringify(result) }] } },
+          this.log.turnInput(row.turn)?.channelRef,
+        ),
+    });
   }
 
   private scriptExecution(row: ThreadRow, snapshot: TurnSnapshot) {
@@ -2896,14 +2813,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       return {
         scripts: {
           sandbox: {
-            run: async (request: import("./sandbox").SandboxRequest) => {
-              const sandbox = this.containerSandbox(row, snapshot);
-              if (!sandbox) throw new Error("Container Scripts require KARMI_SANDBOX and sandbox.image.");
-              await this.reserveWorkspace(row, snapshot.container);
-              const result = await sandbox.run(request);
-              if (!("pending" in result)) this.scheduleWorkspaceIdle(snapshot.container);
-              return result;
-            },
+            run: (request: import("./sandbox").SandboxRequest) => this.workspace(row, snapshot).run(request),
           },
           limits: snapshot.scripts,
           result: async () => {
