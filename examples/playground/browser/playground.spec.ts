@@ -490,7 +490,7 @@ test("the second sample Scope has no Memory of the User, and a key of it is not 
   await expect(page.locator("#target option:checked")).toHaveText("Send in the Scope sample-a");
 });
 
-test("usage records show attribution and cost, the handler deduplicates, and logs redact credentials", async ({
+test("usage records show attribution, tokens and cost, the handler skips a duplicate, and logs redact credentials", async ({
   page,
 }) => {
   await openScenario(page, "observability");
@@ -503,10 +503,11 @@ test("usage records show attribution and cost, the handler deduplicates, and log
   await expect(page.locator("#usage")).toContainText("observability");
   await expect(page.locator("#usage")).toContainText("operator");
   await expect(page.locator("#usage")).toContainText("0.0042 USD");
-  await expect(page.locator("#handler")).toContainText("accepted", { timeout: 15_000 });
+  await expect(page.locator("#usage")).toContainText("8 in, 6 out");
+  await expect(page.locator("#handler")).toContainText("stored", { timeout: 15_000 });
 
   await page.getByRole("button", { name: "Deliver the last batch again" }).click();
-  await expect(page.locator("#handler")).toContainText("yes");
+  await expect(page.locator("#handler")).toContainText("duplicate, skipped");
 
   await page.getByRole("button", { name: "Look up a ticket", exact: true }).click();
   await page.getByRole("button", { name: "Run" }).click();
@@ -522,4 +523,16 @@ test("usage records show attribution and cost, the handler deduplicates, and log
   await page.getByRole("button", { name: "Reset scenario" }).click();
   await expect(page.locator("#usage")).toContainText("No model call ran yet");
   await expect(page.locator("#handler")).toContainText("No batch has reached");
+  await expect(page.getByRole("button", { name: "Deliver the last batch again" })).toBeHidden();
+});
+
+test("a reconnect timer of the Schedules page does not take the stream of the next view", async ({ page }) => {
+  await openScenario(page, "schedules");
+  // The reset closes the socket of the Schedules page, and the page connects again after one second.
+  await page.goto("/#refund");
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.getByRole("button", { name: "Reset scenario" })).toBeEnabled();
+  await page.waitForTimeout(1500);
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator(".approval")).toContainText("refund_order");
 });

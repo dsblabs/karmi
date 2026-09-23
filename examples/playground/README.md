@@ -303,11 +303,11 @@ The scenario needs a model that supports Tool calls. A small model can answer fr
 Do these steps:
 
 1. Select **Run** with the **Spend** prompt. The **Usage records** card lists each `usage.recorded` event.
-2. Read Scope, Agent, User, Thread and `seq` on the record. The **Cost** line shows a reported cost, or that the Provider reported none.
-3. Read the **UsageHandler** card. The Queue delivers the batch. The key is `threadId:seq`.
-4. Select **Fail the next batch**, then **Run** again. The card shows a failed delivery. The Queue retries. The second delivery is accepted. The Turn does not fail.
-5. Select **Deliver the last batch again**. The card marks the second delivery as a duplicate.
-6. Select **Run** with the **Look up a ticket** prompt. The **Logs** card shows the line. The `apiKey` and `authorization` fields are `[REDACTED]`.
+2. Read the key, the model, the tokens, Scope, Agent and User on the record. The key is `threadId:seq`. The **Cost** line shows a reported cost, or that the Provider reported none.
+3. Read the **UsageHandler** card. The Queue delivers the batch, and the handler stores each record under its key.
+4. Select **Fail the next batch**, then **Run** again. The card shows a failed delivery. The Queue retries, and the handler stores the record. The Turn does not fail.
+5. Select **Deliver the last batch again**. The handler skips each key that it stored before. The card shows `duplicate, skipped`. The button shows after the handler stored a batch.
+6. Select **Run** with the **Look up a ticket** prompt. The **Logs** card shows the line with its level, its message and its fields. The `apiKey` and `authorization` fields are `[REDACTED]`.
 7. Select **Show redaction**. The card shows `redactFields` on the same sample object, before and after.
 8. Open **Example child Usage record**. The JSON has a `parent` field. This scenario does not start a child Thread.
 

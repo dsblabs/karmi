@@ -24,20 +24,6 @@ export const SAMPLE_LOG_FIELDS = {
   note: "Opened the ticket.",
 };
 
-/** One delivery of a Usage record to the sample UsageHandler. */
-export const deliverySchema = z.object({
-  key: z.string(),
-  status: z.enum(["failed", "accepted"]),
-  duplicate: z.boolean(),
-  record: z.object({
-    threadId: z.string(),
-    seq: z.number(),
-    scope: z.string(),
-    agent: z.string(),
-    user: z.string().optional(),
-  }),
-});
-
 /** The fields the sample UsageHandler stores for one record. */
 export const storedUsageSchema = z.object({
   threadId: z.string(),
@@ -47,21 +33,33 @@ export const storedUsageSchema = z.object({
   user: z.string().optional(),
 });
 
+/**
+ * One delivery of a Usage record to the sample UsageHandler. `stored` is the first delivery of its key, `duplicate`
+ * is a later one that the handler skips, and `failed` is a delivery that threw, thus the Queue delivers it again.
+ */
+export const deliverySchema = z.object({
+  key: z.string(),
+  status: z.enum(["failed", "stored", "duplicate"]),
+  record: storedUsageSchema,
+});
+
 /** The inspection data of the scenario. Reset restores the starting value. */
 export const inspectionSchema = z.object({
-  failNext: z.boolean(),
-  deliveries: z.array(deliverySchema),
+  failNext: z.boolean().default(false),
+  deliveries: z.array(deliverySchema).default([]),
 });
 
 /** The stored sample data of the scenario, including logs and the last delivered batch. */
 export const observabilityDataSchema = inspectionSchema.extend({
-  logs: z.array(
-    z.object({
-      level: z.string(),
-      message: z.string(),
-      fields: z.record(z.string(), z.unknown()),
-    }),
-  ),
+  logs: z
+    .array(
+      z.object({
+        level: z.string(),
+        message: z.string(),
+        fields: z.record(z.string(), z.unknown()),
+      }),
+    )
+    .default([]),
   lastRecords: z.array(storedUsageSchema).optional(),
   redaction: z
     .object({ before: z.record(z.string(), z.unknown()), after: z.record(z.string(), z.unknown()) })
@@ -72,9 +70,12 @@ export const observabilityDataSchema = inspectionSchema.extend({
 export type ObservabilityData = z.infer<typeof observabilityDataSchema>;
 
 /** The starting inspection data. Reset restores it. */
-export const STARTING_INSPECTION = { failNext: false, deliveries: [] as z.infer<typeof deliverySchema>[] };
+export const STARTING_INSPECTION: z.infer<typeof inspectionSchema> = { failNext: false, deliveries: [] };
 
 const startingData: ObservabilityData = { ...STARTING_INSPECTION, logs: [] };
+
+// The page shows the last deliveries and log lines only, thus the stored lists stay small.
+const KEEP = 50;
 
 /** Decodes the stored sample data. Data that is absent or not valid gives the starting inspection data. */
 export const decodeObservability = (data: string | undefined): ObservabilityData =>
@@ -111,13 +112,9 @@ export const OBSERVABILITY_PROMPTS = [
 
 const store = (scope: string) => sampleData(env.PLAYGROUND_DATA, scope, OBSERVABILITY);
 
-async function update(scope: string, mutate: (data: ObservabilityData) => ObservabilityData): Promise<void> {
-  const stub = store(scope);
-  const data = decodeObservability((await stub.read()).data);
-  await stub.write(JSON.stringify(mutate(data)));
-}
+type StoredUsage = z.infer<typeof storedUsageSchema>;
 
-function stamp(record: UsageRecord) {
+function stamp(record: UsageRecord): StoredUsage {
   return {
     threadId: record.threadId,
     seq: record.seq,
@@ -127,65 +124,47 @@ function stamp(record: UsageRecord) {
   };
 }
 
-type StoredUsage = z.infer<typeof storedUsageSchema>;
-
-async function ingest(records: StoredUsage[], status: "failed" | "accepted"): Promise<void> {
-  const first = records[0];
-  if (!first) return;
-  await update(first.scope, (data) => {
-    if (status === "failed") {
-      return {
-        ...data,
-        failNext: false,
-        deliveries: [
-          ...data.deliveries,
-          ...records.map((record) => ({
-            key: usageKey(record),
-            status,
-            duplicate: false,
-            record,
-          })),
-        ],
-      };
-    }
-    const seen = new Set(data.deliveries.filter((item) => item.status === "accepted").map((item) => item.key));
-    return {
-      ...data,
-      lastRecords: records,
-      deliveries: [
-        ...data.deliveries,
-        ...records.map((record) => {
-          const key = usageKey(record);
-          return { key, status, duplicate: seen.has(key), record };
-        }),
-      ],
-    };
-  });
+/**
+ * Stores one delivery of each record. A key that the handler stored before is a duplicate. A real handler makes
+ * this check in the same write as the record, for example with a unique index on the key.
+ */
+async function deliver(
+  stub: DurableObjectStub<SampleDataDO>,
+  data: ObservabilityData,
+  records: StoredUsage[],
+  failed: boolean,
+): Promise<void> {
+  const stored = new Set(data.deliveries.filter((item) => item.status === "stored").map((item) => item.key));
+  for (const record of records) {
+    const key = usageKey(record);
+    const status = failed ? "failed" : stored.has(key) ? "duplicate" : "stored";
+    if (status === "stored") stored.add(key);
+    await stub.push("deliveries", JSON.stringify({ key, status, record } satisfies Delivery), KEEP);
+  }
 }
+
+type Delivery = z.infer<typeof deliverySchema>;
 
 /**
  * The sample UsageHandler of the Playground. It stores deliveries of this scenario. A thrown error retries the
- * batch. A second delivery of the same `threadId:seq` is a duplicate.
+ * batch. A second delivery of the same `threadId:seq` is a duplicate, and the handler skips it.
  */
 export const sampleUsageHandler = defineUsageHandler({
   async onUsage(records) {
     const mine = records.filter((record) => record.agent === OBSERVABILITY).map(stamp);
     const first = mine[0];
     if (!first) return;
-    const data = decodeObservability((await store(first.scope).read()).data);
+    const stub = store(first.scope);
+    const data = decodeObservability((await stub.read()).data);
     if (data.failNext) {
-      await ingest(mine, "failed");
+      await stub.set("failNext", "false");
+      await deliver(stub, data, mine, true);
       throw new Error("The sample UsageHandler failed this batch.");
     }
-    await ingest(mine, "accepted");
+    await deliver(stub, data, mine, false);
+    await stub.set("lastRecords", JSON.stringify(mine));
   },
 });
-
-async function appendLog(level: string, message: string, fields: Record<string, unknown>): Promise<void> {
-  const scope = fields.scope;
-  if (typeof scope !== "string") return;
-  await update(scope, (data) => ({ ...data, logs: [...data.logs, { level, message, fields }] }));
-}
 
 /**
  * The Deployment Logger of the Playground. It writes JSON lines to the Worker console and stores redacted
@@ -197,7 +176,9 @@ export function playgroundLogger(): Logger {
     (level: keyof Logger) =>
     (message: string, fields?: Record<string, unknown>): void => {
       base[level](message, fields);
-      if (fields?.agent === OBSERVABILITY) void appendLog(level, message, fields);
+      const scope = fields?.scope;
+      if (fields?.agent === OBSERVABILITY && typeof scope === "string")
+        void store(scope).push("logs", JSON.stringify({ level, message, fields }), KEEP);
     };
   return {
     debug: forward("debug"),
@@ -238,27 +219,20 @@ export const observabilityAgent = (model: string) =>
 
 /** Sets the sample UsageHandler to fail the next batch of this scenario. */
 export async function failNextDelivery(stub: DurableObjectStub<SampleDataDO>): Promise<void> {
-  const data = decodeObservability((await stub.read()).data);
-  await stub.write(JSON.stringify({ ...data, failNext: true } satisfies ObservabilityData));
+  await stub.set("failNext", "true");
 }
 
-/** Delivers the last accepted batch again, so the page can show a duplicate. */
+/** Delivers the last stored batch again, so the page can show a duplicate. */
 export async function replayLastBatch(stub: DurableObjectStub<SampleDataDO>): Promise<Response | undefined> {
   const data = decodeObservability((await stub.read()).data);
   const records = data.lastRecords ?? [];
   if (records.length === 0)
     return routeError(409, "playground.noUsageBatch", "No UsageHandler batch is stored yet. Run a prompt first.");
-  await ingest(records, "accepted");
+  await deliver(stub, data, records, false);
   return undefined;
 }
 
 /** Stores the redacted copy of the sample log fields for the page. */
 export async function storeRedaction(stub: DurableObjectStub<SampleDataDO>): Promise<void> {
-  const data = decodeObservability((await stub.read()).data);
-  await stub.write(
-    JSON.stringify({
-      ...data,
-      redaction: { before: SAMPLE_LOG_FIELDS, after: redactFields(SAMPLE_LOG_FIELDS) },
-    } satisfies ObservabilityData),
-  );
+  await stub.set("redaction", JSON.stringify({ before: SAMPLE_LOG_FIELDS, after: redactFields(SAMPLE_LOG_FIELDS) }));
 }

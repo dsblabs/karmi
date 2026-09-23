@@ -78,9 +78,9 @@ async function run(text: string): Promise<string> {
   return threadKey;
 }
 
-async function accepted(count: number) {
+async function stored(count: number) {
   await expect
-    .poll(async () => (await state()).handler.deliveries.filter((item) => item.status === "accepted").length, {
+    .poll(async () => (await state()).handler.deliveries.filter((item) => item.status === "stored").length, {
       timeout: 10_000,
     })
     .toBe(count);
@@ -95,7 +95,7 @@ describe("the Usage and logging scenario", () => {
   it("shows Usage records with Scope, Agent, User, Thread and seq, and omits cost when the Provider reports none", async () => {
     provider.script(["Ticket T-9 is open."]);
     await run("What is the spend?");
-    const now = await accepted(1);
+    const now = await stored(1);
     const [record] = now.usage;
     expect(record).toMatchObject({
       type: "usage.recorded",
@@ -115,14 +115,14 @@ describe("the Usage and logging scenario", () => {
     const cost = { amount: 0.0042, currency: "USD" as const, source: "openrouter" as const, basis: "billed" as const };
     provider.script([[reply.text("Priced."), reply.usage({ input: 8, output: 6, cost })]]);
     await run("What did this call cost?");
-    const now = await accepted(1);
+    const now = await stored(1);
     expect(now.usage[0]?.cost).toEqual(cost);
   });
 
   it("uses the browser script to report a cost on the Spend prompt", async () => {
     provider.script(playgroundReplies);
     await run("What is the spend of this Thread so far?");
-    const now = await accepted(1);
+    const now = await stored(1);
     expect(now.usage[0]?.cost).toEqual({
       amount: 0.0042,
       currency: "USD",
@@ -141,20 +141,40 @@ describe("the Usage and logging scenario", () => {
         timeout: 10_000,
       })
       .toBe(true);
-    const after = await accepted(1);
+    const after = await stored(1);
     expect(new Set(after.handler.deliveries.map((item) => item.key)).size).toBe(1);
-    expect(after.handler.deliveries.some((item) => item.status === "failed")).toBe(true);
-    expect(after.handler.deliveries.some((item) => item.status === "accepted" && !item.duplicate)).toBe(true);
+    expect(after.handler.deliveries.map((item) => item.status)).toEqual(["failed", "stored"]);
+    expect(after.handler.failNext).toBe(false);
   });
 
-  it("marks a second delivery of the same record as a duplicate", async () => {
+  it("skips a second delivery of the same record as a duplicate", async () => {
     provider.script(["Ticket T-9 is open."]);
     await run("What is the spend?");
-    await accepted(1);
+    await stored(1);
     expect((await api("POST", `${PATH}/replay`)).status).toBe(200);
     const now = await state();
-    expect(now.handler.deliveries.filter((item) => item.duplicate)).toHaveLength(1);
-    expect(now.handler.deliveries.filter((item) => item.status === "accepted")).toHaveLength(2);
+    expect(now.handler.deliveries.map((item) => item.status)).toEqual(["stored", "duplicate"]);
+  });
+
+  it("answers 409 to a replay before any batch arrived", async () => {
+    expect((await api("POST", `${PATH}/replay`)).status).toBe(409);
+  });
+
+  it("keeps each log line when two Tool calls log at the same time", async () => {
+    provider.script([
+      [
+        reply.toolCall("lookup_ticket", { ticketId: "T-9" }, "t1"),
+        reply.toolCall("lookup_ticket", { ticketId: "T-8" }, "t2"),
+      ],
+      "Both tickets are looked up.",
+    ]);
+    await run("Look up tickets T-9 and T-8.");
+    await stored(2);
+    await expect
+      .poll(async () => (await state()).logs.filter((entry) => entry.message.includes("ticket")).length, {
+        timeout: 10_000,
+      })
+      .toBe(2);
   });
 
   it("stores redacted logs and redacts a sample object at the route", async () => {
@@ -192,7 +212,7 @@ describe("the Usage and logging scenario", () => {
   it("clears this scenario on reset and leaves other usage and credentials", async () => {
     provider.script(["Ticket T-9 is open."]);
     await run("What is the spend?");
-    await accepted(1);
+    await stored(1);
     const credentials = karmi.scope("sample-a").credentials;
     await credentials.put("kept", "secret-value");
     await api("POST", "/api/scenarios/refund/reset");

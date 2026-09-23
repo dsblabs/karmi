@@ -38,6 +38,28 @@ export class SampleDataDO extends DurableObject {
     await this.ctx.storage.put("data", JSON.stringify([...list, added]));
   }
 
+  /**
+   * Sets one field of the sample data, which is a JSON object, to this JSON text. One call is atomic, thus it
+   * loses no change that a different caller made to a different field at the same time.
+   */
+  async set(field: string, value: string): Promise<void> {
+    const data = decodeSample(fieldObject, {}, await this.ctx.storage.get<string>("data"));
+    const next: unknown = JSON.parse(value);
+    await this.ctx.storage.put("data", JSON.stringify({ ...data, [field]: next }));
+  }
+
+  /**
+   * Adds one item to the list in one field of the sample data, which is a JSON object, and keeps only the last
+   * `keep` items. One call is atomic, thus two callers at the same time lose no item.
+   */
+  async push(field: string, item: string, keep: number): Promise<void> {
+    const data = decodeSample(fieldObject, {}, await this.ctx.storage.get<string>("data"));
+    const current = data[field];
+    const list: unknown[] = Array.isArray(current) ? current : [];
+    const added: unknown = JSON.parse(item);
+    await this.ctx.storage.put("data", JSON.stringify({ ...data, [field]: [...list, added].slice(-keep) }));
+  }
+
   /** Deletes the sample data and returns the next generation. */
   async reset(): Promise<number> {
     const generation = ((await this.ctx.storage.get<number>("generation")) ?? 0) + 1;
@@ -49,6 +71,9 @@ export class SampleDataDO extends DurableObject {
 
 // The list that `append` keeps. It checks only the id, because the scenario decodes each other part of an item.
 const itemList = z.array(z.looseObject({ id: z.string() }));
+
+// The object that `set` and `push` change. They check only the shape, because the scenario decodes each field.
+const fieldObject = z.record(z.string(), z.unknown());
 
 /**
  * Decodes the stored sample data of one scenario with its schema. Data that is absent or not valid gives the
