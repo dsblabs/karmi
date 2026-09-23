@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has eleven browser scenarios:
+This version has twelve browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -15,6 +15,7 @@ This version has eleven browser scenarios:
 - **User Memory and Scope isolation**
 - **Usage records, costs and logs**
 - **Isolate Scripts**
+- **Knowledge ingestion and document search**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -297,6 +298,41 @@ The state stays until you select **Reset scenario**. A reset cancels and deletes
 
 The scenario needs a model that supports Tool calls. A small model can answer from its own guess in place of the Memory Fragment. Check the event log: an answer from the Fragment has no Tool call. The Agent is in [`src/concierge.ts`](./src/concierge.ts). The routes are in [`src/memory-routes.ts`](./src/memory-routes.ts). The mapping of the token to a Scope is in [`src/app.ts`](./src/app.ts).
 
+## The Knowledge scenario
+
+**Knowledge ingestion and document search** has a librarian Agent with a `knowledge` block in its Spec. The block names two corpora of the sample Scope:
+
+| Corpus | Mode | What the Agent gets |
+| --- | --- | --- |
+| `handbook` | `search` | The read-only Tool `search_handbook`. It returns the Passages of the Retriever as JSON. |
+| `notices` | `inline` | The full text of the corpus in its Prompt, under `# Knowledge: notices`, at the start of each Turn. |
+
+The Retriever is the built-in `fts5Retriever`: SQLite full-text search with BM25 ranking. It returns at most 10 Passages and needs no external service. A query word must occur in a document.
+
+The scenario starts with three handbook documents and two notices. The **Corpus** cards list the documents that the scenario ingested. The Framework has no route that lists the documents of a corpus, thus the list is sample data of the scenario. The corpus itself is in the Knowledge Durable Object of the Framework.
+
+Do these steps:
+
+1. Select **Search the handbook** in the **Passages of a search** card. The card shows the Passages that `scope.knowledge("handbook").search` returned. Each Passage has `docId`, `text`, `score`, `seq` and the `metadata` of its document. A higher `score` is a better match.
+2. Select **Run** with the **Search** prompt. The Agent calls `search_handbook`. The Tool result has the same Passages, and the answer names the document id. No Approval stops the call, because the Tool is read-only.
+3. Select **Update the refund policy** in the **Ingest a document** card, then **Ingest the document**. The document keeps its id, thus the new text replaces the old one. Search again: the Passage has the new text, and the Agent answers with it.
+4. Select **Run** with the **Inline** prompt. The Agent answers from the notices in its Prompt, with no Tool call. Open **Event log**: the Turn has no `tool.call`. The **Corpus notices** card shows the text that the Prompt gets.
+5. Select **Add a notice over the inline limit**, then **Ingest the document**. The card shows the error of `inline()`. Run the **Inline** prompt again: the Turn fails with the message of the limit. Select **Delete** on the document `long`, and the next Turn works again.
+6. Select **Ingest 40 handbook pages** in the **Bulk ingest Job** card. An ingest of more than 32 documents returns `{ pending: jobId }`. The card shows the progress of the Job, which the page reads each second. While the Job is pending, each other write to the corpus gets a `409` answer with the code `knowledge.busy`. Search for `lot 3` during the Job: a search sees each document that the Job committed.
+7. Select **Run** with the **Bulk** prompt after the Job completed. The Agent finds the page of bean lot 12.
+8. Select **Delete** on a document. A search no longer finds it. Select **Destroy the corpus**. The corpus leaves the list in **Corpora of the Scope**, which `scope.knowledge.list` gives. The Tool stays, because the Agent Spec names the corpus, and a search finds nothing. The next ingest makes the corpus again.
+
+Inline and search differ in what the model sees and in their limits:
+
+- With `inline`, the model sees the full corpus in each Turn and needs no Tool call. The corpus must stay under 32,000 Unicode code points, the exported constant `KNOWLEDGE_INLINE_LIMIT`. Over it, the Turn fails before the model call.
+- With `search`, the model sees only the Passages that its query matches. The corpus has no size limit, and a Tool call and its Step come with each search.
+
+Vector and hybrid retrieval are not in the scenario. They need Workers AI through the `KARMI_AI` binding, or a Vectorize index, which local development does not have. The **Feature coverage** page lists them without a scenario.
+
+The state stays until you select **Reset scenario**. A reset destroys each corpus, cancels and deletes the Thread and ingests the starting documents again. The Framework refuses a destroy while an ingest Job is pending. Thus a reset during a bulk ingest gets a `409` answer with the code `knowledge.busy`, and it changes nothing. Wait for the Job, then reset again. A reset does not change another scenario or a Provider credential.
+
+The scenario needs a model that supports Tool calls. A small model can answer from its own guess in place of a search. Check the event log for the `search_handbook` call. The Agent and the sample documents are in [`src/librarian.ts`](./src/librarian.ts). The routes are in [`src/knowledge-routes.ts`](./src/knowledge-routes.ts).
+
 ## The Usage and logging scenario
 
 **Usage records, costs and logs** runs one Agent and a sample UsageHandler. The Agent has the Tool `lookup_ticket`. That Tool logs credential-shaped fields. karmi redacts them before the Logger stores the line.
@@ -352,7 +388,7 @@ The scenario needs a model that supports Tool calls. A small model can change th
 
 ## Model limits
 
-These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Usage and logging, and isolate Scripts.
+These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Knowledge, Usage and logging, and isolate Scripts.
 
 The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 

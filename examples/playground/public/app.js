@@ -1380,6 +1380,248 @@ function scriptCards({ orders, grant, policy, runs }) {
   ];
 }
 
+// What the operator typed in the ingest form. The side column renders again when its data changes.
+const ingestForm = { corpus: "handbook", id: "", title: "", text: "" };
+
+// The documents that the chips of the ingest form fill in. The last one is over the inline limit on purpose.
+const INGEST_PRESETS = [
+  {
+    label: "Update the refund policy",
+    corpus: "handbook",
+    id: "refunds",
+    title: "Refund policy",
+    text: "A customer can return a product within 14 days of the purchase. The shop refunds the price as shop credit.",
+  },
+  {
+    label: "Add a handbook page",
+    corpus: "handbook",
+    id: "grinder",
+    title: "Grinder care",
+    text: "Clean the grinder each Friday after the close. Run one dose of rice through it before the clean.",
+  },
+  {
+    label: "Add a notice over the inline limit",
+    corpus: "notices",
+    id: "long",
+    title: "A long notice",
+    text: "This notice is longer than the inline limit. ".repeat(750),
+  },
+];
+
+/** The Knowledge scenario: one card for each corpus, the Passages of a search, the ingest form and the bulk Job. */
+function knowledgeCards({ corpora, known, inlineLimit, bulkSize, job, search }, onChanged, isCurrent) {
+  const path = "/api/scenarios/knowledge";
+  const changed = (note) => (next) => isCurrent() && onChanged(next, note);
+  const corpusCard = (corpus) => {
+    const result = el("p", { className: "fine" });
+    return el(
+      "div",
+      { className: "card titled", id: `corpus-${corpus.name}` },
+      el("h3", {}, `Corpus ${corpus.name}`, badge(corpus.mode)),
+      el("p", {
+        className: "fine",
+        textContent:
+          corpus.mode === "search"
+            ? `The Agent has the read-only Tool ${corpus.tool}. It returns the Passages of the Retriever as JSON.`
+            : "The Harness puts the full text of this corpus in the Prompt at the start of each Turn. The Agent needs no Tool call for it.",
+      }),
+      el("h4", { textContent: `Documents (${corpus.documents.length})` }),
+      corpus.documents.length > 0
+        ? el(
+            "ul",
+            {},
+            ...corpus.documents.map((doc) =>
+              el(
+                "li",
+                {},
+                el("code", { textContent: doc.id }),
+                ` ${doc.title || "Without a title"}, ${doc.chars} code points `,
+                Object.assign(
+                  cardAction(
+                    "Delete",
+                    () => api("POST", `${path}/delete`, { corpus: corpus.name, id: doc.id }),
+                    changed(`The corpus ${corpus.name} no longer has ${doc.id}.`),
+                    result,
+                  ),
+                  { className: "quiet", ariaLabel: `Delete ${doc.id} from ${corpus.name}` },
+                ),
+              ),
+            ),
+          )
+        : el("p", { className: "muted", textContent: "The corpus has no document. Ingest one below." }),
+      corpus.inline?.error &&
+        el("p", { className: "error", textContent: `The next Turn fails: ${corpus.inline.error}` }),
+      corpus.inline && !corpus.inline.error && el("h4", { textContent: "What the Prompt gets" }),
+      corpus.inline &&
+        !corpus.inline.error &&
+        el("pre", { textContent: corpus.inline.text || "Nothing. The corpus is empty." }),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          "Destroy the corpus",
+          () => api("POST", `${path}/destroy`, { corpus: corpus.name }),
+          changed(`The Scope no longer has the corpus ${corpus.name}. Ingest a document to make it again.`),
+          result,
+        ),
+      ),
+      result,
+      el("p", {
+        className: "fine",
+        textContent:
+          corpus.mode === "search"
+            ? "A search finds a deleted document no longer. Destroy removes the corpus and its index. The Tool stays, because the Agent Spec names the corpus."
+            : `The inline limit is ${inlineLimit.toLocaleString()} Unicode code points. A corpus over it fails the Turn. Use search for a large corpus.`,
+      }),
+    );
+  };
+  const searchResult = el("p", { className: "fine" });
+  const query = el("input", {
+    id: "query",
+    type: "text",
+    ariaLabel: "Search query",
+    value: search?.query ?? "return product",
+    spellcheck: false,
+  });
+  const corpusSelect = el(
+    "select",
+    { id: "ingest-corpus", ariaLabel: "Corpus" },
+    ...corpora.map((corpus) => el("option", { value: corpus.name, textContent: corpus.name })),
+  );
+  const docId = el("input", { id: "ingest-id", type: "text", ariaLabel: "Document id", spellcheck: false });
+  const title = el("input", { id: "ingest-title", type: "text", ariaLabel: "Document title" });
+  const text = el("textarea", { id: "ingest-text", ariaLabel: "Document text" });
+  const fill = (values) => {
+    Object.assign(ingestForm, values);
+    corpusSelect.value = ingestForm.corpus;
+    docId.value = ingestForm.id;
+    title.value = ingestForm.title;
+    text.value = ingestForm.text;
+  };
+  fill({});
+  for (const [field, element] of [
+    ["corpus", corpusSelect],
+    ["id", docId],
+    ["title", title],
+    ["text", text],
+  ])
+    element.oninput = () => (ingestForm[field] = element.value);
+  const ingestResult = el("p", { className: "fine" });
+  const bulkResult = el("p", { className: "fine" });
+  return [
+    ...corpora.map(corpusCard),
+    el(
+      "div",
+      { className: "card titled", id: "passages" },
+      el(
+        "h3",
+        {},
+        "Passages of a search",
+        el("span", { className: "badge", textContent: String(search?.passages.length ?? 0) }),
+      ),
+      el(
+        "div",
+        { className: "row" },
+        query,
+        cardAction(
+          "Search the handbook",
+          () => api("POST", `${path}/search`, { query: query.value.trim() }),
+          changed("The Retriever returned these Passages. The search_handbook Tool gives the same ones to the Agent."),
+          searchResult,
+          true,
+        ),
+      ),
+      search && el("h4", {}, "Query ", el("code", { textContent: search.query })),
+      search &&
+        (search.passages.length > 0
+          ? el("pre", { textContent: JSON.stringify(search.passages, null, 2) })
+          : el("p", { className: "muted", textContent: "No Passage matches. A query word must occur in a document." })),
+      !search && el("p", { className: "muted", textContent: "Search the handbook here, or run the Search prompt." }),
+      searchResult,
+      el("p", {
+        className: "fine",
+        textContent:
+          "The default Retriever is SQLite full-text search with BM25 ranking. It returns at most 10 Passages and needs no external service. A higher score is a better match.",
+      }),
+    ),
+    el(
+      "div",
+      { className: "card", id: "ingest" },
+      el("h3", { textContent: "Ingest a document" }),
+      el(
+        "div",
+        { className: "chips" },
+        ...INGEST_PRESETS.map((preset) =>
+          el("button", { textContent: preset.label, onclick: () => fill({ ...preset, label: undefined }) }),
+        ),
+      ),
+      el("div", { className: "row" }, corpusSelect, docId, title),
+      text,
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          "Ingest the document",
+          () =>
+            api("POST", `${path}/ingest`, {
+              corpus: corpusSelect.value,
+              id: docId.value.trim(),
+              title: title.value.trim(),
+              text: text.value,
+            }),
+          changed("The corpus has the document. A document with a known id replaced its old text."),
+          ingestResult,
+          true,
+        ),
+      ),
+      ingestResult,
+      el("p", {
+        className: "fine",
+        textContent:
+          "The Framework splits the text in chunks of 2,000 code points. The title goes in the metadata of the document, which each Passage carries.",
+      }),
+    ),
+    el(
+      "div",
+      { className: "card titled", id: "bulk" },
+      el("h3", {}, "Bulk ingest Job", job && badge(job.state)),
+      job
+        ? rows(["Job", el("code", { textContent: job.id })], ["Indexed", `${job.completed} of ${job.total} documents`])
+        : el("p", { className: "muted", textContent: `No bulk ingest ran since the reset.` }),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          `Ingest ${bulkSize} handbook pages`,
+          () => api("POST", `${path}/bulk`),
+          changed("The ingest returned a pending Job. The Knowledge Durable Object indexes the pages in batches."),
+          bulkResult,
+          true,
+        ),
+      ),
+      bulkResult,
+      el("p", {
+        className: "fine",
+        textContent:
+          "An ingest of more than 32 documents returns { pending: jobId }. A search sees each page that the Job committed. While the Job is pending, each other write to the corpus fails with knowledge.busy.",
+      }),
+    ),
+    el(
+      "details",
+      { className: "card" },
+      el("summary", { textContent: `Corpora of the Scope (${known.length})` }),
+      known.length > 0
+        ? el("ul", {}, ...known.map((name) => el("li", {}, el("code", { textContent: name }))))
+        : el("p", { className: "muted", textContent: "The Scope has no corpus." }),
+      el("p", {
+        className: "fine",
+        textContent:
+          "The list comes from scope.knowledge.list. The first ingest adds a corpus, and destroy removes it.",
+      }),
+    ),
+  ];
+}
+
 // The cards next to the conversation, by scenario id.
 const PANELS = {
   refund: (state) => [orderCard(state.order)],
@@ -1391,6 +1633,7 @@ const PANELS = {
   compaction: ledgerCards,
   delegation: purchaseCards,
   memory: memoryCards,
+  knowledge: knowledgeCards,
   observability: observabilityCards,
   scripts: scriptCards,
 };
@@ -1532,6 +1775,7 @@ async function renderScenario(scenario) {
           shownPanel = undefined;
           showPanel();
           awaitQueue();
+          watchJob();
           if (syncTarget()) showThread();
         }
         $("panel").append(el("p", { id: "saved", className: "outcome", textContent: note }));
@@ -1553,6 +1797,7 @@ async function renderScenario(scenario) {
     state = next;
     showPanel();
     awaitQueue();
+    watchJob();
   };
   // The Queue delivers Usage records to the UsageHandler after the Turn, and no Thread event tells the page. Thus
   // the page reads the state again while the UsageHandler waits for the last record. It stops after one minute,
@@ -1564,8 +1809,16 @@ async function renderScenario(scenario) {
     if (!state.handler?.waiting) return void (queueChecks = 0);
     if (queueChecks++ < 30) queueTimer = setTimeout(() => mine === view && refreshPanel(), 2000);
   };
+  // A bulk ingest Job of the Knowledge scenario runs without a Thread event, thus the page reads its progress on a
+  // timer. One timer runs at a time.
+  let jobTimer;
+  const watchJob = () => {
+    clearTimeout(jobTimer);
+    if (state.job?.state === "pending") jobTimer = setTimeout(() => mine === view && refreshPanel(), 1000);
+  };
   showPanel();
   awaitQueue();
+  watchJob();
   // One request covers a burst of events, for example the replay of the event log after a reload.
   let panelTimer;
   const refreshSoon = () => {
@@ -2125,9 +2378,12 @@ async function renderScenario(scenario) {
     if (scenario.id !== "schedules") stream = new EventSource(threadRoute("/events", ...query));
     else {
       const socket = new WebSocket(`${location.origin.replace(/^http/, "ws")}${threadRoute("", ...query)}`);
-      // A WebSocket does not connect again on its own. Close code 4004 tells that the Thread no longer exists.
+      // A WebSocket does not connect again on its own. Close code 4004 tells that the Thread no longer exists. A
+      // close that the page asked for, for example on a reset, also fires this handler. The timer thus checks again
+      // that the socket is still the stream of the page and that the operator is still in this view.
       socket.onclose = (closed) => {
-        if (stream === socket && attached && mine === view && closed.code !== 4004) setTimeout(listen, 1000);
+        if (stream !== socket || !attached || mine !== view || closed.code === 4004) return;
+        setTimeout(() => stream === socket && mine === view && listen(), 1000);
       };
       stream = socket;
     }
@@ -2214,12 +2470,20 @@ async function renderScenario(scenario) {
   };
   reset.onclick = async () => {
     // Run stays off until the new Thread exists, because the old Thread no longer accepts a Turn.
+    const running = busy;
     busy = reset.disabled = true;
     sync();
     stream?.close();
     let next;
     try {
       next = await api("POST", `${path}/reset`);
+    } catch (error) {
+      // A refused reset changes nothing. The Knowledge scenario refuses one while a bulk ingest Job is pending.
+      if (mine !== view) return;
+      busy = running;
+      add(el("p", { className: "error", textContent: `The reset was refused. ${error.message}` }));
+      listen();
+      return;
     } finally {
       reset.disabled = false;
     }

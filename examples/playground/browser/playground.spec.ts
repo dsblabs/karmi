@@ -609,3 +609,80 @@ test("cancel stops a Script, keeps its packed box, and reset restores the orders
   await expect(page.locator("#script-orders")).not.toContainText("packed");
   await expect(page.locator("#script-runs")).toContainText("No Script ran yet");
 });
+
+async function openKnowledge(page: Page): Promise<void> {
+  await openScenario(page, "knowledge");
+  await expect(page.locator("#corpus-handbook")).toContainText("refunds");
+  await expect(page.locator("#corpus-notices")).toContainText("closed on Sunday");
+}
+
+/** Runs one suggested prompt of the Knowledge scenario and waits for the answer of the Agent. */
+async function runLibrarian(page: Page, chip: string, answer: string | RegExp): Promise<void> {
+  await expect(page.getByRole("button", { name: "Run" })).toBeEnabled();
+  await page.getByRole("button", { name: chip, exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps .agent").last()).toContainText(answer);
+}
+
+test("a search shows the Passages next to the answer of the Agent, and an update changes them", async ({ page }) => {
+  await openKnowledge(page);
+  await page.getByRole("button", { name: "Search the handbook" }).click();
+  await expect(page.locator("#passages")).toContainText('"docId": "refunds"');
+  await expect(page.locator("#passages")).toContainText('"title": "Refund policy"');
+  await runLibrarian(
+    page,
+    "Search",
+    "30 days of the purchase. The shop refunds the price to the original payment method. (refunds)",
+  );
+  await expect(page.locator("#steps .tool")).toContainText("search_handbook");
+  await expect(page.locator("#steps .tool")).toContainText('"docId":"refunds"');
+
+  await page.getByRole("button", { name: "Update the refund policy" }).click();
+  await page.getByRole("button", { name: "Ingest the document" }).click();
+  await expect(page.locator("#saved")).toContainText("replaced its old text");
+  await page.getByRole("button", { name: "Search the handbook" }).click();
+  await expect(page.locator("#passages")).toContainText("14 days");
+  await runLibrarian(page, "Search", "14 days");
+
+  await page.getByRole("button", { name: "Delete refunds from handbook" }).click();
+  await expect(page.locator("#corpus-handbook")).not.toContainText("refunds");
+  await runLibrarian(page, "Search", "The handbook has nothing about that.");
+});
+
+test("inline Knowledge reaches the Agent without a Tool call, and a large corpus fails the Turn", async ({ page }) => {
+  await openKnowledge(page);
+  await runLibrarian(page, "Inline", "The shop is closed on Sunday.");
+  await expect(page.locator("#steps .tool")).toHaveCount(0);
+  await page.getByRole("button", { name: "Add a notice over the inline limit" }).click();
+  await page.getByRole("button", { name: "Ingest the document" }).click();
+  await expect(page.locator("#corpus-notices")).toContainText("The next Turn fails");
+  await runLibrarian(page, "Inline", "The shop is closed on Sunday.");
+  await expect(page.locator("#steps .error")).toContainText("inline limit is 32000");
+  await page.getByRole("button", { name: "Delete long from notices" }).click();
+  await expect(page.locator("#corpus-notices")).toContainText("What the Prompt gets");
+});
+
+test("a bulk ingest runs as a Job, its pages are searchable, and reset restores the corpora", async ({ page }) => {
+  await openKnowledge(page);
+  await page.getByRole("button", { name: "Ingest 40 handbook pages" }).click();
+  await expect(page.locator("#bulk")).toContainText("pending");
+  await expect(page.locator("#bulk")).toContainText("of 40 documents");
+  // A reset during the Job is refused and changes nothing. The page keeps its stream and its Run button.
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#steps .error")).toContainText("The reset was refused");
+  await expect(page.getByRole("button", { name: "Run" })).toBeEnabled();
+  await expect(page.locator("#bulk")).toContainText("completed", { timeout: 15_000 });
+  await expect(page.locator("#bulk")).toContainText("40 of 40 documents");
+  await expect(page.locator("#corpus-handbook")).toContainText("Documents (43)");
+  await runLibrarian(page, "Bulk", "(lot-12)");
+
+  await page.getByRole("button", { name: "Destroy the corpus" }).first().click();
+  await expect(page.locator("#corpus-handbook")).toContainText("has no document");
+  await page.locator("details.card", { hasText: "Corpora of the Scope" }).locator("summary").click();
+  await expect(page.locator("details.card", { hasText: "Corpora of the Scope (1)" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#corpus-handbook")).toContainText("Documents (3)");
+  await expect(page.locator("#bulk")).toContainText("No bulk ingest ran");
+  await expect(page.locator("#steps")).toBeEmpty();
+});

@@ -3,6 +3,7 @@ import { shopPolicy } from "./assistant";
 import { conciergeAgent } from "./concierge";
 import { bookCourier, dispatchAgent, listParcels, packParcel } from "./dispatch";
 import { ledgerAgent, postEntry, readLedger } from "./ledger";
+import { librarianAgent } from "./librarian";
 import { forksAgent } from "./media-forks";
 import { buyerAgent, listSuppliers, managerAgent, placeOrder } from "./purchases";
 import { getOrder, refundAgent, refundOrder } from "./refund";
@@ -52,6 +53,7 @@ export const catalogue = (model: string): CatalogueInput => ({
     conciergeAgent(model),
     observabilityAgent(model),
     scriptsAgent(model),
+    librarianAgent(model),
   ],
   usageHandler: sampleUsageHandler,
 });
