@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has ten browser scenarios:
+This version has eleven browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -14,6 +14,7 @@ This version has ten browser scenarios:
 - **Child Threads and their Approvals**
 - **User Memory and Scope isolation**
 - **Usage records, costs and logs**
+- **Isolate Scripts**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -317,9 +318,41 @@ The state stays until you select **Reset scenario**. A reset deletes the Thread 
 
 The scenario needs a model that supports Tool calls. The Agent, the UsageHandler and the Logger are in [`src/observability.ts`](./src/observability.ts).
 
+## The isolate Scripts scenario
+
+**Isolate Scripts** has an Agent with the `scripts` grant of the tier `isolate`. The grant gives the model the Tool `run_script` of the Framework. Each call runs one JavaScript module in a new Dynamic Worker, through the `KARMI_LOADER` binding. The Agent has four Tools that read or change a sample order system:
+
+- `find_orders` and `read_order` are read-only. The Permission Policy allows them.
+- `pack_box` packs an open order. A Policy rule allows it by name.
+- `cancel_order` has no Policy rule. A direct call waits for an Approval.
+
+The grant has `tools: "allowed"`, thus a Script gets each Tool that the Policy allows. It also gets the Tools of the Framework that the Agent has, for example `tool_search`. Its limits are `cpuMs: 50`, `wallMs: 10000` and `maxToolCalls: 10`. They are lower than the defaults, thus a Script reaches each one in a few seconds.
+
+Each suggested prompt has a Script. The instructions tell the model to run it as it is. You can edit the code.
+
+| Prompt | What you see |
+| --- | --- |
+| **Tool calls** | The Script calls `find_orders`, then `read_order` for each open order. The **Script runs** card shows the value `{ count: 3, total: 105 }`, the console line and four nested Tool calls. |
+| **Tool that needs an Approval** | The Script logs the names in `tools`. `cancel_order` is not there, because a Script cannot wait for an Approval. The call throws `tools.cancel_order is not a function`. No Approval request occurs, and the order stays open. |
+| **Network** | `fetch` throws. The isolate has no network access. |
+| **Tool-call limit** | The Script asks for 12 calls. The Harness refuses the eleventh and ends the Script with `limit_exceeded: maxToolCalls`. |
+| **Time limit** | The Script waits for 60 seconds. The Harness ends it after 10 seconds with `limit_exceeded: wallMs`. |
+| **CPU limit** | The Script runs a long loop. On Cloudflare, it fails with `limit_exceeded: cpuMs`. Local workerd does not enforce `cpuMs`, thus the Script finishes in local development. |
+| **Cancel** | The Script packs one open order each two seconds. Select **Cancel the Turn** after the first box. The Script stops and packs no more boxes. The boxes that it packed stay packed. |
+
+In the conversation, the card of each `run_script` call lists the Tool calls of its Script. The model does not see them: it gets only the result of `run_script`. The **Script runs** card shows, for each Script, the value or the error, a plain explanation of a known error, the console lines and each nested call with its call id and its `parentCallId`. The parent is the call id of the `run_script` call, in the form `{threadId}:{seq}`. Open **Event log** to see the `tool.call` and `tool.result` events with `parentCallId`.
+
+The **Script grant and Permission Policy** card shows the grant and the rules of the Agent. It is closed at first.
+
+A reset cancels the Turn, which stops a Script that runs. It then deletes the Thread and restores each order. No Script work stays. It does not change another scenario or a Provider credential.
+
+The local development server has the `KARMI_LOADER` binding. A Cloudflare deployment has it only when you select isolate Scripts. See [Deploy to Cloudflare](#deploy-to-cloudflare). Without the binding, the scenario shows why it is not available.
+
+The scenario needs a model that supports Tool calls. A small model can change the code before it calls `run_script`. The **Script runs** card shows the code that ran. The Agent and the Tools are in [`src/scripts.ts`](./src/scripts.ts).
+
 ## Model limits
 
-These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, and Usage and logging.
+These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Usage and logging, and isolate Scripts.
 
 The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
@@ -347,6 +380,8 @@ The command checks your Cloudflare login and lists your accounts. It then create
 - Two Queues for work and failed messages.
 - One R2 bucket for media.
 
+The command then asks whether to enable isolate Scripts. They need Dynamic Workers, and Dynamic Workers need the [Workers Paid plan](https://developers.cloudflare.com/dynamic-workers/pricing/). A yes gives the Worker the Worker Loader binding `KARMI_LOADER`. The binding is part of the Worker, thus it creates no other resource. The manifest records the answer, and a retry uses it again. To change the answer, deploy with a new deployment name. Without isolate Scripts, the **Isolate Scripts** scenario tells why it is not available.
+
 The command stores the Provider credential, access token and key ring as Worker secrets. It writes non-secret Provider settings as Worker variables.
 
 The command records ownership in `.deployments/<name>/manifest.json` before it creates resources. Git ignores this directory. Keep the manifest until removal finishes.
@@ -373,7 +408,7 @@ Give the exact deployment name to the removal command:
 pnpm run remove karmi-playground-a1b2c3d4
 ```
 
-The command removes the owned Worker, Queues and R2 bucket. Worker deletion removes its Durable Object storage. The command preserves each external resource in the manifest.
+The command removes the owned Worker, Queues and R2 bucket. Worker deletion removes its Durable Object storage and its Worker Loader binding. The command preserves each external resource in the manifest.
 
 If cleanup fails, the command lists each remaining resource and keeps its ownership record. Fix the reported problem. Then run the command again. A repeated removal skips resources that a prior attempt removed.
 
@@ -382,6 +417,7 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 - The state is in the local emulation, in `.wrangler/`. It is not in a Cloudflare account.
 - Local development and a deployed Worker use separate state.
 - Local development does not run a cron trigger on its own. Call the `scheduled` handler as the Schedules scenario describes.
+- Local workerd does not enforce the `cpuMs` limit of a Script. Only a deployed Worker shows it.
 
 ## Tests
 

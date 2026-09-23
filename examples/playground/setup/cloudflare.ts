@@ -1,7 +1,13 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { CommandRequest, CommandRunner, DeploymentManifest, ManifestStore } from "./deployment.ts";
+import {
+  selectBindings,
+  type CommandRequest,
+  type CommandRunner,
+  type DeploymentManifest,
+  type ManifestStore,
+} from "./deployment.ts";
 
 /** Runs Wrangler as a child process and captures its output. */
 export class WranglerRunner implements CommandRunner {
@@ -97,6 +103,8 @@ export async function readManifest(file: URL): Promise<DeploymentManifest> {
     queue: decodeResource(value.queue),
     deadLetterQueue: decodeResource(value.deadLetterQueue),
     bucket: decodeResource(value.bucket),
+    // A manifest from before this option has no field. Its Worker has no Worker Loader binding.
+    isolateScripts: "isolateScripts" in value && value.isolateScripts === true,
   };
 }
 
@@ -133,7 +141,7 @@ export function buildCloudflareConfig(
     : [];
   return `${JSON.stringify(
     {
-      ...base,
+      ...selectBindings(base, manifest),
       name: manifest.name,
       main: "../../src/worker.ts",
       assets,

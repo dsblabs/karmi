@@ -146,6 +146,20 @@ export const observabilityReplies: ReplyScript = ({ request }) => {
   ];
 };
 
+/**
+ * The script of the isolate Scripts scenario. The model runs the code of the prompt as it is, then reports the
+ * result of the Script.
+ */
+export const scriptReplies: ReplyScript = ({ request }) => {
+  const turn = request.messages.slice(request.messages.findLastIndex((message) => message.role === "user"));
+  const asked =
+    turn[0]?.role === "user" ? turn[0].content.map((block) => ("text" in block ? block.text : "")).join("") : "";
+  const code = /```js\n([\s\S]*?)\n```/.exec(asked)?.[1];
+  const result = turn.find((message) => message.role === "toolResult");
+  if (!result) return code ? [reply.toolCall("run_script", { code })] : "Give me a script to run.";
+  return result.isError ? "The Script failed." : "The Script finished.";
+};
+
 /** The script of the browser checks. It selects the replies from the Prompt, thus one Provider serves each scenario. */
 export const playgroundReplies: ReplyScript = (ctx) => {
   const system = ctx.request.system ?? "";
@@ -157,6 +171,7 @@ export const playgroundReplies: ReplyScript = (ctx) => {
   if (system.includes("manage a small shop") || system.includes("purchase desk")) return delegationReplies(ctx);
   if (system.includes("concierge")) return conciergeReplies(ctx);
   if (system.includes("Usage desk") || system.includes("Do not invent a cost")) return observabilityReplies(ctx);
+  if (system.includes("run_script exactly")) return scriptReplies(ctx);
   if (system.includes("attached file")) return "I received the sample file.";
   const days = /for (\d+) days/.exec(system)?.[1];
   return system.includes("pirate") ? `Arr, ye have ${days} days.` : `You can return it for ${days} days.`;

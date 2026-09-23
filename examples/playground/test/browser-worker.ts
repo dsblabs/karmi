@@ -23,6 +23,7 @@ const playground = createPlayground({
   token: TOKEN,
   data: env.PLAYGROUND_DATA,
   media: env.KARMI_MEDIA,
+  hasLoader: env.KARMI_LOADER !== undefined,
 });
 
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;

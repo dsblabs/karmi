@@ -7,6 +7,8 @@ declare namespace Cloudflare {
     KARMI_KNOWLEDGE: DurableObjectNamespace;
     KARMI_MEDIA: R2Bucket;
     KARMI_QUEUE: Queue;
+    /** The Worker Loader of isolate Scripts. A deployment without isolate Scripts has none. */
+    KARMI_LOADER?: WorkerLoader;
     PLAYGROUND_DATA: DurableObjectNamespace<import("./src/sample-data").SampleDataDO>;
     /** The key ring that encrypts each stored credential. */
     KARMI_KEYRING?: string;

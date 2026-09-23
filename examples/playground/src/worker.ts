@@ -40,6 +40,7 @@ const playground = createPlayground({
   token: env.PLAYGROUND_TOKEN,
   data: env.PLAYGROUND_DATA,
   media: env.KARMI_MEDIA,
+  hasLoader: env.KARMI_LOADER !== undefined,
 });
 
 /** The Durable Object classes of karmi that wrangler.jsonc names. */

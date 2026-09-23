@@ -8,6 +8,7 @@ import type { ProviderSetup } from "./provider-options";
 import { DELEGATION, PURCHASE_PROMPTS } from "./purchases";
 import { REFUND, REFUND_PROMPT } from "./refund";
 import { REMINDER_PROMPTS, SCHEDULES } from "./reminders";
+import { SCRIPT_LIMITS, SCRIPT_PROMPTS, SCRIPTS } from "./scripts";
 import { STOCKROOM, STOCKROOM_PROMPTS } from "./stockroom";
 
 const CODE = "https://github.com/dsblabs/karmi/blob/main/examples/playground";
@@ -44,6 +45,10 @@ export interface Scenario {
   controls?: boolean;
   /** True when the composer sends one file with the prompt. */
   upload?: boolean;
+  /** True when the scenario needs the `KARMI_LOADER` binding of the Worker. */
+  needsLoader?: boolean;
+  /** What the operator must know before a run, other than a limit of the model. */
+  notes?: string[];
 }
 
 const notBuilt = (id: string, group: string, title: string, prerequisites: string[] = []): Scenario => ({
@@ -171,7 +176,26 @@ export const SCENARIOS: readonly Scenario[] = [
   notBuilt("knowledge", "Memory and Knowledge", "Knowledge ingestion and document search", [
     "Vector retrieval needs a Cloudflare Vectorize index.",
   ]),
-  notBuilt("scripts", "Scripts", "Isolate and container Scripts", [
+  {
+    id: SCRIPTS,
+    group: "Scripts",
+    title: "Isolate Scripts",
+    summary:
+      "The model runs your JavaScript in an isolate. The Script calls the sample Tools that the Permission Policy allows, and each nested call names its Script. A Script cannot call a Tool that needs an Approval or use the network. The Harness stops a Script at its limits or when you cancel the Turn.",
+    built: true,
+    prerequisites: [
+      "The KARMI_LOADER binding. The local development server has it. A Cloudflare deployment needs the Workers Paid plan: select isolate Scripts when pnpm deploy asks.",
+    ],
+    needs: ["toolCalls"],
+    prompts: SCRIPT_PROMPTS,
+    code: `${CODE}/src/scripts.ts`,
+    controls: true,
+    needsLoader: true,
+    notes: [
+      `Local workerd does not enforce cpuMs, thus the CPU limit Script finishes in local development. Only a deployed Worker shows the limit of ${String(SCRIPT_LIMITS.cpuMs)} ms.`,
+    ],
+  },
+  notBuilt("container-scripts", "Scripts", "Container Scripts, files and artifacts", [
     "Container Scripts need Docker locally, or a Cloudflare account with Containers.",
   ]),
   notBuilt("scopes", "Scopes and credentials", "Scope lifecycle, credentials and key rotation"),
@@ -209,10 +233,21 @@ export interface ScenarioView extends Scenario {
   modelNotes: string[];
 }
 
-/** Adds the state for the current setup to a scenario. It makes no network call. */
-export function viewScenario(scenario: Scenario, setup: ProviderSetup | undefined): ScenarioView {
+/**
+ * Adds the state for the current setup to a scenario. `hasLoader` tells whether the Worker has the `KARMI_LOADER`
+ * binding. It makes no network call.
+ */
+export function viewScenario(scenario: Scenario, setup: ProviderSetup | undefined, hasLoader: boolean): ScenarioView {
   if (!scenario.built)
     return { ...scenario, status: "incomplete", reason: "This scenario is not built yet.", modelNotes: [] };
+  if (scenario.needsLoader && !hasLoader)
+    return {
+      ...scenario,
+      status: "unavailable",
+      reason:
+        "The Worker has no KARMI_LOADER binding. Deploy again with a new deployment name and select isolate Scripts. Dynamic Workers need the Workers Paid plan.",
+      modelNotes: [],
+    };
   if (!setup)
     return {
       ...scenario,
@@ -267,6 +302,7 @@ const compaction = row(COMPACTION);
 const delegation = row(DELEGATION);
 const memory = row(MEMORY);
 const observability = row(OBSERVABILITY);
+const scripts = row(SCRIPTS);
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
@@ -380,6 +416,40 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Logs and redaction",
     "Observability",
     "The lookup Tool logs credential-shaped fields. The stored line has markers. The redaction route shows `redactFields` on the same sample object.",
+  ),
+  scripts(
+    "Isolate Tools",
+    "Scripts",
+    "The Tool calls Script calls find_orders and read_order. Each nested call shows under its run_script call with the parentCallId of the Script.",
+  ),
+  scripts(
+    "Script results and logs",
+    "Scripts",
+    "The Script runs card shows the value or the error, the console lines and the nested Tool calls of each Script.",
+  ),
+  scripts(
+    "Tool restrictions of a Script",
+    "Scripts",
+    "The Script lists its Tools. cancel_order needs an Approval, thus it is not in tools, and the call throws.",
+  ),
+  scripts("Network rules of an isolate", "Scripts", "A fetch from a Script fails. The isolate has no network access."),
+  scripts(
+    "Script limits",
+    "Scripts",
+    "The Harness ends a Script at maxToolCalls and at wallMs with a limit_exceeded error. Local workerd does not enforce cpuMs.",
+  ),
+  {
+    group: "Scripts",
+    feature: "CPU limit of a Script",
+    scenario: SCRIPTS,
+    observable: "On Cloudflare, the CPU limit Script fails with limit_exceeded: cpuMs. Locally, it finishes.",
+    verification:
+      "Not verified in a Cloudflare account yet. No automatic check can run, because local workerd does not enforce cpuMs.",
+  },
+  scripts(
+    "Script cancellation",
+    "Scripts",
+    "Cancel the Turn while the Cancel Script packs boxes. The Script stops. The boxes that it packed stay packed. Reset leaves no Script running.",
   ),
   turns("Capability grants", "Agents", `The longRunning grant gives the Turn ${String(MAX_STEPS)} Steps.`),
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),

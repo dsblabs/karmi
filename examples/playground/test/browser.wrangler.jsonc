@@ -13,18 +13,26 @@
       { "name": "KARMI_SCOPES", "class_name": "ScopeConfigDO" },
       { "name": "KARMI_MEMORY", "class_name": "MemoryDO" },
       { "name": "KARMI_KNOWLEDGE", "class_name": "KnowledgeDO" },
-      { "name": "PLAYGROUND_DATA", "class_name": "SampleDataDO" }
-    ]
+      { "name": "PLAYGROUND_DATA", "class_name": "SampleDataDO" },
+    ],
   },
   "migrations": [
     { "tag": "karmi-v1", "new_sqlite_classes": ["ThreadDO", "ScopeConfigDO"] },
     { "tag": "karmi-v2", "new_sqlite_classes": ["MemoryDO"] },
     { "tag": "karmi-v3", "new_sqlite_classes": ["KnowledgeDO"] },
-    { "tag": "playground-v1", "new_sqlite_classes": ["SampleDataDO"] }
+    { "tag": "playground-v1", "new_sqlite_classes": ["SampleDataDO"] },
   ],
+  "worker_loaders": [{ "binding": "KARMI_LOADER" }],
   "r2_buckets": [{ "binding": "KARMI_MEDIA", "bucket_name": "karmi-playground-browser-media" }],
   "queues": {
     "producers": [{ "binding": "KARMI_QUEUE", "queue": "karmi-playground-browser-queue" }],
-    "consumers": [{ "queue": "karmi-playground-browser-queue", "max_batch_timeout": 0, "max_retries": 3, "dead_letter_queue": "karmi-playground-browser-dlq" }]
-  }
+    "consumers": [
+      {
+        "queue": "karmi-playground-browser-queue",
+        "max_batch_timeout": 0,
+        "max_retries": 3,
+        "dead_letter_queue": "karmi-playground-browser-dlq",
+      },
+    ],
+  },
 }
