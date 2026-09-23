@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has nine browser scenarios:
+This version has ten browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -13,6 +13,7 @@ This version has nine browser scenarios:
 - **Compaction and recovery**
 - **Child Threads and their Approvals**
 - **User Memory and Scope isolation**
+- **Usage records, costs and logs**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -295,9 +296,32 @@ The state stays until you select **Reset scenario**. A reset cancels and deletes
 
 The scenario needs a model that supports Tool calls. A small model can answer from its own guess in place of the Memory Fragment. Check the event log: an answer from the Fragment has no Tool call. The Agent is in [`src/concierge.ts`](./src/concierge.ts). The routes are in [`src/memory-routes.ts`](./src/memory-routes.ts). The mapping of the token to a Scope is in [`src/app.ts`](./src/app.ts).
 
+## The Usage and logging scenario
+
+**Usage records, costs and logs** runs one Agent and a sample UsageHandler. The Agent has the Tool `lookup_ticket`. That Tool logs credential-shaped fields. karmi redacts them before the Logger stores the line.
+
+Do these steps:
+
+1. Select **Run** with the **Spend** prompt. The **Usage records** card lists each `usage.recorded` event.
+2. Read Scope, Agent, User, Thread and `seq` on the record. The **Cost** line shows a reported cost, or that the Provider reported none.
+3. Read the **UsageHandler** card. The Queue delivers the batch. The key is `threadId:seq`.
+4. Select **Fail the next batch**, then **Run** again. The card shows a failed delivery. The Queue retries. The second delivery is accepted. The Turn does not fail.
+5. Select **Deliver the last batch again**. The card marks the second delivery as a duplicate.
+6. Select **Run** with the **Look up a ticket** prompt. The **Logs** card shows the line. The `apiKey` and `authorization` fields are `[REDACTED]`.
+7. Select **Show redaction**. The card shows `redactFields` on the same sample object, before and after.
+8. Open **Example child Usage record**. The JSON has a `parent` field. This scenario does not start a child Thread.
+
+karmi never prices tokens. A missing cost is not zero. A child Thread of a Delegation records its own spend and sets `parent`.
+
+The state stays until you select **Reset scenario**. A reset deletes the Thread and the inspection data. It does not change another scenario or a Provider credential.
+
+The scenario needs a model that supports Tool calls. The Agent, the UsageHandler and the Logger are in [`src/observability.ts`](./src/observability.ts).
+
 ## Model limits
 
-The refund scenario, the Tools scenario, the Turn control scenario, the Schedules scenario, the Compaction and recovery scenario, the Delegation scenario and the Memory scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
+These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, and Usage and logging.
+
+The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
 The media scenario shows a separate note about the media types that models can receive. Storage and download do not depend on model support.
 

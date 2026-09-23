@@ -196,7 +196,8 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
       });
     const answered = await ownRoutes(own, request, path);
     if (answered) return answered;
-    const [, id, action] = /^\/api\/scenarios\/([^/]+)(?:\/(reset|spec|job|hold))?$/.exec(path) ?? [];
+    const [, id, action] =
+      /^\/api\/scenarios\/([^/]+)(?:\/(reset|spec|job|hold|fail|replay|redact))?$/.exec(path) ?? [];
     const runtime = id === undefined ? undefined : runtimes[id];
     if (id === undefined || !runtime) return routeError(404, "http.notFound", "No such route.");
     if (action === undefined && request.method === "GET") return scenarioState(id, runtime);

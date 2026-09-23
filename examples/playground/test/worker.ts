@@ -4,10 +4,11 @@ import { createPlayground } from "../src/app";
 import { refundReplies } from "./script";
 import { setup, TOKEN } from "./worker-options";
 import { catalogue } from "../src/catalogue";
+import { playgroundLogger } from "../src/observability";
 
 // The test Worker runs the same routes, Tools and Agent as src/worker.ts against a scripted Provider, so no
 // test needs a credential or a network.
-export const { karmi, provider, clock } = createTestKarmi(catalogue("fake/model"));
+export const { karmi, provider, clock } = createTestKarmi(catalogue("fake/model"), { logger: playgroundLogger() });
 
 /** Starts the script of the guided refund again. */
 export const refundScript = () => provider.script(refundReplies);

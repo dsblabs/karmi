@@ -489,3 +489,37 @@ test("the second sample Scope has no Memory of the User, and a key of it is not 
   await expect(page.locator("#memory-sample-b")).toContainText("Nothing is stored");
   await expect(page.locator("#target option:checked")).toHaveText("Send in the Scope sample-a");
 });
+
+test("usage records show attribution and cost, the handler deduplicates, and logs redact credentials", async ({
+  page,
+}) => {
+  await openScenario(page, "observability");
+  await expect(page.locator("#usage")).toContainText("No model call ran yet");
+  await expect(page.getByRole("link", { name: "Example code" })).toHaveAttribute("href", /src\/observability\.ts$/);
+  await page.getByRole("button", { name: "Spend", exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps .agent").last()).toContainText("Usage records of its model calls");
+  await expect(page.locator("#usage")).toContainText("sample-a");
+  await expect(page.locator("#usage")).toContainText("observability");
+  await expect(page.locator("#usage")).toContainText("operator");
+  await expect(page.locator("#usage")).toContainText("0.0042 USD");
+  await expect(page.locator("#handler")).toContainText("accepted", { timeout: 15_000 });
+
+  await page.getByRole("button", { name: "Deliver the last batch again" }).click();
+  await expect(page.locator("#handler")).toContainText("yes");
+
+  await page.getByRole("button", { name: "Look up a ticket", exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps .agent").last()).toContainText("Ticket T-9 is open");
+  await expect(page.locator("#usage")).toContainText("The Provider reported no cost");
+  await expect(page.locator("#logs")).toContainText("[REDACTED]");
+  await expect(page.locator("#logs")).not.toContainText("sk-live-example");
+  await page.getByRole("button", { name: "Show redaction" }).click();
+  await expect(page.locator("#logs")).toContainText('"apiKey": "[REDACTED]"');
+  await page.locator("#example-child summary").click();
+  await expect(page.locator("#example-child")).toContainText("parent");
+
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#usage")).toContainText("No model call ran yet");
+  await expect(page.locator("#handler")).toContainText("No batch has reached");
+});

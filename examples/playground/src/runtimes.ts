@@ -3,6 +3,14 @@ import { AGENTS, ASSISTANT, presets, SCOPE_CONFIG, shopPolicy, shopPolicyArgs, s
 import { decodeDispatch, decodeReport, DISPATCH, reportBooking, TURNS } from "./dispatch";
 import { COMPACTION, CONTEXT, decodeHold, decodeLedger, isHeld, LEDGER, readLedgerOf, writeLedger } from "./ledger";
 import { BUYER, decodePurchases, DELEGATION, MANAGER } from "./purchases";
+import {
+  decodeObservability,
+  EXAMPLE_CHILD_RECORD,
+  failNextDelivery,
+  OBSERVABILITY,
+  replayLastBatch,
+  storeRedaction,
+} from "./observability";
 import { decodeOrder, REFUND } from "./refund";
 import { routeError } from "./route-error";
 import { sampleData, type SampleDataDO } from "./sample-data";
@@ -212,5 +220,29 @@ export function scenarioRuntimes(scope: () => Scope, model: string): Record<stri
     },
     [AGENTS]: assistantRuntime(scope, model),
     [DELEGATION]: delegationRuntime(scope),
+    [OBSERVABILITY]: {
+      agent: OBSERVABILITY,
+      actions: {
+        fail: async (stub) => {
+          await failNextDelivery(stub);
+          return undefined;
+        },
+        replay: (stub) => replayLastBatch(stub),
+        redact: async (stub) => {
+          await storeRedaction(stub);
+          return undefined;
+        },
+      },
+      async view(stored, _status, thread) {
+        const data = decodeObservability(stored);
+        return {
+          usage: await usageRecordsOf(thread),
+          handler: { failNext: data.failNext, deliveries: data.deliveries },
+          logs: data.logs,
+          ...(data.redaction && { redaction: data.redaction }),
+          exampleChild: EXAMPLE_CHILD_RECORD,
+        };
+      },
+    },
   };
 }

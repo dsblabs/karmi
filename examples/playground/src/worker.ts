@@ -4,6 +4,7 @@ import { createPlayground } from "./app";
 import { readSetup } from "./provider-options";
 import { ADAPTER, buildProvider } from "./providers";
 import { catalogue } from "./catalogue";
+import { playgroundLogger } from "./observability";
 
 // `pnpm setup` writes the selection and the credential to `.dev.vars`. Without it, the Playground still starts
 // and tells the operator what is missing.
@@ -14,6 +15,7 @@ const model = `${ADAPTER}/${setup?.model ?? "none"}`;
 
 const karmi = createKarmi({
   catalogue: catalogue(model),
+  logger: playgroundLogger(),
   ...(setup &&
     apiKey && {
       providers: { [ADAPTER]: buildProvider(setup) },

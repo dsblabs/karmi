@@ -8,6 +8,7 @@ export type RouteErrorCode =
   | "playground.forkMissing"
   | "playground.forkPosition"
   | "playground.noJob"
+  | "playground.noUsageBatch"
   | "playground.originalDeleted"
   | "schedule.invalid"
   | "schedule.limit"

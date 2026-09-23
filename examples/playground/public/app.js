@@ -1082,6 +1082,144 @@ function memoryCards({ user, scopes, fields }, onChanged, isCurrent) {
   ];
 }
 
+function costLine(record) {
+  if (!record.cost) return "The Provider reported no cost.";
+  const { amount, currency, source, basis } = record.cost;
+  return `${amount} ${currency}, ${source}, ${basis}`;
+}
+
+function observabilityCards({ usage, handler, logs, redaction, exampleChild }, onChanged, isCurrent) {
+  const path = "/api/scenarios/observability";
+  const handlerResult = el("p", { className: "fine" });
+  const logResult = el("p", { className: "fine" });
+  const changed = (note) => (next) => isCurrent() && onChanged(next, note);
+  const parent = (record) => (record.parent ? `${record.parent.threadKey} / ${record.parent.callId}` : "none");
+  return [
+    el(
+      "div",
+      { className: "card titled", id: "usage" },
+      el("h3", {}, "Usage records", el("span", { className: "badge", textContent: String(usage.length) })),
+      usage.length > 0
+        ? el(
+            "ul",
+            {},
+            ...usage.map((record) =>
+              el(
+                "li",
+                {},
+                rows(
+                  ["Kind", record.kind],
+                  ["Scope", record.scope],
+                  ["Agent", record.agent],
+                  ["User", record.user ?? "none"],
+                  ["Thread", el("code", { textContent: record.threadId })],
+                  ["seq", String(record.seq)],
+                  ["Parent", record.parent ? el("code", { textContent: parent(record) }) : "none"],
+                  ["Cost", costLine(record)],
+                ),
+              ),
+            ),
+          )
+        : el("p", { className: "muted", textContent: "No model call ran yet." }),
+      el("p", {
+        className: "fine",
+        textContent: "karmi writes each record with the Step. It never prices tokens. A missing cost is not zero.",
+      }),
+    ),
+    el(
+      "div",
+      { className: "card titled", id: "handler" },
+      el("h3", {}, "UsageHandler", el("span", { className: "badge", textContent: String(handler.deliveries.length) })),
+      handler.failNext &&
+        el("p", {
+          className: "note",
+          textContent: "The next batch will fail one time, then the Queue retries it.",
+        }),
+      handler.deliveries.length > 0
+        ? el(
+            "ul",
+            {},
+            ...handler.deliveries.map((item) =>
+              el(
+                "li",
+                {},
+                rows(
+                  ["Key", el("code", { textContent: item.key })],
+                  ["Status", item.status],
+                  ["Duplicate", item.duplicate ? "yes" : "no"],
+                ),
+              ),
+            ),
+          )
+        : el("p", { className: "muted", textContent: "No batch has reached the sample UsageHandler yet." }),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          "Fail the next batch",
+          () => api("POST", `${path}/fail`),
+          changed("The next batch will fail once."),
+          handlerResult,
+        ),
+        cardAction(
+          "Deliver the last batch again",
+          () => api("POST", `${path}/replay`),
+          changed("The handler received the last batch again."),
+          handlerResult,
+        ),
+      ),
+      handlerResult,
+      el("p", {
+        className: "fine",
+        textContent:
+          "The Queue delivers each batch at least once. usageKey is threadId:seq. A thrown error retries the batch. The Turn does not fail.",
+      }),
+    ),
+    el(
+      "div",
+      { className: "card titled", id: "logs" },
+      el("h3", {}, "Logs", el("span", { className: "badge", textContent: String(logs.length) })),
+      logs.length > 0
+        ? el("pre", { textContent: JSON.stringify(logs, null, 2) })
+        : el("p", {
+            className: "muted",
+            textContent: "No log line of this scenario is stored yet. Run Look up a ticket.",
+          }),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          "Show redaction",
+          () => api("POST", `${path}/redact`),
+          changed("redactFields replaced the credential fields."),
+          logResult,
+        ),
+      ),
+      logResult,
+      redaction && el("h4", { textContent: "Before" }),
+      redaction && el("pre", { textContent: JSON.stringify(redaction.before, null, 2) }),
+      redaction && el("h4", { textContent: "After" }),
+      redaction && el("pre", { textContent: JSON.stringify(redaction.after, null, 2) }),
+      el("p", {
+        className: "fine",
+        textContent:
+          "karmi redacts each line before the Logger. It replaces Sensitive values, credential field names and bearer tokens.",
+      }),
+    ),
+    el(
+      "details",
+      { className: "card", id: "example-child" },
+      el("summary", { textContent: "Example child Usage record (1)" }),
+      el("pre", { textContent: JSON.stringify(exampleChild, null, 2) }),
+      el("p", {
+        className: "fine",
+        textContent:
+          "A Delegation child records its own spend and sets parent. This example is not from the Thread of this scenario.",
+      }),
+    ),
+  ];
+}
+
 // The cards next to the conversation, by scenario id.
 const PANELS = {
   refund: (state) => [orderCard(state.order)],
@@ -1093,6 +1231,7 @@ const PANELS = {
   compaction: ledgerCards,
   delegation: purchaseCards,
   memory: memoryCards,
+  observability: observabilityCards,
 };
 
 /**

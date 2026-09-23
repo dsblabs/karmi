@@ -7,6 +7,7 @@ import { forksAgent } from "./media-forks";
 import { buyerAgent, listSuppliers, managerAgent, placeOrder } from "./purchases";
 import { getOrder, refundAgent, refundOrder } from "./refund";
 import { remindersAgent, sampleInbox, sendReminder } from "./reminders";
+import { lookupTicket, observabilityAgent, sampleUsageHandler } from "./observability";
 import { adjustStock, checkStock, deleteProduct, restock, stockAudit, stockroomAgent } from "./stockroom";
 
 /**
@@ -28,6 +29,7 @@ export const catalogue = (model: string): CatalogueInput => ({
     postEntry,
     listSuppliers,
     placeOrder,
+    lookupTicket,
   ],
   fragments: [shopPolicy],
   skills: [restock],
@@ -43,5 +45,7 @@ export const catalogue = (model: string): CatalogueInput => ({
     managerAgent(model),
     buyerAgent(model),
     conciergeAgent(model),
+    observabilityAgent(model),
   ],
+  usageHandler: sampleUsageHandler,
 });
