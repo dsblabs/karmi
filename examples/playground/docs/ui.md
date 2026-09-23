@@ -60,7 +60,8 @@ An empty list shows a `.muted` sentence that tells what fills it. Do not show an
 - The Usage and logging scenario gets a **Usage records** card, a **UsageHandler** card and a **Logs** card.
 - **Fail the next batch** and **Deliver the last batch again** act on the sample UsageHandler. **Deliver the last batch again** shows only after the handler stored a batch. Each delivery is one line: its key in `code` and its status in a `.badge`.
 - **Show redaction** writes `redactFields` of a sample object. A closed card shows the `parent` shape of a Delegation child.
-- Each Usage record shows its key, its model, its tokens and a cost line. The cost line is the reported cost, or that the Provider reported none.
+- The **Usage records** card shows the fields that each record of the Thread shares in `rows`, with the sum of the reported costs. A `.table` then has one row for each record: its `seq`, its tokens, its cost and the source of the cost. A record without a cost says **Not reported**.
+- The Queue delivers Usage records after the Turn, and no Thread event tells the page. While the scenario state has `handler.waiting`, the **UsageHandler** card shows a `waiting for the Queue` badge, and the `awaitQueue` function reads the state again every 2 seconds, for at most one minute.
 - The **Logs** card shows each log line as an `h4` with the level and the message, and a `pre` with the fields.
 - The Schedules scenario gets a **Subscriber of this page** card. **Detach the Subscriber** closes the socket of the page. The page then reads new events and the scenario state on a timer. The `setAttached` function owns this state. The socket connects again after one second. The `listen` function does nothing when the operator opened a different view in that time.
 - The `add` function appends to the conversation. It scrolls only when the operator is at the end.

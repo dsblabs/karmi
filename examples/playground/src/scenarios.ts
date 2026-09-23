@@ -185,7 +185,7 @@ export const SCENARIOS: readonly Scenario[] = [
     group: "Observability",
     title: "Usage records, costs and logs",
     summary:
-      "Run a Turn and inspect Usage records with their Scope, Agent, User, Thread and seq. The page shows a cost only when the Provider or a gateway reported one. A sample UsageHandler receives each record at least once. A Tool log redacts credentials.",
+      "Run a Turn and inspect Usage records with their Scope, Agent, User, Thread and seq. The Agent does not know its spend. Each model call writes a record, and the Usage records card shows it. The page shows a cost only when the Provider or a gateway reported one. A sample UsageHandler receives each record at least once. A Tool log redacts credentials.",
     built: true,
     prerequisites: [],
     needs: ["toolCalls"],

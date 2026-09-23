@@ -6,6 +6,7 @@ import {
   redactFields,
   usageKey,
   type Logger,
+  type Thread,
   type UsageRecord,
 } from "@karmi/core";
 import { env } from "cloudflare:workers";
@@ -42,6 +43,8 @@ export const deliverySchema = z.object({
   status: z.enum(["failed", "stored", "duplicate"]),
   record: storedUsageSchema,
 });
+
+type Delivery = z.infer<typeof deliverySchema>;
 
 /** The inspection data of the scenario. Reset restores the starting value. */
 export const inspectionSchema = z.object({
@@ -106,7 +109,7 @@ export const EXAMPLE_CHILD_RECORD = {
 
 /** The prompts that the scenario suggests. The operator can edit each one. */
 export const OBSERVABILITY_PROMPTS = [
-  { label: "Spend", text: "What is the spend of this Thread so far?" },
+  { label: "Ask the desk", text: "What can the Usage desk do for me? Answer in one sentence." },
   { label: "Look up a ticket", text: "Look up ticket T-9. Tell me its status in one sentence." },
 ];
 
@@ -142,8 +145,6 @@ async function deliver(
     await stub.push("deliveries", JSON.stringify({ key, status, record } satisfies Delivery), KEEP);
   }
 }
-
-type Delivery = z.infer<typeof deliverySchema>;
 
 /**
  * The sample UsageHandler of the Playground. It stores deliveries of this scenario. A thrown error retries the
@@ -217,14 +218,44 @@ export const observabilityAgent = (model: string) =>
     policy: [{ match: { annotations: { readOnlyHint: true } }, effect: "allow" }],
   });
 
+/**
+ * Tells whether the Queue has not yet delivered the last Usage record to the sample UsageHandler. The Queue
+ * delivers after the Turn, thus the page reads the state again while this is true.
+ */
+export function awaitsDelivery(usage: readonly UsageRecord[], deliveries: readonly Delivery[]): boolean {
+  const last = usage.at(-1);
+  if (!last) return false;
+  const key = usageKey(last);
+  return !deliveries.some((item) => item.key === key && item.status !== "failed");
+}
+
 /** Sets the sample UsageHandler to fail the next batch of this scenario. */
 export async function failNextDelivery(stub: DurableObjectStub<SampleDataDO>): Promise<void> {
   await stub.set("failNext", "true");
 }
 
-/** Delivers the last stored batch again, so the page can show a duplicate. */
-export async function replayLastBatch(stub: DurableObjectStub<SampleDataDO>): Promise<Response | undefined> {
-  const data = decodeObservability((await stub.read()).data);
+/**
+ * Keeps only the deliveries, log lines and last batch of the Thread `threadId`. The Queue can deliver a batch of
+ * the Thread before a reset after the reset, and the page must not show it.
+ */
+export function currentThread(data: ObservabilityData, threadId: string): ObservabilityData {
+  const { lastRecords, ...rest } = data;
+  const last = lastRecords?.filter((record) => record.threadId === threadId);
+  return {
+    ...rest,
+    deliveries: data.deliveries.filter((item) => item.record.threadId === threadId),
+    logs: data.logs.filter((line) => line.fields.thread === threadId),
+    ...(last && last.length > 0 && { lastRecords: last }),
+  };
+}
+
+/** Delivers the last stored batch of the current Thread again, so the page can show a duplicate. */
+export async function replayLastBatch(
+  stub: DurableObjectStub<SampleDataDO>,
+  open: (generation: number) => Thread,
+): Promise<Response | undefined> {
+  const stored = await stub.read();
+  const data = currentThread(decodeObservability(stored.data), open(stored.generation).identity.threadId);
   const records = data.lastRecords ?? [];
   if (records.length === 0)
     return routeError(409, "playground.noUsageBatch", "No UsageHandler batch is stored yet. Run a prompt first.");

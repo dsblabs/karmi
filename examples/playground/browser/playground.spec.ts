@@ -252,12 +252,15 @@ for (const [name, [width, height]] of Object.entries(VIEWPORTS))
         return { scroll: root.scrollWidth - root.clientWidth, wide };
       });
       expect(overflow, `${view} at ${name}`).toEqual({ scroll: 0, wide: [] });
-      // A control that the operator presses on a phone is at least 40 CSS pixels high.
+      // A control that the operator presses on a phone is at least 40 CSS pixels high. One read measures each
+      // button, because a panel can render again between two reads and replace its buttons.
       if (name === "mobile")
-        for (const button of await page.locator("main button:visible").all())
-          expect((await button.boundingBox())?.height, `${view}: ${await button.textContent()}`).toBeGreaterThanOrEqual(
-            40,
-          );
+        for (const { label, height } of await page
+          .locator("main button:visible")
+          .evaluateAll((buttons) =>
+            buttons.map((button) => ({ label: button.textContent, height: button.getBoundingClientRect().height })),
+          ))
+          expect(height, `${view}: ${label}`).toBeGreaterThanOrEqual(40);
     }
   });
 
@@ -496,23 +499,25 @@ test("usage records show attribution, tokens and cost, the handler skips a dupli
   await openScenario(page, "observability");
   await expect(page.locator("#usage")).toContainText("No model call ran yet");
   await expect(page.getByRole("link", { name: "Example code" })).toHaveAttribute("href", /src\/observability\.ts$/);
-  await page.getByRole("button", { name: "Spend", exact: true }).click();
+  await page.getByRole("button", { name: "Ask the desk", exact: true }).click();
   await page.getByRole("button", { name: "Run" }).click();
   await expect(page.locator("#steps .agent").last()).toContainText("Usage records of its model calls");
   await expect(page.locator("#usage")).toContainText("sample-a");
   await expect(page.locator("#usage")).toContainText("observability");
   await expect(page.locator("#usage")).toContainText("operator");
-  await expect(page.locator("#usage")).toContainText("0.0042 USD");
-  await expect(page.locator("#usage")).toContainText("8 in, 6 out");
-  await expect(page.locator("#handler")).toContainText("stored", { timeout: 15_000 });
+  await expect(page.locator("#usage")).toContainText("fake/model");
+  await expect(page.locator("#usage td").nth(1)).toHaveText("8 in, 6 out");
+  await expect(page.locator("#usage")).toContainText("0.0042 USD, from 1 of 1 records");
+  await expect(page.locator("#handler .badge.stored")).toHaveCount(1, { timeout: 15_000 });
 
   await page.getByRole("button", { name: "Deliver the last batch again" }).click();
-  await expect(page.locator("#handler")).toContainText("duplicate, skipped");
+  await expect(page.locator("#handler .badge.duplicate")).toHaveText("duplicate, skipped");
 
   await page.getByRole("button", { name: "Look up a ticket", exact: true }).click();
   await page.getByRole("button", { name: "Run" }).click();
   await expect(page.locator("#steps .agent").last()).toContainText("Ticket T-9 is open");
-  await expect(page.locator("#usage")).toContainText("The Provider reported no cost");
+  await expect(page.locator("#usage")).toContainText("Not reported");
+  await expect(page.locator("#usage")).toContainText("0.0042 USD, from 1 of 3 records");
   await expect(page.locator("#logs")).toContainText("[REDACTED]");
   await expect(page.locator("#logs")).not.toContainText("sk-live-example");
   await page.getByRole("button", { name: "Show redaction" }).click();
@@ -524,6 +529,24 @@ test("usage records show attribution, tokens and cost, the handler skips a dupli
   await expect(page.locator("#usage")).toContainText("No model call ran yet");
   await expect(page.locator("#handler")).toContainText("No batch has reached");
   await expect(page.getByRole("button", { name: "Deliver the last batch again" })).toBeHidden();
+});
+
+test("the UsageHandler card reads the state again while it waits for the Queue", async ({ page }) => {
+  // A deployed Queue delivers some seconds after the Turn. The route answers `waiting` until the check releases it.
+  let delivered = false;
+  await page.route("**/api/scenarios/observability", async (route) => {
+    const response = await route.fetch();
+    const body: unknown = await response.json();
+    if (typeof body !== "object" || body === null || !("handler" in body)) return route.fulfill({ response });
+    const { handler } = body;
+    if (typeof handler !== "object" || handler === null) return route.fulfill({ response });
+    await route.fulfill({ response, json: { ...body, handler: { ...handler, waiting: !delivered } } });
+  });
+  await openScenario(page, "observability");
+  await expect(page.locator("#handler h3")).toContainText("waiting for the Queue");
+  delivered = true;
+  // No Thread event arrives now. Only the next read of the page clears the badge.
+  await expect(page.locator("#handler h3")).not.toContainText("waiting", { timeout: 5_000 });
 });
 
 test("a reconnect timer of the Schedules page does not take the stream of the next view", async ({ page }) => {

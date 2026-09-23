@@ -302,9 +302,9 @@ The scenario needs a model that supports Tool calls. A small model can answer fr
 
 Do these steps:
 
-1. Select **Run** with the **Spend** prompt. The **Usage records** card lists each `usage.recorded` event.
-2. Read the key, the model, the tokens, Scope, Agent and User on the record. The key is `threadId:seq`. The **Cost** line shows a reported cost, or that the Provider reported none.
-3. Read the **UsageHandler** card. The Queue delivers the batch, and the handler stores each record under its key.
+1. Select **Run** with the **Ask the desk** prompt. The Agent answers in text. It does not know its spend. The **Usage records** card shows the spend.
+2. Read the **Usage records** card. The top part shows the Scope, the Agent, the User, the Thread and the model of the records. **Reported cost** is the sum of the reported costs, and it tells how many records had one. The table has one row for each `usage.recorded` event: its `seq`, its tokens and its cost. The key of a record is `threadId:seq`.
+3. Read the **UsageHandler** card. The Queue delivers the batch some seconds after the Turn. Until then, the card shows **waiting for the Queue**, and the page checks again every 2 seconds. The handler stores each record under its key.
 4. Select **Fail the next batch**, then **Run** again. The card shows a failed delivery. The Queue retries, and the handler stores the record. The Turn does not fail.
 5. Select **Deliver the last batch again**. The handler skips each key that it stored before. The card shows `duplicate, skipped`. The button shows after the handler stored a batch.
 6. Select **Run** with the **Look up a ticket** prompt. The **Logs** card shows the line with its level, its message and its fields. The `apiKey` and `authorization` fields are `[REDACTED]`.
@@ -313,7 +313,7 @@ Do these steps:
 
 karmi never prices tokens. A missing cost is not zero. A child Thread of a Delegation records its own spend and sets `parent`.
 
-The state stays until you select **Reset scenario**. A reset deletes the Thread and the inspection data. It does not change another scenario or a Provider credential.
+The state stays until you select **Reset scenario**. A reset deletes the Thread and the inspection data. It does not change another scenario or a Provider credential. A batch of the old Thread that the Queue delivers after the reset does not show.
 
 The scenario needs a model that supports Tool calls. The Agent, the UsageHandler and the Logger are in [`src/observability.ts`](./src/observability.ts).
 

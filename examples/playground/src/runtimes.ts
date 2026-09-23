@@ -4,6 +4,8 @@ import { decodeDispatch, decodeReport, DISPATCH, reportBooking, TURNS } from "./
 import { COMPACTION, CONTEXT, decodeHold, decodeLedger, isHeld, LEDGER, readLedgerOf, writeLedger } from "./ledger";
 import { BUYER, decodePurchases, DELEGATION, MANAGER } from "./purchases";
 import {
+  awaitsDelivery,
+  currentThread,
   decodeObservability,
   EXAMPLE_CHILD_RECORD,
   failNextDelivery,
@@ -227,17 +229,22 @@ export function scenarioRuntimes(scope: () => Scope, model: string): Record<stri
           await failNextDelivery(stub);
           return undefined;
         },
-        replay: (stub) => replayLastBatch(stub),
+        replay: (stub, open) => replayLastBatch(stub, open),
         redact: async (stub) => {
           await storeRedaction(stub);
           return undefined;
         },
       },
       async view(stored, _status, thread) {
-        const data = decodeObservability(stored);
+        const data = currentThread(decodeObservability(stored), thread.identity.threadId);
+        const usage = await usageRecordsOf(thread);
         return {
-          usage: await usageRecordsOf(thread),
-          handler: { failNext: data.failNext, deliveries: data.deliveries },
+          usage,
+          handler: {
+            failNext: data.failNext,
+            deliveries: data.deliveries,
+            waiting: awaitsDelivery(usage, data.deliveries),
+          },
           logs: data.logs,
           ...(data.redaction && { redaction: data.redaction }),
           exampleChild: EXAMPLE_CHILD_RECORD,

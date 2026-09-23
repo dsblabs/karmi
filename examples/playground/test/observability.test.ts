@@ -1,4 +1,4 @@
-import type { ThreadEvent } from "@karmi/core";
+import type { ThreadEvent, UsageRecord } from "@karmi/core";
 import { reply } from "@karmi/core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -6,7 +6,9 @@ import {
   deliverySchema,
   EXAMPLE_CHILD_RECORD,
   OBSERVABILITY,
+  OBSERVABILITY_PROMPTS,
   SAMPLE_LOG_FIELDS,
+  sampleUsageHandler,
   STARTING_INSPECTION,
 } from "../src/observability";
 import { orderSchema, STARTING_ORDER } from "../src/refund";
@@ -43,6 +45,7 @@ const stateSchema = z.looseObject({
   usage: z.array(usageSchema),
   handler: z.object({
     failNext: z.boolean(),
+    waiting: z.boolean(),
     deliveries: z.array(deliverySchema),
   }),
   logs: z.array(
@@ -106,6 +109,7 @@ describe("the Usage and logging scenario", () => {
       threadId: expect.stringContaining(OBSERVABILITY),
     });
     expect(record?.seq).toBeGreaterThan(0);
+    expect(now.handler.waiting).toBe(false);
     expect(record).not.toHaveProperty("cost");
     expect(record).not.toHaveProperty("parent");
     expect(JSON.stringify(record)).not.toMatch(/"cost"\s*:/);
@@ -119,9 +123,9 @@ describe("the Usage and logging scenario", () => {
     expect(now.usage[0]?.cost).toEqual(cost);
   });
 
-  it("uses the browser script to report a cost on the Spend prompt", async () => {
+  it("uses the browser script to report a cost on the first suggested prompt", async () => {
     provider.script(playgroundReplies);
-    await run("What is the spend of this Thread so far?");
+    await run(OBSERVABILITY_PROMPTS[0]?.text ?? "");
     const now = await stored(1);
     expect(now.usage[0]?.cost).toEqual({
       amount: 0.0042,
@@ -206,7 +210,20 @@ describe("the Usage and logging scenario", () => {
     const now = await state();
     expect(now.exampleChild).toEqual(EXAMPLE_CHILD_RECORD);
     expect(now.exampleChild.parent).toEqual(EXAMPLE_CHILD_RECORD.parent);
-    expect(now.handler).toEqual(STARTING_INSPECTION);
+    expect(now.handler).toEqual({ ...STARTING_INSPECTION, waiting: false });
+  });
+
+  it("does not show a batch of the Thread before a reset that the Queue delivers after the reset", async () => {
+    provider.script(["Ticket T-9 is open."]);
+    const threadKey = await run("What is the spend?");
+    await stored(1);
+    const records = (await events(threadKey)).filter((event): event is UsageRecord => event.type === "usage.recorded");
+    await api("POST", `${PATH}/reset`);
+    await sampleUsageHandler.onUsage(records);
+    const now = await state();
+    expect(now.handler.deliveries).toEqual([]);
+    expect(now.handler.waiting).toBe(false);
+    expect((await api("POST", `${PATH}/replay`)).status).toBe(409);
   });
 
   it("clears this scenario on reset and leaves other usage and credentials", async () => {
@@ -225,7 +242,7 @@ describe("the Usage and logging scenario", () => {
     expect(reset.threadKey).not.toBe(before.threadKey);
     expect(reset.usage).toEqual([]);
     expect(reset.logs).toEqual([]);
-    expect(reset.handler).toEqual(STARTING_INSPECTION);
+    expect(reset.handler).toEqual({ ...STARTING_INSPECTION, waiting: false });
     expect(await credentials.describe("kept")).toMatchObject({ version: 1 });
   });
 });

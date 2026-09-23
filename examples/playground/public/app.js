@@ -1082,18 +1082,52 @@ function memoryCards({ user, scopes, fields }, onChanged, isCurrent) {
   ];
 }
 
-function costLine(record) {
-  if (!record.cost) return "The Provider reported no cost.";
-  const { amount, currency, source, basis } = record.cost;
-  return `${amount} ${currency}, ${source}, ${basis}`;
-}
-
 // A script record has no model and no tokens. A model or Compaction record has both.
 function tokenLine(record) {
-  if (record.input === undefined) return undefined;
-  const cache =
-    record.cacheRead || record.cacheWrite ? `, ${record.cacheRead} cache read, ${record.cacheWrite} cache write` : "";
-  return `${record.input} in, ${record.output} out${cache}`;
+  if (record.input === undefined) return "";
+  return [
+    `${record.input} in`,
+    `${record.output} out`,
+    record.cacheRead > 0 && `${record.cacheRead} cache read`,
+    record.cacheWrite > 0 && `${record.cacheWrite} cache write`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+// The sum of the reported costs, by currency. A record without a cost adds nothing, and the line tells how many
+// records had one, thus a missing cost never reads as zero.
+function reportedCost(usage) {
+  const priced = usage.filter((record) => record.cost);
+  if (priced.length === 0) return "No record has a reported cost.";
+  const totals = new Map();
+  for (const { cost } of priced) totals.set(cost.currency, (totals.get(cost.currency) ?? 0) + cost.amount);
+  const sum = [...totals].map(([currency, amount]) => `${Number(amount.toPrecision(12))} ${currency}`).join(" + ");
+  return `${sum}, from ${priced.length} of ${usage.length} records`;
+}
+
+function usageTable(usage) {
+  return el(
+    "div",
+    { className: "table" },
+    el(
+      "table",
+      {},
+      el("tr", {}, ...["Record", "Tokens", "Cost", "Reported by"].map((name) => el("th", { textContent: name }))),
+      ...usage.map((record) =>
+        el(
+          "tr",
+          {},
+          el("td", {
+            textContent: record.kind === "model" ? `seq ${record.seq}` : `seq ${record.seq}, ${record.kind}`,
+          }),
+          el("td", { textContent: tokenLine(record) }),
+          el("td", { textContent: record.cost ? `${record.cost.amount} ${record.cost.currency}` : "Not reported" }),
+          el("td", { textContent: record.cost ? `${record.cost.source}, ${record.cost.basis}` : "" }),
+        ),
+      ),
+    ),
+  );
 }
 
 // The UsageHandler writes `duplicate` for a key that it stored before, and skips the record.
@@ -1105,47 +1139,49 @@ function observabilityCards({ usage, handler, logs, redaction, exampleChild }, o
   const logResult = el("p", { className: "fine" });
   const changed = (note) => (next) => isCurrent() && onChanged(next, note);
   const stored = handler.deliveries.some((item) => item.status === "stored");
+  const [first] = usage;
+  const models = [...new Set(usage.filter((record) => record.model).map((r) => `${r.provider}/${r.model}`))];
   return [
     el(
       "div",
       { className: "card titled", id: "usage" },
       el("h3", {}, "Usage records", el("span", { className: "badge", textContent: String(usage.length) })),
-      usage.length > 0
-        ? el(
-            "ul",
-            {},
-            ...usage.map((record) =>
-              el(
-                "li",
-                {},
-                rows(
-                  ["Key", el("code", { textContent: `${record.threadId}:${record.seq}` })],
-                  ["Kind", record.kind],
-                  record.model && ["Model", el("code", { textContent: `${record.provider}/${record.model}` })],
-                  tokenLine(record) && ["Tokens", tokenLine(record)],
-                  ["Scope", record.scope],
-                  ["Agent", record.agent],
-                  ["User", record.user ?? "none"],
-                  record.parent && [
-                    "Parent",
-                    el("code", { textContent: `${record.parent.threadKey} / ${record.parent.callId}` }),
-                  ],
-                  ["Cost", costLine(record)],
-                ),
-              ),
+      ...(first
+        ? [
+            rows(
+              ["Scope", first.scope],
+              ["Agent", first.agent],
+              ["User", first.user ?? "none"],
+              ["Thread", el("code", { textContent: first.threadId })],
+              models.length > 0 && ["Model", el("code", { textContent: models.join(", ") })],
+              ["Reported cost", reportedCost(usage)],
             ),
-          )
-        : el("p", { className: "muted", textContent: "No model call ran yet." }),
+            usageTable(usage),
+          ]
+        : [el("p", { className: "muted", textContent: "No model call ran yet." })]),
       el("p", {
         className: "fine",
         textContent:
-          "The key is threadId:seq. karmi writes each record with the Step. It never prices tokens. A missing cost is not zero.",
+          "The Agent does not know its spend. Each model call writes one record with the Step. The key of a record is threadId:seq. karmi never prices tokens, and a missing cost is not zero.",
       }),
     ),
     el(
       "div",
       { className: "card titled", id: "handler" },
-      el("h3", {}, "UsageHandler", el("span", { className: "badge", textContent: String(handler.deliveries.length) })),
+      el(
+        "h3",
+        {},
+        "UsageHandler",
+        handler.waiting
+          ? el("span", { className: "badge waiting", textContent: "waiting for the Queue" })
+          : el("span", { className: "badge", textContent: String(handler.deliveries.length) }),
+      ),
+      handler.waiting &&
+        el("p", {
+          className: "fine",
+          textContent:
+            "The Queue has not delivered the last record yet. It sends a batch when the batch is full or after a few seconds. The card updates when the batch arrives.",
+        }),
       handler.failNext &&
         el("p", {
           className: "note",
@@ -1396,6 +1432,7 @@ async function renderScenario(scenario) {
           state = saved;
           shownPanel = undefined;
           showPanel();
+          awaitQueue();
           if (syncTarget()) showThread();
         }
         $("panel").append(el("p", { id: "saved", className: "outcome", textContent: note }));
@@ -1416,8 +1453,20 @@ async function renderScenario(scenario) {
     if (mine !== view || read !== reads) return;
     state = next;
     showPanel();
+    awaitQueue();
+  };
+  // The Queue delivers Usage records to the UsageHandler after the Turn, and no Thread event tells the page. Thus
+  // the page reads the state again while the UsageHandler waits for the last record. It stops after one minute,
+  // because a batch that failed each retry goes to the dead-letter queue and never arrives.
+  let queueTimer;
+  let queueChecks = 0;
+  const awaitQueue = () => {
+    clearTimeout(queueTimer);
+    if (!state.handler?.waiting) return void (queueChecks = 0);
+    if (queueChecks++ < 30) queueTimer = setTimeout(() => mine === view && refreshPanel(), 2000);
   };
   showPanel();
+  awaitQueue();
   // One request covers a burst of events, for example the replay of the event log after a reload.
   let panelTimer;
   const refreshSoon = () => {

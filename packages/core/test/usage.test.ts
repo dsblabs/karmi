@@ -177,7 +177,10 @@ describe("usage.recorded", () => {
     const stub = env.KARMI_THREADS.getByName(keys.thread("test", `u${n}`));
     const waiting = () =>
       runInDurableObject(stub, (_, state) => new UsageOutbox(openThreadDatabase(state.storage.sql)).batch(10).seqs);
-    // The usage Alarm of the Turn has fired already. This record stands for one that the Queue refused.
+    // The usage Alarm of the Turn sends its record. The test waits for it, because the Alarm can still be due here.
+    await clock.advance(0);
+    expect(await waiting()).toEqual([]);
+    // This record stands for one that the Queue refused.
     await runInDurableObject(stub, (_, state) => new UsageOutbox(openThreadDatabase(state.storage.sql)).enqueue(1));
     expect(await waiting()).toEqual([1]);
     await thread.delete();
