@@ -16,9 +16,13 @@ export function api(token: string | null, method: string, path: string, body?: u
   });
 }
 
-/** Reads the event log of a Thread through the public route. It checks only that the answer is a list. */
-export async function events(key: string): Promise<ThreadEvent[]> {
-  const value: unknown = await (await api(TOKEN, "GET", `/threads/${key}/events`)).json();
+/**
+ * Reads the event log of a Thread through the public route. It checks only that the answer is a list. `scope`
+ * selects a sample Scope other than the default one.
+ */
+export async function events(key: string, scope?: string): Promise<ThreadEvent[]> {
+  const query = scope === undefined ? "" : `?scope=${scope}`;
+  const value: unknown = await (await api(TOKEN, "GET", `/threads/${key}/events${query}`)).json();
   if (!Array.isArray(value)) throw new Error("Not an event list.");
   return value as ThreadEvent[];
 }

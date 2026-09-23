@@ -4,7 +4,7 @@ import { z } from "zod";
 import { CONCIERGE, MEMORY, OTHER_SCOPE, SCOPE } from "../src/app";
 import { api as request, events } from "./client";
 import { conciergeReplies } from "./script";
-import { provider } from "./worker";
+import { karmi, provider } from "./worker";
 import { TOKEN } from "./worker-options";
 
 const api = (method: string, path: string, body?: unknown) => request(TOKEN, method, path, body);
@@ -41,25 +41,19 @@ const inScope = (now: State, id: string) => now.scopes.find((scope) => scope.id 
 /** The query that selects the sample Scope of a public Thread route. Absent for the first sample Scope. */
 const scoped = (path: string, scope: string) => (scope === SCOPE ? path : `${path}?scope=${scope}`);
 
-/** Reads the log of a Thread in one sample Scope through the public route. */
-async function read(key: string, scope: string): Promise<ThreadEvent[]> {
-  const value: unknown = await (await api("GET", scoped(`/threads/${key}/events`, scope))).json();
-  return Array.isArray(value) ? (value as ThreadEvent[]) : [];
-}
-
 const turns = (log: ThreadEvent[]) => log.filter((event) => event.type === "turn.completed").length;
 
 /** Sends one message to the current Thread of `scope` and returns the log after the Turn completes. */
 async function run(scope: string, text: string): Promise<ThreadEvent[]> {
   const key = inScope(await state(), scope).threadKey;
-  const before = turns(await read(key, scope));
+  const before = turns(await events(key, scope));
   const sent = await api("POST", scoped(`/threads/${key}/turns`, scope), {
     kind: "message",
     parts: [{ type: "text", text }],
   });
   expect(sent.status).toBe(202);
   let log: ThreadEvent[] = [];
-  await expect.poll(async () => turns((log = await read(key, scope))), { timeout: 10_000 }).toBe(before + 1);
+  await expect.poll(async () => turns((log = await events(key, scope))), { timeout: 10_000 }).toBe(before + 1);
   return log;
 }
 
@@ -169,6 +163,14 @@ describe("the second sample Scope", () => {
     const later = await state();
     expect(inScope(later, OTHER_SCOPE).memory.profile).toEqual({ roast: "light" });
     expect(inScope(later, SCOPE).memory.profile).toEqual({ roast: "dark" });
+  });
+
+  it("does not reach a different User of the same Scope", async () => {
+    await run(SCOPE, REMEMBER);
+    // The Playground has one User, thus the check reads the Memory of a second User through the Framework.
+    const users = karmi.scope(SCOPE).users;
+    expect(await users.memory.get("guest")).toEqual({ profile: {}, notes: [] });
+    expect(await users.memory.list()).toEqual(["operator"]);
   });
 
   it("is not reachable with the key of its Thread through the first Scope", async () => {

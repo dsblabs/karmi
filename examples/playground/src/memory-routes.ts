@@ -32,14 +32,16 @@ function threadsOf(options: MemoryRouteOptions, scopeId: string, generation: num
 
 async function scopeState(options: MemoryRouteOptions, scopeId: string) {
   const stored = await sampleData(options.data, scopeId, MEMORY).read();
-  const threads = threadsOf(options, scopeId, stored.generation, decodeMemoryData(stored.data));
+  const data = decodeMemoryData(stored.data);
+  const threads = threadsOf(options, scopeId, stored.generation, data);
   // The status call through the identity creates the Thread. The other reads need no sequence.
   const statuses = await Promise.all(threads.map((thread) => thread.status()));
   const users = options.scope(scopeId).users;
   const [memory, known] = await Promise.all([users.memory.get(options.user), users.memory.list()]);
   return {
     id: scopeId,
-    threadKey: threads.at(-1)?.key ?? "",
+    // The current Thread is the last one. It is in `threads`, thus the page has its status too.
+    threadKey: openThread(options.scope(scopeId), scopeId, options.user, stored.generation, data.threads).key,
     threads: threads.map((thread, index) => ({
       threadKey: thread.key,
       threadId: thread.identity.threadId,

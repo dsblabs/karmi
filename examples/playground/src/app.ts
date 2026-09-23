@@ -136,19 +136,25 @@ async function resetScenario(
   if (restore) await runtime.restore?.();
 }
 
-/** The scenarios with more than one Thread, or with state outside their sample data. Each has its own state, reset and routes. */
-function ownScenarioRoutes(
-  karmi: Karmi,
-  data: DurableObjectNamespace<SampleDataDO>,
-  media: R2Bucket | undefined,
-): Record<string, ScenarioRoutes> {
-  // `karmi.scope` makes random values, which the Workers runtime allows only while it handles a request.
-  const sample = { scope: () => karmi.scope(SCOPE), scopeId: SCOPE, user: USER, data };
+/** The sample Scope, the User and the sample systems that the routes of a scenario work with. */
+interface SampleOptions {
+  scope: () => Scope;
+  scopeId: string;
+  user: string;
+  data: DurableObjectNamespace<SampleDataDO>;
+}
+
+/**
+ * Returns the routes of each scenario that has its own state, reset and routes, by scenario id. These are the
+ * scenarios with more than one Thread, or with state outside their sample data.
+ */
+function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, media: R2Bucket | undefined) {
+  const { user, data } = sample;
   return {
     [FORKS]: forkScenarioRoutes({ ...sample, media }),
     [SCHEDULES]: scheduleScenarioRoutes(sample),
-    [MEMORY]: memoryScenarioRoutes({ scope: (id) => karmi.scope(id), scopeIds: SAMPLE_SCOPES, user: USER, data }),
-  };
+    [MEMORY]: memoryScenarioRoutes({ scope: (id) => karmi.scope(id), scopeIds: SAMPLE_SCOPES, user, data }),
+  } satisfies Record<string, ScenarioRoutes>;
 }
 
 /**
@@ -164,7 +170,8 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
   const scope = () => karmi.scope(SCOPE);
 
   const runtimes = scenarioRuntimes(scope, model);
-  const own = ownScenarioRoutes(karmi, data, media);
+  const sample: SampleOptions = { scope, scopeId: SCOPE, user: USER, data };
+  const own = ownScenarioRoutes(karmi, sample, media);
 
   const threadOf = (runtime: Runtime, generation: number) =>
     scope().thread({ agent: runtime.agent, user: USER, threadId: `${runtime.agent}-${generation}` });
@@ -213,8 +220,7 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
   }
 
   return {
-    supplierDelivery: (at) =>
-      triggerSupplierDelivery({ scope, scopeId: SCOPE, user: USER, data }, "The scheduled handler of the Worker", at),
+    supplierDelivery: (at) => triggerSupplierDelivery(sample, "The scheduled handler of the Worker", at),
     async fetch(request, _env, ctx) {
       const path = new URL(request.url).pathname;
       if (!path.startsWith("/api/")) return http.fetch(request, _env, ctx);

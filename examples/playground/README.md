@@ -92,12 +92,12 @@ The scenario needs no model feature other than text. The example code is in [`sr
 
 **Tools, Skills and a Hook** has an Agent that changes a sample stock system. The buttons above the prompt put one suggested prompt in the editor. You can edit each prompt.
 
-| Prompt                      | What you see                                                                                                                                                       |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Deferred Tool**           | The model sees only the name of `adjust_stock`. It calls `tool_search`, a `tools.loaded` event appears, and the stock changes. The result has `structuredContent`. |
-| **Input that is not valid** | The schema of `adjust_stock` permits a change of 100 units at most. The Harness refuses a larger change with an error result, and the stock stays.                 |
-| **Skill**                   | The model calls `use_skill`. A `tools.loaded` event names the Skill `restock`. Only then does the model have the Skill body and the Tool `order_supplier`.         |
-| **Policy deny**             | The Permission Policy denies `delete_product`. The model cannot see the Tool, and a call to it runs nothing.                                                       |
+| Prompt | What you see |
+| --- | --- |
+| **Deferred Tool** | The model sees only the name of `adjust_stock`. It calls `tool_search`, a `tools.loaded` event appears, and the stock changes. The result has `structuredContent`. |
+| **Input that is not valid** | The schema of `adjust_stock` permits a change of 100 units at most. The Harness refuses a larger change with an error result, and the stock stays. |
+| **Skill** | The model calls `use_skill`. A `tools.loaded` event names the Skill `restock`. Only then does the model have the Skill body and the Tool `order_supplier`. |
+| **Policy deny** | The Permission Policy denies `delete_product`. The model cannot see the Tool, and a call to it runs nothing. |
 
 The `after-tool` Hook `stock_audit` writes one line to **Audit log of the Hook** for each Tool call.
 
@@ -111,11 +111,11 @@ The scenario needs a model that supports Tool calls. A small model can call `adj
 
 The composer has three more buttons. Each one acts on the Turn that runs or is parked now:
 
-| Button                      | What it does                                                                                   |
-| --------------------------- | ---------------------------------------------------------------------------------------------- |
-| **Add to this Turn**        | Sends the input with `steer`. The Harness adds it to the Turn at the next batch of Tool calls. |
-| **Queue for the next Turn** | Sends the input without `steer`. A Thread runs one Turn at a time, thus the input waits.       |
-| **Cancel the Turn**         | Ends the Turn with `turn.failed` and the reason `cancelled`.                                   |
+| Button | What it does |
+| --- | --- |
+| **Add to this Turn** | Sends the input with `steer`. The Harness adds it to the Turn at the next batch of Tool calls. |
+| **Queue for the next Turn** | Sends the input without `steer`. A Thread runs one Turn at a time, thus the input waits. |
+| **Cancel the Turn** | Ends the Turn with `turn.failed` and the reason `cancelled`. |
 
 Do these steps:
 
@@ -160,11 +160,11 @@ The Agent is in [`src/media-forks.ts`](./src/media-forks.ts). The Fork, delete a
 
 The **Pending Schedules** card creates a Schedule with one of three timing modes:
 
-| Mode          | What you do                                                                  | What you see                                                                                        |
-| ------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| **Delayed**   | Give a duration, for example `1m`.                                           | The Schedule fires one time after the delay. Then the Thread deletes it.                            |
-| **Timed**     | Give a time as ISO 8601 text. The page suggests a time two minutes from now. | The Schedule fires one time at that time. A time in the past fires immediately.                     |
-| **Recurring** | Give a cron expression with five fields. The zone is UTC.                    | The Schedule fires on each tick and stays in the list. The suggested `* * * * *` fires each minute. |
+| Mode | What you do | What you see |
+| --- | --- | --- |
+| **Delayed** | Give a duration, for example `1m`. | The Schedule fires one time after the delay. Then the Thread deletes it. |
+| **Timed** | Give a time as ISO 8601 text. The page suggests a time two minutes from now. | The Schedule fires one time at that time. A time in the past fires immediately. |
+| **Recurring** | Give a cron expression with five fields. The zone is UTC. | The Schedule fires on each tick and stays in the list. The suggested `* * * * *` fires each minute. |
 
 Do these steps:
 
@@ -229,13 +229,13 @@ Cloudflare can stop a Durable Object at any time. A stopped dev server does the 
 
 6. Wait for the recovery. The watchdog alarm of the Thread fires about one minute after the last Step began. A new input to the Thread starts the recovery at once, thus send a message with **Run** if you do not want to wait. The event log then has these events, in this sequence:
 
-   | Event                                                                                 | What it shows                                                                                                                             |
-   | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-   | `turn.resumed` with `reason: "recovered"`                                             | The Thread continues the Turn from its event log.                                                                                         |
-   | `step.started` with `attempt: 2`                                                      | The tool Step runs again. Each Step has three attempts.                                                                                   |
+   | Event | What it shows |
+   | --- | --- |
+   | `turn.resumed` with `reason: "recovered"` | The Thread continues the Turn from its event log. |
+   | `step.started` with `attempt: 2` | The tool Step runs again. Each Step has three attempts. |
    | `tool.result` for `post_entry` with `isError: true` and `interrupted: { attempt: 2 }` | The call has no `idempotentHint`, thus the Harness does not run it again. The result tells the model that the call may have taken effect. |
-   | `tool.call` and `tool.result` for `read_ledger`                                       | The Agent checks the ledger, as its instructions say. The entry is there one time.                                                        |
-   | `turn.completed`                                                                      | The Agent tells what it found.                                                                                                            |
+   | `tool.call` and `tool.result` for `read_ledger` | The Agent checks the ledger, as its instructions say. The entry is there one time. |
+   | `turn.completed` | The Agent tells what it found. |
 
 7. Reset the scenario and repeat the steps with the **Safe call** prompt. The Agent calls `read_ledger`, which has `readOnlyHint`. After the recovery, the log has a second `step.started` with `attempt: 2` and one `tool.result` for `read_ledger` with `isError: false`. The Harness ran the call again, because a read-only call is safe to repeat.
 
@@ -276,7 +276,7 @@ The scenario needs a model that supports Tool calls. A small model can call `pla
 
 ## The Memory and Scope isolation scenario
 
-**User Memory and Scope isolation** has a concierge Agent with a `memory` block in its Spec. The block declares one Profile field, `roast`, and keeps Notes. The block gives the Agent the built-in Tools `remember` and `recall`. At the start of each Turn, the Harness puts a Memory Fragment in the Prompt with the Profile and the 20 most recent Notes of the User.
+**User Memory and Scope isolation** has a concierge Agent with a `memory` block in its Spec. The block declares one Profile field, `roast`, and keeps Notes. The block gives the Agent the built-in Tools `remember` and `recall`. At the start of each Turn, the Harness puts a Memory Fragment in the Prompt. The Fragment has the Profile and the 20 most recent Notes of the User.
 
 The scenario runs in two sample Scopes, `sample-a` and `sample-b`, for the same User `operator`. The composer has a select that names the Scope that receives the Turn. Each Scope has a **Memory** card with the Profile, the Notes, the Users with a stored Memory and the count of Threads since the reset.
 

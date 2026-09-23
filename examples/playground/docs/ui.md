@@ -12,12 +12,12 @@ This page gives the design of the Playground page. The page is three files in `p
 
 A scenario view has four zones. Put new content in one of them. Do not add a zone.
 
-| Zone         | Element     | What belongs there                                                                             |
-| ------------ | ----------- | ---------------------------------------------------------------------------------------------- |
-| Title bar    | `.intro`    | The title, the status, the summary, notes, the link to the example code and **Reset scenario** |
-| Conversation | `#steps`    | What the operator and the Agent did, in the sequence of the Thread events                      |
-| Composer     | `.composer` | The prompt, the suggested prompts, **Run**, the Turn controls and the status line              |
-| Side column  | `.side`     | The state of the sample system, the controls that change the scenario and the event log        |
+| Zone | Element | What belongs there |
+|---|---|---|
+| Title bar | `.intro` | The title, the status, the summary, notes, the link to the example code and **Reset scenario** |
+| Conversation | `#steps` | What the operator and the Agent did, in the sequence of the Thread events |
+| Composer | `.composer` | The prompt, the suggested prompts, **Run**, the Turn controls and the status line |
+| Side column | `.side` | The state of the sample system, the controls that change the scenario and the event log |
 
 - An action on the full scenario goes in the title bar.
 - An action that sends a Turn goes in the composer.
@@ -28,21 +28,21 @@ A scenario view has four zones. Put new content in one of them. Do not add a zon
 
 Use these classes. Add a component only when none of them fits, and add it to this list in the same change.
 
-| Class                     | Use                                                                                                                                                                                 |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.card`                   | One group of data in the side column. It has an `h3` title. Use `h4` for a label and `pre` for text of the Framework.                                                               |
-| `.card.titled`            | A card whose `h3` also holds a `.badge` with the state of the data, for example the order or the courier booking.                                                                   |
-| `details.card`            | Reference data that the operator does not watch, for example the Permission Policy. It stays closed. Write the number of items in the summary.                                      |
-| `.chips`                  | A row of small buttons that fill an editor, for example suggested prompts. A chip does not send a request.                                                                          |
-| `.editor`                 | A `textarea` for code or JSON.                                                                                                                                                      |
-| `.row`                    | A primary button with its related controls. Each group has at most one `button.primary`.                                                                                            |
-| `.badge`, `.dot`          | A status word, and a status colour in the navigation.                                                                                                                               |
-| `.note`                   | A limit that the operator must know before a run.                                                                                                                                   |
-| `.fine`, `.muted`         | A small explanation, and an empty state.                                                                                                                                            |
-| `.error`, `.outcome`      | A failure, and the result of an action.                                                                                                                                             |
-| `.thread-events`          | A closed event list for one Thread in a scenario that compares Threads.                                                                                                             |
-| `.tool.compacted`         | The Compaction card of the conversation: the summary and the first kept event.                                                                                                      |
-| `.tool.child`             | The card of one child Thread in the conversation. Its `.items` hold the task, the Tool calls and the answer of the child, from the stream of the child.                             |
+| Class | Use |
+|---|---|
+| `.card` | One group of data in the side column. It has an `h3` title. Use `h4` for a label and `pre` for text of the Framework. |
+| `.card.titled` | A card whose `h3` also holds a `.badge` with the state of the data, for example the order or the courier booking. |
+| `details.card` | Reference data that the operator does not watch, for example the Permission Policy. It stays closed. Write the number of items in the summary. |
+| `.chips` | A row of small buttons that fill an editor, for example suggested prompts. A chip does not send a request. |
+| `.editor` | A `textarea` for code or JSON. |
+| `.row` | A primary button with its related controls. Each group has at most one `button.primary`. |
+| `.badge`, `.dot` | A status word, and a status colour in the navigation. |
+| `.note` | A limit that the operator must know before a run. |
+| `.fine`, `.muted` | A small explanation, and an empty state. |
+| `.error`, `.outcome` | A failure, and the result of an action. |
+| `.thread-events` | A closed event list for one Thread in a scenario that compares Threads. |
+| `.tool.compacted` | The Compaction card of the conversation: the summary and the first kept event. |
+| `.tool.child` | The card of one child Thread in the conversation. Its `.items` hold the task, the Tool calls and the answer of the child, from the stream of the child. |
 | `.you`, `.agent`, `.tool` | The items of the conversation. One `.tool` card holds the input, the Approval and the result of one Tool call. A `continue` Approval uses the same card for the budget of the Turn. |
 
 An empty list shows a `.muted` sentence that tells what fills it. Do not show an empty card.
@@ -52,11 +52,11 @@ An empty list shows a `.muted` sentence that tells what fills it. Do not show an
 - Set a button to `disabled` while its request runs. Set it back in a `finally` block.
 - The `sync` function owns the **Run** button, the Turn controls, the status line and the typing indicator. Change the `busy`, `waiting` and `parked` values, then call `sync`. Do not set them from a second place.
 - A scenario with `upload` gets a `.row` with the file input, **Attach the sample file** and **Remove the file**. A sent message clears the file.
-- A scenario that compares Threads or Scopes gets a `select` next to **Run**. It selects the Thread that the conversation shows and that receives each Turn. The `TARGETS` function of the scenario gives the options, and the `syncTarget` function owns them. An option with a Scope sets the `scope` query parameter of each Thread route, which the `threadRoute` function builds.
+- A scenario that compares Threads or Scopes gets a `select` next to **Run**. It selects the Thread that the conversation shows and that receives each Turn. The `TARGETS` function of the scenario gives the options, and the `syncTarget` function owns them. An option with a Scope sets the `scope` query parameter of each Thread route. The `threadRoute` function builds the route.
 - A scenario with `controls` gets a second `.row` in the composer: **Add to this Turn**, **Queue for the next Turn** and **Cancel the Turn**. These buttons work only while a Turn runs or is parked.
 - The Compaction and recovery scenario gets a **Ledger system** card with **Hold the ledger** and **Release the ledger**, and a **Context of the Agent** card with **Compact the Thread**. A panel action keeps the Thread of the conversation. Only a saved Agent Spec starts a new one.
 - The Delegation scenario gets a **Child Threads** card and a **Usage records** card. A `delegation.started` event adds a `.tool.child` card and opens a stream of the child Thread. The `childStreams` set holds each one, and `closeStreams` closes them with the stream of the page. An Approval of a child shows in the parent conversation with the label of the child, and its answer goes to the parent route.
-- The Memory scenario gets a **Memory** card for each sample Scope with **Start a new Thread** and **Forget the User**, a **Scope boundary** card whose button shows the raw answer of a Thread route in a `pre`, and a closed card with the Profile fields. A new Thread moves the composer to it when the conversation is in that Scope.
+- The Memory scenario gets a **Memory** card for each sample Scope, with **Start a new Thread** and **Forget the User**. Its **Scope boundary** card shows the raw answer of a Thread route in a `pre`. A closed card shows the Profile fields. A new Thread moves the composer to it when the conversation is in that Scope.
 - The Schedules scenario gets a **Subscriber of this page** card. **Detach the Subscriber** closes the socket of the page. The page then reads new events and the scenario state on a timer. The `setAttached` function owns this state.
 - The `add` function appends to the conversation. It scrolls only when the operator is at the end.
 - A card gets the `changed` class when its data changes. The operator then sees the effect of a Tool call.
