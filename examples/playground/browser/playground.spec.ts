@@ -490,7 +490,9 @@ test("the second sample Scope has no Memory of the User, and a key of it is not 
   await expect(page.locator("#target option:checked")).toHaveText("Send in the Scope sample-a");
 });
 
-test("usage records show attribution and cost, the handler deduplicates, and logs redact credentials", async ({ page }) => {
+test("usage records show attribution and cost, the handler deduplicates, and logs redact credentials", async ({
+  page,
+}) => {
   await openScenario(page, "observability");
   await expect(page.locator("#usage")).toContainText("No model call ran yet");
   await expect(page.getByRole("link", { name: "Example code" })).toHaveAttribute("href", /src\/observability\.ts$/);
