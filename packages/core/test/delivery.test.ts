@@ -74,6 +74,25 @@ it("delivers offline Approvals and the completion as separate ranges", async () 
   expect(deliveries[1]!.events).toContainEvent({ type: "turn.completed" });
 });
 
+it("delivers an Approval range and the completion when both Alarms fire after the Turn ends", async () => {
+  provider.script([[reply.toolCall("book", { room: 12 }, "booking")], "Booked"]);
+  const thread = karmi.scope("test").thread({ agent: "asking", threadId: "both-after-end" });
+  await thread.send({
+    kind: "event",
+    type: "booking.requested",
+    payload: {},
+    channelRef: { deliverer: { name: "receipt", ref: "both" } },
+  });
+  await expect.poll(async () => (await thread.status()).state).toBe("parked");
+  const approval = (await thread.events()).find((e) => e.type === "approval.requested")!;
+  await thread.approve(approval.seq, { decision: "allow" });
+  await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.completed")).toBe(true);
+  await clock.advance(1000);
+  await expect.poll(() => deliveries.length).toBe(2);
+  expect(deliveries.some((item) => item.events.some((e) => e.type === "approval.requested"))).toBe(true);
+  expect(deliveries.some((item) => item.events.some((e) => e.type === "turn.completed"))).toBe(true);
+});
+
 it("keeps output available for polling without a Deliverer", async () => {
   provider.script(["Stored"]);
   const thread = karmi.scope("test").thread({ agent: "concierge", threadId: "no-deliverer" });

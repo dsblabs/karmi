@@ -1777,11 +1777,11 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   /** Hands the range that ends at `toSeq` to the Queue, unless a Subscriber is attached or the Scope is going away. */
   private async queueDelivery(toSeq: number): Promise<void> {
-    const range = this.deliveries.peek(toSeq);
+    const range = this.deliveries.range(toSeq);
     if (range === undefined) return;
+    const row = this.row();
     // Any attached Subscriber suppresses delivery. Socket tags can distinguish audiences if needed.
     if (this.ctx.getWebSockets().length === 0) {
-      const row = this.row();
       const status = await this.scopeStub(row).status(row.scope_id);
       if (!status.ok) throw new KarmiError(status.code, status.message);
       if (status.value.state !== "destroying" && status.value.state !== "destroyed") {
@@ -1800,14 +1800,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         } satisfies QueueMessage);
       }
     }
-    this.releaseDeliveryTurn(range.turn);
-  }
-
-  /** Drops the ranges of `turn` once that Turn can no longer enqueue another range. */
-  private releaseDeliveryTurn(turn: number): void {
-    const row = this.row();
-    if ((row.state === "running" || row.state === "parked") && row.turn === turn) return;
-    this.deliveries.dropTurn(turn);
+    const open = (row.state === "running" || row.state === "parked") && row.turn === range.turn;
+    if (!open) this.deliveries.drop(toSeq);
   }
 
   /**

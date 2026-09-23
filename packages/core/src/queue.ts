@@ -1,5 +1,5 @@
 import type { KarmiBindings } from "./bindings";
-import type { DeliveryBinding } from "./deliverer";
+import { decodeDeliveryRoute, type DeliveryBinding } from "./deliverer";
 import type { Deployment } from "./deployment";
 import { KarmiError, errorMessage } from "./errors";
 import { keys } from "./keys";
@@ -35,23 +35,11 @@ function decodeQueueMessage(body: unknown): QueueMessage {
     if (body.kind === "delivery") {
       const message = body as Extract<QueueMessage, { kind: "delivery" }>;
       if (!("binding" in body) || body.binding === undefined) return message;
-      return { ...message, binding: decodeQueueBinding(body.binding) };
+      return { ...message, binding: decodeDeliveryRoute(body.binding) };
     }
     throw new KarmiError("queue.unhandled", `Unknown Queue job "${String(body.kind)}".`);
   }
   throw new KarmiError("queue.unhandled", "A Queue message without a kind.");
-}
-
-function decodeQueueBinding(value: unknown): DeliveryBinding {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("name" in value) ||
-    typeof value.name !== "string" ||
-    !("ref" in value)
-  )
-    throw new KarmiError("deliverer.invalid", "A delivery route requires { name, ref }.");
-  return { name: value.name, ref: value.ref };
 }
 
 /**

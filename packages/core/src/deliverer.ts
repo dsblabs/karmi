@@ -48,7 +48,16 @@ export function defineDeliverer(input: Deliverer): Deliverer {
  */
 export function deliveryBinding(channelRef: unknown): DeliveryBinding | undefined {
   if (typeof channelRef !== "object" || channelRef === null || !("deliverer" in channelRef)) return;
-  const value = channelRef.deliverer;
+  return decodeDeliveryRoute(channelRef.deliverer, "channelRef.deliverer requires { name, ref }.");
+}
+
+/**
+ * Reads `{ name, ref }` as a Deliverer route. Throws `deliverer.invalid` when the shape is wrong.
+ */
+export function decodeDeliveryRoute(
+  value: unknown,
+  invalid = "A delivery route requires { name, ref }.",
+): DeliveryBinding {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -56,7 +65,7 @@ export function deliveryBinding(channelRef: unknown): DeliveryBinding | undefine
     typeof value.name !== "string" ||
     !("ref" in value)
   )
-    throw new KarmiError("deliverer.invalid", "channelRef.deliverer requires { name, ref }.");
+    throw new KarmiError("deliverer.invalid", invalid);
   assertName("deliverer", value.name);
   return { name: value.name, ref: value.ref };
 }
@@ -100,25 +109,25 @@ export class DeliveryOutbox {
   }
 
   /** The range that ends at `toSeq`, or undefined when no such range waits. */
-  peek(toSeq: number): { fromSeq: number; turn: number; binding: DeliveryBinding } | undefined {
+  range(toSeq: number): { fromSeq: number; turn: number; binding: DeliveryBinding } | undefined {
     const row = this.db.select().from(deliveries).where(eq(deliveries.toSeq, toSeq)).get();
     return row && { fromSeq: row.fromSeq, turn: row.turn, binding: decodeBinding(row.binding) };
   }
 
   /** The first `seq` of the range that ends at `toSeq`, or undefined when no such range waits. */
   fromSeq(toSeq: number): number | undefined {
-    return this.peek(toSeq)?.fromSeq;
+    return this.range(toSeq)?.fromSeq;
   }
 
   /** The route that the range had when it was added, or undefined when no such range waits. */
   binding(fromSeq: number, toSeq: number): DeliveryBinding | undefined {
-    const row = this.peek(toSeq);
+    const row = this.range(toSeq);
     return row?.fromSeq === fromSeq ? row.binding : undefined;
   }
 
-  /** Removes every range of `turn`. Leaves the route and the ranges of other Turns. */
-  dropTurn(turn: number): void {
-    this.db.delete(deliveries).where(eq(deliveries.turn, turn)).run();
+  /** Removes the range that ends at `toSeq`. Leaves the route and every other range. */
+  drop(toSeq: number): void {
+    this.db.delete(deliveries).where(eq(deliveries.toSeq, toSeq)).run();
   }
 
   /** Removes every range and the route. */
