@@ -16,7 +16,8 @@ import {
 import { decodeOrder, REFUND } from "./refund";
 import { routeError } from "./route-error";
 import { sampleData, type SampleDataDO } from "./sample-data";
-import { decodeScriptOrders, SCRIPT_LIMITS, scriptRuns, scriptsAgent, SCRIPTS } from "./scripts";
+import { scriptRuns } from "./script-runs";
+import { decodeScriptOrders, SCRIPT_LIMITS, scriptsAgent, SCRIPTS } from "./scripts";
 import { adjustStock, checkStock, decodeStock, deleteProduct, STOCKROOM, stockroomAgent } from "./stockroom";
 
 /** The sample Scope that the scenarios run in. */
@@ -163,7 +164,7 @@ function scriptsRuntime(model: string): Runtime {
         orders: decodeScriptOrders(stored),
         grant: { ...capabilities?.scripts, limits: SCRIPT_LIMITS },
         policy,
-        runs: scriptRuns(thread.identity.threadId, await thread.events()),
+        runs: scriptRuns(thread.identity.threadId, await thread.events(), SCRIPT_LIMITS),
         turn: turnView(status),
       };
     },

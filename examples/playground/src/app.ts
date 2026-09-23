@@ -29,7 +29,7 @@ export interface PlaygroundOptions {
   /** The media bucket used by the authenticated download route. */
   media: R2Bucket | undefined;
   /** Whether the Worker has the `KARMI_LOADER` binding. Without it, the isolate Scripts scenario is unavailable. */
-  loader: boolean;
+  hasLoader: boolean;
 }
 
 /** The Playground as a Worker `fetch`. */
@@ -159,11 +159,30 @@ function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, media: R2Bucket 
   } satisfies Record<string, ScenarioRoutes>;
 }
 
+/** The answer of `/api/playground`: the selected Provider without its credential, the scenarios and the coverage. */
+function describePlayground(setup: ProviderSetup | undefined, hasLoader: boolean): Response {
+  return Response.json({
+    provider: setup
+      ? { id: setup.option.id, label: setup.option.label, model: setup.model, baseUrl: setup.baseUrl }
+      : null,
+    scenarios: SCENARIOS.map((scenario) => viewScenario(scenario, setup, hasLoader)),
+    coverage: COVERAGE,
+  });
+}
+
 /**
  * Creates the Playground routes on a karmi. The access token guards each route: the Thread routes of
  * `@karmi/http` and the routes below `/api`. No route returns a credential.
  */
-export function createPlayground({ karmi, model, setup, token, data, media, loader }: PlaygroundOptions): Playground {
+export function createPlayground({
+  karmi,
+  model,
+  setup,
+  token,
+  data,
+  media,
+  hasLoader,
+}: PlaygroundOptions): Playground {
   // A browser cannot set headers on an EventSource, so the token can also be a query parameter.
   const authenticate = authentication(token);
   const http = createHttpHandler({ karmi, authenticate });
@@ -188,14 +207,7 @@ export function createPlayground({ karmi, model, setup, token, data, media, load
   }
 
   async function api(request: Request, path: string): Promise<Response> {
-    if (path === "/api/playground" && request.method === "GET")
-      return Response.json({
-        provider: setup
-          ? { id: setup.option.id, label: setup.option.label, model: setup.model, baseUrl: setup.baseUrl }
-          : null,
-        scenarios: SCENARIOS.map((scenario) => viewScenario(scenario, setup, loader)),
-        coverage: COVERAGE,
-      });
+    if (path === "/api/playground" && request.method === "GET") return describePlayground(setup, hasLoader);
     const answered = await ownRoutes(own, request, path);
     if (answered) return answered;
     const [, id, action] =

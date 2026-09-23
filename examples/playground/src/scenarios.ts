@@ -46,8 +46,8 @@ export interface Scenario {
   /** True when the composer sends one file with the prompt. */
   upload?: boolean;
   /** True when the scenario needs the `KARMI_LOADER` binding of the Worker. */
-  loader?: boolean;
-  /** Limits of local execution that the operator must know before a run. */
+  needsLoader?: boolean;
+  /** What the operator must know before a run, other than a limit of the model. */
   notes?: string[];
 }
 
@@ -181,7 +181,7 @@ export const SCENARIOS: readonly Scenario[] = [
     group: "Scripts",
     title: "Isolate Scripts",
     summary:
-      "The model runs your JavaScript in an isolate. The Script calls the sample Tools that the Permission Policy allows, and each nested call names its Script. A Tool that needs an Approval and the network are out of reach, and the Harness stops a Script at its limits or when you cancel the Turn.",
+      "The model runs your JavaScript in an isolate. The Script calls the sample Tools that the Permission Policy allows, and each nested call names its Script. A Script cannot call a Tool that needs an Approval or use the network. The Harness stops a Script at its limits or when you cancel the Turn.",
     built: true,
     prerequisites: [
       "The KARMI_LOADER binding. The local development server has it. A Cloudflare deployment needs the Workers Paid plan: select isolate Scripts when pnpm deploy asks.",
@@ -190,7 +190,7 @@ export const SCENARIOS: readonly Scenario[] = [
     prompts: SCRIPT_PROMPTS,
     code: `${CODE}/src/scripts.ts`,
     controls: true,
-    loader: true,
+    needsLoader: true,
     notes: [
       `Local workerd does not enforce cpuMs, thus the CPU limit Script finishes in local development. Only a deployed Worker shows the limit of ${String(SCRIPT_LIMITS.cpuMs)} ms.`,
     ],
@@ -234,13 +234,13 @@ export interface ScenarioView extends Scenario {
 }
 
 /**
- * Adds the state for the current setup to a scenario. `loader` tells whether the Worker has the `KARMI_LOADER`
+ * Adds the state for the current setup to a scenario. `hasLoader` tells whether the Worker has the `KARMI_LOADER`
  * binding. It makes no network call.
  */
-export function viewScenario(scenario: Scenario, setup: ProviderSetup | undefined, loader: boolean): ScenarioView {
+export function viewScenario(scenario: Scenario, setup: ProviderSetup | undefined, hasLoader: boolean): ScenarioView {
   if (!scenario.built)
     return { ...scenario, status: "incomplete", reason: "This scenario is not built yet.", modelNotes: [] };
-  if (scenario.loader && !loader)
+  if (scenario.needsLoader && !hasLoader)
     return {
       ...scenario,
       status: "unavailable",
