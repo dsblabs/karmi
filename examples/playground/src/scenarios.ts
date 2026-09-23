@@ -1,5 +1,6 @@
 import { AGENTS, ASSISTANT_PROMPTS } from "./assistant";
 import { DISPATCH_PROMPTS, MAX_STEPS, TURNS } from "./dispatch";
+import { CONCIERGE_PROMPTS, MEMORY } from "./concierge";
 import { COMPACTION, CONTEXT, LEDGER_PROMPTS } from "./ledger";
 import { FORKS, FORKS_PROMPT } from "./media-forks";
 import type { ProviderSetup } from "./provider-options";
@@ -154,13 +155,25 @@ export const SCENARIOS: readonly Scenario[] = [
     prompts: REMINDER_PROMPTS,
     code: `${CODE}/src/reminders.ts`,
   },
-  notBuilt("memory", "Memory and Knowledge", "User Memory and document search", [
+  {
+    id: MEMORY,
+    group: "Memory and Knowledge",
+    title: "User Memory and Scope isolation",
+    summary:
+      "A concierge Agent remembers the preferences of the User with the built-in remember Tool. A new Thread of the same User gets them in its Memory Fragment. Inspect and delete the Memory, and see that the same User in a second sample Scope has none of it.",
+    built: true,
+    prerequisites: [],
+    needs: ["toolCalls"],
+    prompts: CONCIERGE_PROMPTS,
+    code: `${CODE}/src/concierge.ts`,
+  },
+  notBuilt("knowledge", "Memory and Knowledge", "Knowledge ingestion and document search", [
     "Vector retrieval needs a Cloudflare Vectorize index.",
   ]),
   notBuilt("scripts", "Scripts", "Isolate and container Scripts", [
     "Container Scripts need Docker locally, or a Cloudflare account with Containers.",
   ]),
-  notBuilt("scopes", "Scopes and credentials", "Scope isolation, credentials and key rotation"),
+  notBuilt("scopes", "Scopes and credentials", "Scope lifecycle, credentials and key rotation"),
   notBuilt("mcp", "Providers and MCP", "Provider switching, AI Gateway and remote MCP Tools", [
     "A remote MCP server.",
     "AI Gateway needs a Cloudflare account.",
@@ -240,6 +253,7 @@ const forks = row(FORKS);
 const schedules = row(SCHEDULES);
 const compaction = row(COMPACTION);
 const delegation = row(DELEGATION);
+const memory = row(MEMORY);
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
@@ -303,6 +317,36 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Usage records of a Delegation",
     "Observability",
     "The Usage records card lists the records of the parent and of each child. A child record names its parent. No record occurs two times.",
+  ),
+  memory(
+    "Memory Profile and Notes",
+    "Memory and Knowledge",
+    "The remember Tool writes the roast to the Profile and a Note. The Memory card shows both, with the fields of the Agent.",
+  ),
+  memory(
+    "Memory across Threads",
+    "Memory and Knowledge",
+    "Start a new Thread. The Agent answers from the Memory Fragment without a Tool call. The event log of the new Thread has no earlier event.",
+  ),
+  memory(
+    "Memory search",
+    "Memory and Knowledge",
+    "The recall Tool finds a Note by its words and returns it as the result.",
+  ),
+  memory(
+    "Memory inspection and deletion",
+    "Memory and Knowledge",
+    "The Memory card reads the Memory with scope.users.memory. Forget deletes it, and the next Thread does not know the preference.",
+  ),
+  memory(
+    "Scope isolation",
+    "Scopes and credentials",
+    "The same User in the second sample Scope has an empty Memory. A Thread key of one Scope gets a 404 answer through the other.",
+  ),
+  memory(
+    "Users of a Scope",
+    "Scopes and credentials",
+    "The Memory card lists each User with a stored Memory in the Scope.",
   ),
   turns("Capability grants", "Agents", `The longRunning grant gives the Turn ${String(MAX_STEPS)} Steps.`),
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),

@@ -977,6 +977,111 @@ function purchaseCards({ purchases, turn, children, usage }) {
   ];
 }
 
+// The last answer of the Scope boundary request. The side column renders again when its data changes, and the
+// card shows the answer again.
+let boundaryAnswer = "No request was sent yet.";
+
+/** The Memory and Scope isolation scenario: one Memory card for each sample Scope, and the Scope boundary card. */
+function memoryCards({ user, scopes, fields }, onChanged, isCurrent) {
+  const path = "/api/scenarios/memory";
+  const changed = (note) => (next) => isCurrent() && onChanged(next, note);
+  const memoryCard = (scope) => {
+    const result = el("p", { className: "fine" });
+    const stored = Object.keys(scope.memory.profile).length > 0 || scope.memory.notes.length > 0;
+    return el(
+      "div",
+      { className: "card titled", id: `memory-${scope.id}` },
+      el("h3", {}, `Memory of ${user} in ${scope.id}`, badge(stored ? "stored" : "empty")),
+      ...(stored
+        ? [
+            el("h4", { textContent: "Profile" }),
+            el("pre", { textContent: JSON.stringify(scope.memory.profile, null, 2) }),
+            el("h4", { textContent: `Notes (${scope.memory.notes.length})` }),
+            scope.memory.notes.length > 0
+              ? el(
+                  "ul",
+                  {},
+                  ...scope.memory.notes.map((note) =>
+                    el("li", {}, note.text, " ", el("code", { textContent: `by ${note.agent}` })),
+                  ),
+                )
+              : el("p", { className: "muted", textContent: "The Agent wrote no Note." }),
+          ]
+        : [el("p", { className: "muted", textContent: "Nothing is stored. Run the Remember prompt in this Scope." })]),
+      rows(
+        ["Users with a Memory", scope.users.length > 0 ? scope.users.join(", ") : "none"],
+        ["Threads since the reset", String(scope.threads.length)],
+      ),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          "Start a new Thread",
+          () => api("POST", `${path}/thread`, { scope: scope.id }),
+          changed(`A new Thread of ${user} in ${scope.id}. Ask the Agent what it knows.`),
+          result,
+          true,
+        ),
+        cardAction(
+          "Forget the User",
+          () => api("POST", `${path}/forget`, { scope: scope.id }),
+          changed(`The Scope ${scope.id} deleted the Memory of ${user}. The Threads stay.`),
+          result,
+        ),
+      ),
+      result,
+      el("p", {
+        className: "fine",
+        textContent:
+          "The card reads the Memory with scope.users.memory. Only a Turn writes it. Forget calls delete, which a Platform uses when a User asks to erase their data.",
+      }),
+    );
+  };
+  const [first, second] = scopes;
+  const boundary = el("pre", { textContent: boundaryAnswer });
+  const boundaryResult = el("p", { className: "fine" });
+  return [
+    ...scopes.map(memoryCard),
+    el(
+      "div",
+      { className: "card", id: "boundary" },
+      el("h3", { textContent: "Scope boundary" }),
+      el("p", {
+        className: "fine",
+        textContent: `Each request of this page acts in one Scope. The access token opens ${first.id} and ${second.id}, and a request names its Scope in the scope query parameter. A Thread key names a Thread in the Scope of the request only. This button reads the current Thread of ${second.id} with a request in ${first.id}.`,
+      }),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          `Read the ${second.id} Thread as ${first.id}`,
+          async () => {
+            const response = await fetch(`/threads/${second.threadKey}`, {
+              headers: { authorization: `Bearer ${token}` },
+            });
+            return `GET /threads/${second.threadKey}\nHTTP ${response.status}\n${await response.text()}`;
+          },
+          (text) => (boundary.textContent = boundaryAnswer = text),
+          boundaryResult,
+          true,
+        ),
+      ),
+      boundary,
+      boundaryResult,
+    ),
+    el(
+      "details",
+      { className: "card" },
+      el("summary", { textContent: `Profile fields of the Agent (${Object.keys(fields).length})` }),
+      el("pre", { textContent: JSON.stringify(fields, null, 2) }),
+      el("p", {
+        className: "fine",
+        textContent: "The remember Tool can write these fields only. The Harness checks each value against the schema.",
+      }),
+    ),
+  ];
+}
+
 // The cards next to the conversation, by scenario id.
 const PANELS = {
   refund: (state) => [orderCard(state.order)],
@@ -987,6 +1092,25 @@ const PANELS = {
   schedules: scheduleCards,
   compaction: ledgerCards,
   delegation: purchaseCards,
+  memory: memoryCards,
+};
+
+/**
+ * The Threads that the composer of a scenario can send to, or null for a scenario with one Thread. Each entry
+ * has the label of the option, the Thread key and, for a scenario that acts in more than one Scope, the Scope.
+ */
+const TARGETS = {
+  forks: (state) =>
+    [
+      !state.original.deleted && { label: "Send to the Original Thread", threadKey: state.original.threadKey },
+      state.fork && { label: "Send to the Fork Thread", threadKey: state.fork.threadKey },
+    ].filter(Boolean),
+  memory: (state) =>
+    state.scopes.map((scope) => ({
+      label: `Send in the Scope ${scope.id}`,
+      threadKey: scope.threadKey,
+      scope: scope.id,
+    })),
 };
 
 async function renderScenario(scenario) {
@@ -1009,9 +1133,10 @@ async function renderScenario(scenario) {
   };
   if (file) file.onchange = () => (removeFile.disabled = file.files.length === 0);
   removeFile.onclick = () => setFile();
-  // The composer of a scenario that compares Threads selects the Thread that receives the Turn.
-  const target =
-    scenario.id === "forks" ? el("select", { id: "target", ariaLabel: "Thread that receives the Turn" }) : null;
+  // The composer of a scenario that compares Threads or Scopes selects the Thread that receives the Turn.
+  const target = TARGETS[scenario.id]
+    ? el("select", { id: "target", ariaLabel: "Thread that receives the Turn" })
+    : null;
   const run = el("button", { id: "run", className: "primary", textContent: "Run", disabled: true });
   // The Turn controls act on the Turn that runs or is parked. Only a scenario that explains them shows them.
   const control = (id, text) => (scenario.controls ? el("button", { id, textContent: text, disabled: true }) : null);
@@ -1078,8 +1203,15 @@ async function renderScenario(scenario) {
   const path = `/api/scenarios/${scenario.id}`;
   let state = await api("GET", path);
   if (mine !== view) return;
-  // The Thread that the conversation shows and that receives each Turn.
+  // The Thread that the conversation shows and that receives each Turn, and the sample Scope that it is in. The
+  // Scope is undefined for a scenario that acts in the default Scope only.
   let threadKey = state.threadKey;
+  let scopeId;
+  // A Thread route with the Scope of the conversation. The token goes in the query for a stream.
+  const threadRoute = (suffix, ...params) => {
+    const query = [...params, scopeId && `scope=${encodeURIComponent(scopeId)}`].filter(Boolean).join("&");
+    return `/threads/${threadKey}${suffix}${query ? `?${query}` : ""}`;
+  };
   let shownPanel;
   // False while the page holds no stream of the Thread. Only the Schedules scenario detaches its Subscriber.
   let attached = true;
@@ -1110,9 +1242,13 @@ async function renderScenario(scenario) {
     shownPanel = next;
     $("panel").replaceChildren(...cards);
   };
+  // The number of the last panel read. Two reads can overlap, and the older answer can arrive last. The panel
+  // shows the answer of the last read only, thus a stale copy never replaces a fresh one.
+  let reads = 0;
   const refreshPanel = async () => {
+    const read = ++reads;
     const next = await api("GET", path);
-    if (mine !== view) return;
+    if (mine !== view || read !== reads) return;
     state = next;
     showPanel();
   };
@@ -1295,7 +1431,7 @@ async function renderScenario(scenario) {
       .closest(".approval")
       .querySelectorAll("button")
       .forEach((button) => (button.disabled = true));
-    await api("POST", `/threads/${threadKey}/approvals/${seq}`, { decision, by: "operator" });
+    await api("POST", threadRoute(`/approvals/${seq}`), { decision, by: "operator" });
   };
 
   // True from the start of a compact Step until its thread.compacted event. A Step without one dropped nothing.
@@ -1598,37 +1734,38 @@ async function renderScenario(scenario) {
     sync();
   };
 
-  // Offers each Thread of the scenario that exists. It returns true when the selected Thread no longer exists, thus
-  // the composer moved to the first Thread that does.
+  // Offers each Thread that the composer can send to. It returns true when the selected Thread is no longer offered,
+  // thus the composer moved to the current Thread of the same Scope, or to the first Thread.
   const syncTarget = () => {
     if (!target) return false;
-    const threads = [
-      !state.original.deleted && ["Original Thread", state.original],
-      state.fork && ["Fork Thread", state.fork],
-    ];
-    const open = threads.filter(Boolean);
+    const options = TARGETS[scenario.id](state);
     target.replaceChildren(
-      ...open.map(([label, thread]) => el("option", { value: thread.threadKey, textContent: `Send to the ${label}` })),
+      ...options.map((option) => el("option", { value: option.threadKey, textContent: option.label })),
     );
-    const moved = !open.some(([, thread]) => thread.threadKey === threadKey);
-    if (moved) threadKey = open[0][1].threadKey;
+    const moved = !options.some((option) => option.threadKey === threadKey);
+    if (moved) {
+      const next = options.find((option) => option.scope === scopeId) ?? options[0];
+      threadKey = next.threadKey;
+      scopeId = next.scope;
+    }
     target.value = threadKey;
     return moved;
   };
   if (target)
     target.onchange = () => {
       threadKey = target.value;
+      scopeId = TARGETS[scenario.id](state).find((option) => option.threadKey === threadKey)?.scope;
       showThread();
     };
   const listen = () => {
     stream?.close();
     if (!attached) return;
-    const query = `after=${lastSeq}&token=${encodeURIComponent(token)}`;
+    const query = [`after=${lastSeq}`, `token=${encodeURIComponent(token)}`];
     // The Schedules scenario detaches its Subscriber. The Thread learns of a closed WebSocket at once. It can learn of
     // a closed SSE stream much later, and offline delivery stays off until then.
-    if (scenario.id !== "schedules") stream = new EventSource(`/threads/${threadKey}/events?${query}`);
+    if (scenario.id !== "schedules") stream = new EventSource(threadRoute("/events", ...query));
     else {
-      const socket = new WebSocket(`${location.origin.replace(/^http/, "ws")}/threads/${threadKey}?${query}`);
+      const socket = new WebSocket(`${location.origin.replace(/^http/, "ws")}${threadRoute("", ...query)}`);
       // A WebSocket does not connect again on its own. Close code 4004 tells that the Thread no longer exists.
       socket.onclose = (closed) => {
         if (stream === socket && attached && mine === view && closed.code !== 4004) setTimeout(listen, 1000);
@@ -1649,7 +1786,7 @@ async function renderScenario(scenario) {
       if (mine !== view) return clearInterval(timer);
       try {
         const key = threadKey;
-        const missed = attached ? [] : await api("GET", `/threads/${key}/events?after=${lastSeq}`);
+        const missed = attached ? [] : await api("GET", threadRoute("/events", `after=${lastSeq}`));
         if (mine !== view || key !== threadKey || attached) return;
         for (const event of missed) if (event.seq > lastSeq) onEvent(event);
       } catch {
@@ -1679,10 +1816,10 @@ async function renderScenario(scenario) {
         const form = new FormData();
         form.append("text", text);
         form.append("file", file.files[0]);
-        await api("POST", `/threads/${threadKey}/turns`, form);
+        await api("POST", threadRoute("/turns"), form);
         setFile();
       } else
-        await api("POST", `/threads/${threadKey}/turns`, {
+        await api("POST", threadRoute("/turns"), {
           kind: "message",
           parts: [{ type: "text", text }],
           steer: joins,
@@ -1706,7 +1843,7 @@ async function renderScenario(scenario) {
     stop.onclick = async () => {
       stop.disabled = true;
       try {
-        await api("POST", `/threads/${threadKey}/cancel`);
+        await api("POST", threadRoute("/cancel"));
       } catch (error) {
         add(el("p", { className: "error", textContent: String(error.message) }));
       } finally {

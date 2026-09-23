@@ -6,12 +6,14 @@ import { FORKS } from "./media-forks";
 import type { ProviderSetup } from "./provider-options";
 import { SCHEDULES } from "./reminders";
 import { routeError } from "./route-error";
-import { scenarioRuntimes, SCOPE, USER, type Runtime } from "./runtimes";
+import { CONCIERGE, MEMORY } from "./concierge";
+import { memoryScenarioRoutes } from "./memory-routes";
+import { OTHER_SCOPE, SAMPLE_SCOPES, scenarioRuntimes, SCOPE, USER, type Runtime } from "./runtimes";
 import { sampleData, type SampleDataDO } from "./sample-data";
 import { COVERAGE, SCENARIOS, viewScenario } from "./scenarios";
 import { scheduleScenarioRoutes, triggerSupplierDelivery } from "./schedule-routes";
 
-export { SCOPE, USER };
+export { CONCIERGE, MEMORY, OTHER_SCOPE, SCOPE, USER };
 
 /** What `createPlayground` needs. The tests give it a karmi with a scripted Provider. */
 export interface PlaygroundOptions {
@@ -74,11 +76,18 @@ async function sameToken(given: string, expected: string): Promise<boolean> {
   return a !== undefined && b !== undefined && crypto.subtle.timingSafeEqual(a, b);
 }
 
+/**
+ * Maps a request to its Principal. The token opens the sample Scopes only. The `scope` query parameter selects
+ * one of them for the Thread routes, and a request without it acts in the first one.
+ */
 function authentication(token: string | undefined) {
   return async (request: Request): Promise<Principal | null> => {
+    const query = new URL(request.url).searchParams;
     const header = request.headers.get("authorization") ?? "";
-    const given = header.startsWith("Bearer ") ? header.slice(7) : new URL(request.url).searchParams.get("token");
-    return token && given && (await sameToken(given, token)) ? { scope: SCOPE, user: USER } : null;
+    const given = header.startsWith("Bearer ") ? header.slice(7) : query.get("token");
+    const scope = query.get("scope") ?? SCOPE;
+    if (!SAMPLE_SCOPES.includes(scope)) return null;
+    return token && given && (await sameToken(given, token)) ? { scope, user: USER } : null;
   };
 }
 
@@ -127,6 +136,21 @@ async function resetScenario(
   if (restore) await runtime.restore?.();
 }
 
+/** The scenarios with more than one Thread, or with state outside their sample data. Each has its own state, reset and routes. */
+function ownScenarioRoutes(
+  karmi: Karmi,
+  data: DurableObjectNamespace<SampleDataDO>,
+  media: R2Bucket | undefined,
+): Record<string, ScenarioRoutes> {
+  // `karmi.scope` makes random values, which the Workers runtime allows only while it handles a request.
+  const sample = { scope: () => karmi.scope(SCOPE), scopeId: SCOPE, user: USER, data };
+  return {
+    [FORKS]: forkScenarioRoutes({ ...sample, media }),
+    [SCHEDULES]: scheduleScenarioRoutes(sample),
+    [MEMORY]: memoryScenarioRoutes({ scope: (id) => karmi.scope(id), scopeIds: SAMPLE_SCOPES, user: USER, data }),
+  };
+}
+
 /**
  * Creates the Playground routes on a karmi. The access token guards each route: the Thread routes of
  * `@karmi/http` and the routes below `/api`. No route returns a credential.
@@ -140,9 +164,7 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
   const scope = () => karmi.scope(SCOPE);
 
   const runtimes = scenarioRuntimes(scope, model);
-  const sample = { scope, scopeId: SCOPE, user: USER, data };
-  // A scenario with more than one Thread, or with state outside its sample data, has its own state, reset and routes.
-  const own = { [FORKS]: forkScenarioRoutes({ ...sample, media }), [SCHEDULES]: scheduleScenarioRoutes(sample) };
+  const own = ownScenarioRoutes(karmi, data, media);
 
   const threadOf = (runtime: Runtime, generation: number) =>
     scope().thread({ agent: runtime.agent, user: USER, threadId: `${runtime.agent}-${generation}` });
@@ -191,7 +213,8 @@ export function createPlayground({ karmi, model, setup, token, data, media }: Pl
   }
 
   return {
-    supplierDelivery: (at) => triggerSupplierDelivery(sample, "The scheduled handler of the Worker", at),
+    supplierDelivery: (at) =>
+      triggerSupplierDelivery({ scope, scopeId: SCOPE, user: USER, data }, "The scheduled handler of the Worker", at),
     async fetch(request, _env, ctx) {
       const path = new URL(request.url).pathname;
       if (!path.startsWith("/api/")) return http.fetch(request, _env, ctx);

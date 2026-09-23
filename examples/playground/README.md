@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has eight browser scenarios:
+This version has nine browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -12,6 +12,7 @@ This version has eight browser scenarios:
 - **Schedules, external triggers and offline delivery**
 - **Compaction and recovery**
 - **Child Threads and their Approvals**
+- **User Memory and Scope isolation**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -46,6 +47,8 @@ The terminal shows the credential while you type it.
 ## Access
 
 The Worker checks the access token on each route below `/api` and `/threads`. A request without the token gets a `401` answer. The browser files have no data, so the Worker serves them without the token. There is no signup.
+
+The token opens two sample Scopes, `sample-a` and `sample-b`. A request acts in `sample-a`. A Thread route with the query parameter `scope=sample-b` acts in `sample-b`. Only the Memory scenario uses it. A request that names a different Scope gets a `401` answer.
 
 The browser shows the Provider and the model. No route returns the Provider credential.
 
@@ -89,12 +92,12 @@ The scenario needs no model feature other than text. The example code is in [`sr
 
 **Tools, Skills and a Hook** has an Agent that changes a sample stock system. The buttons above the prompt put one suggested prompt in the editor. You can edit each prompt.
 
-| Prompt | What you see |
-| --- | --- |
-| **Deferred Tool** | The model sees only the name of `adjust_stock`. It calls `tool_search`, a `tools.loaded` event appears, and the stock changes. The result has `structuredContent`. |
-| **Input that is not valid** | The schema of `adjust_stock` permits a change of 100 units at most. The Harness refuses a larger change with an error result, and the stock stays. |
-| **Skill** | The model calls `use_skill`. A `tools.loaded` event names the Skill `restock`. Only then does the model have the Skill body and the Tool `order_supplier`. |
-| **Policy deny** | The Permission Policy denies `delete_product`. The model cannot see the Tool, and a call to it runs nothing. |
+| Prompt                      | What you see                                                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Deferred Tool**           | The model sees only the name of `adjust_stock`. It calls `tool_search`, a `tools.loaded` event appears, and the stock changes. The result has `structuredContent`. |
+| **Input that is not valid** | The schema of `adjust_stock` permits a change of 100 units at most. The Harness refuses a larger change with an error result, and the stock stays.                 |
+| **Skill**                   | The model calls `use_skill`. A `tools.loaded` event names the Skill `restock`. Only then does the model have the Skill body and the Tool `order_supplier`.         |
+| **Policy deny**             | The Permission Policy denies `delete_product`. The model cannot see the Tool, and a call to it runs nothing.                                                       |
 
 The `after-tool` Hook `stock_audit` writes one line to **Audit log of the Hook** for each Tool call.
 
@@ -108,11 +111,11 @@ The scenario needs a model that supports Tool calls. A small model can call `adj
 
 The composer has three more buttons. Each one acts on the Turn that runs or is parked now:
 
-| Button | What it does |
-| --- | --- |
-| **Add to this Turn** | Sends the input with `steer`. The Harness adds it to the Turn at the next batch of Tool calls. |
-| **Queue for the next Turn** | Sends the input without `steer`. A Thread runs one Turn at a time, thus the input waits. |
-| **Cancel the Turn** | Ends the Turn with `turn.failed` and the reason `cancelled`. |
+| Button                      | What it does                                                                                   |
+| --------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Add to this Turn**        | Sends the input with `steer`. The Harness adds it to the Turn at the next batch of Tool calls. |
+| **Queue for the next Turn** | Sends the input without `steer`. A Thread runs one Turn at a time, thus the input waits.       |
+| **Cancel the Turn**         | Ends the Turn with `turn.failed` and the reason `cancelled`.                                   |
 
 Do these steps:
 
@@ -157,11 +160,11 @@ The Agent is in [`src/media-forks.ts`](./src/media-forks.ts). The Fork, delete a
 
 The **Pending Schedules** card creates a Schedule with one of three timing modes:
 
-| Mode | What you do | What you see |
-| --- | --- | --- |
-| **Delayed** | Give a duration, for example `1m`. | The Schedule fires one time after the delay. Then the Thread deletes it. |
-| **Timed** | Give a time as ISO 8601 text. The page suggests a time two minutes from now. | The Schedule fires one time at that time. A time in the past fires immediately. |
-| **Recurring** | Give a cron expression with five fields. The zone is UTC. | The Schedule fires on each tick and stays in the list. The suggested `* * * * *` fires each minute. |
+| Mode          | What you do                                                                  | What you see                                                                                        |
+| ------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| **Delayed**   | Give a duration, for example `1m`.                                           | The Schedule fires one time after the delay. Then the Thread deletes it.                            |
+| **Timed**     | Give a time as ISO 8601 text. The page suggests a time two minutes from now. | The Schedule fires one time at that time. A time in the past fires immediately.                     |
+| **Recurring** | Give a cron expression with five fields. The zone is UTC.                    | The Schedule fires on each tick and stays in the list. The suggested `* * * * *` fires each minute. |
 
 Do these steps:
 
@@ -226,13 +229,13 @@ Cloudflare can stop a Durable Object at any time. A stopped dev server does the 
 
 6. Wait for the recovery. The watchdog alarm of the Thread fires about one minute after the last Step began. A new input to the Thread starts the recovery at once, thus send a message with **Run** if you do not want to wait. The event log then has these events, in this sequence:
 
-   | Event | What it shows |
-   | --- | --- |
-   | `turn.resumed` with `reason: "recovered"` | The Thread continues the Turn from its event log. |
-   | `step.started` with `attempt: 2` | The tool Step runs again. Each Step has three attempts. |
+   | Event                                                                                 | What it shows                                                                                                                             |
+   | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+   | `turn.resumed` with `reason: "recovered"`                                             | The Thread continues the Turn from its event log.                                                                                         |
+   | `step.started` with `attempt: 2`                                                      | The tool Step runs again. Each Step has three attempts.                                                                                   |
    | `tool.result` for `post_entry` with `isError: true` and `interrupted: { attempt: 2 }` | The call has no `idempotentHint`, thus the Harness does not run it again. The result tells the model that the call may have taken effect. |
-   | `tool.call` and `tool.result` for `read_ledger` | The Agent checks the ledger, as its instructions say. The entry is there one time. |
-   | `turn.completed` | The Agent tells what it found. |
+   | `tool.call` and `tool.result` for `read_ledger`                                       | The Agent checks the ledger, as its instructions say. The entry is there one time.                                                        |
+   | `turn.completed`                                                                      | The Agent tells what it found.                                                                                                            |
 
 7. Reset the scenario and repeat the steps with the **Safe call** prompt. The Agent calls `read_ledger`, which has `readOnlyHint`. After the recovery, the log has a second `step.started` with `attempt: 2` and one `tool.result` for `read_ledger` with `isError: false`. The Harness ran the call again, because a read-only call is safe to repeat.
 
@@ -271,9 +274,30 @@ A child id is the parent id, then the call id of the `delegate` call. A reset ca
 
 The scenario needs a model that supports Tool calls. A small model can call `place_order` without the supplier list, or put the two tasks in one `delegate` call. The Agents and the Tools are in [`src/purchases.ts`](./src/purchases.ts). The state of the scenario is in [`src/runtimes.ts`](./src/runtimes.ts). The reset route is in [`src/app.ts`](./src/app.ts).
 
+## The Memory and Scope isolation scenario
+
+**User Memory and Scope isolation** has a concierge Agent with a `memory` block in its Spec. The block declares one Profile field, `roast`, and keeps Notes. The block gives the Agent the built-in Tools `remember` and `recall`. At the start of each Turn, the Harness puts a Memory Fragment in the Prompt with the Profile and the 20 most recent Notes of the User.
+
+The scenario runs in two sample Scopes, `sample-a` and `sample-b`, for the same User `operator`. The composer has a select that names the Scope that receives the Turn. Each Scope has a **Memory** card with the Profile, the Notes, the Users with a stored Memory and the count of Threads since the reset.
+
+Do these steps:
+
+1. Select **Run** with the **Remember** prompt. The Agent calls `remember` with the field `roast` and a Note. The **Memory of operator in sample-a** card shows both, and the User is in the list of Users with a Memory.
+2. Select **Start a new Thread** in the card. The conversation is empty, because a new Thread has no earlier event. Select **Run** with the **Ask** prompt. The Agent answers from the Memory Fragment, with no Tool call. Open **Event log** to see that the Thread has no event of the earlier Thread.
+3. Select **Run** with the **Search the Notes** prompt. The Agent calls `recall`, and the result has the Note. `recall` searches the Notes with full-text search, thus a query word must occur in the Note.
+4. Select **Forget the User**. The card is empty. Select **Start a new Thread** and run the **Ask** prompt again. The Agent does not know the preference.
+5. Select **Send in the Scope sample-b** in the composer, then run the **Remember** and the **Ask** prompts. The **Memory of operator in sample-b** card gets its own Memory, and the card of `sample-a` does not change. The same User has one Memory for each Scope.
+6. Select **Read the sample-b Thread as sample-a** in the **Scope boundary** card. The request gets a `404` answer with the code `thread.notFound`. A Thread key names a Thread in the Scope of the request only. karmi has no operation that crosses Scopes.
+
+The **Profile fields of the Agent** card shows the schema of the Profile. The Harness checks each `remember` call against it and refuses a field that the Agent does not declare. The **Memory** cards read the Memory with `scope.users.memory.get` and list the Users with `scope.users.memory.list`. **Forget the User** calls `scope.users.memory.delete`. Only a Turn writes a Memory.
+
+The state stays until you select **Reset scenario**. A reset cancels and deletes each Thread of the scenario in both Scopes, deletes the Memory of the User in both Scopes and starts a new Thread in each one. It does not change another scenario or a Provider credential.
+
+The scenario needs a model that supports Tool calls. A small model can answer from its own guess in place of the Memory Fragment. Check the event log: an answer from the Fragment has no Tool call. The Agent is in [`src/concierge.ts`](./src/concierge.ts). The routes are in [`src/memory-routes.ts`](./src/memory-routes.ts). The mapping of the token to a Scope is in [`src/app.ts`](./src/app.ts).
+
 ## Model limits
 
-The refund scenario, the Tools scenario, the Turn control scenario, the Schedules scenario, the Compaction and recovery scenario and the Delegation scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
+The refund scenario, the Tools scenario, the Turn control scenario, the Schedules scenario, the Compaction and recovery scenario, the Delegation scenario and the Memory scenario need a model that supports Tool calls. The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
 The media scenario shows a separate note about the media types that models can receive. Storage and download do not depend on model support.
 
