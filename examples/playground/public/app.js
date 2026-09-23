@@ -132,16 +132,20 @@ function intro(scenario, ...actions) {
       el("div", { className: "actions" }, ...actions),
     ),
     el("p", { textContent: scenario.summary }),
-    scenario.reason && el("p", { className: "note", textContent: scenario.reason }),
-    ...scenario.modelNotes.map((note) => el("p", { className: "note", textContent: note })),
-    ...(scenario.notes ?? []).map((note) => el("p", { className: "note", textContent: note })),
-    scenario.prerequisites.length > 0 &&
-      el(
-        "div",
-        { className: "card" },
-        el("h3", { textContent: "Prerequisites" }),
-        el("ul", {}, ...scenario.prerequisites.map((text) => el("li", { textContent: text }))),
-      ),
+    el(
+      "div",
+      { className: "notes" },
+      scenario.reason && el("p", { className: "note", textContent: scenario.reason }),
+      ...scenario.modelNotes.map((note) => el("p", { className: "note", textContent: note })),
+      ...(scenario.notes ?? []).map((note) => el("p", { className: "note", textContent: note })),
+      scenario.prerequisites.length > 0 &&
+        el(
+          "div",
+          { className: "card" },
+          el("h3", { textContent: "Prerequisites" }),
+          el("ul", {}, ...scenario.prerequisites.map((text) => el("li", { textContent: text }))),
+        ),
+    ),
   );
 }
 
