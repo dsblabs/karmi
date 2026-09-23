@@ -2,6 +2,7 @@ import { AGENTS, ASSISTANT_PROMPTS } from "./assistant";
 import { DISPATCH_PROMPTS, MAX_STEPS, TURNS } from "./dispatch";
 import { CONCIERGE_PROMPTS, MEMORY } from "./concierge";
 import { COMPACTION, CONTEXT, LEDGER_PROMPTS } from "./ledger";
+import { KNOWLEDGE, LIBRARIAN_PROMPTS } from "./librarian";
 import { FORKS, FORKS_PROMPT } from "./media-forks";
 import { OBSERVABILITY, OBSERVABILITY_PROMPTS } from "./observability";
 import type { ProviderSetup } from "./provider-options";
@@ -173,9 +174,18 @@ export const SCENARIOS: readonly Scenario[] = [
     prompts: CONCIERGE_PROMPTS,
     code: `${CODE}/src/concierge.ts`,
   },
-  notBuilt("knowledge", "Memory and Knowledge", "Knowledge ingestion and document search", [
-    "Vector retrieval needs a Cloudflare Vectorize index.",
-  ]),
+  {
+    id: KNOWLEDGE,
+    group: "Memory and Knowledge",
+    title: "Knowledge ingestion and document search",
+    summary:
+      "A librarian Agent searches a handbook corpus with the search_handbook Tool and gets a notices corpus in its Prompt. Ingest, update and delete documents. Compare the Passages of a search with the answer of the Agent. Run a bulk ingest Job. The built-in Retriever is full-text search and needs no external service.",
+    built: true,
+    prerequisites: [],
+    needs: ["toolCalls"],
+    prompts: LIBRARIAN_PROMPTS,
+    code: `${CODE}/src/librarian.ts`,
+  },
   {
     id: SCRIPTS,
     group: "Scripts",
@@ -303,6 +313,7 @@ const delegation = row(DELEGATION);
 const memory = row(MEMORY);
 const observability = row(OBSERVABILITY);
 const scripts = row(SCRIPTS);
+const knowledge = row(KNOWLEDGE);
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
@@ -451,6 +462,36 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Scripts",
     "Cancel the Turn while the Cancel Script packs boxes. The Script stops. The boxes that it packed stay packed. Reset leaves no Script running.",
   ),
+  knowledge(
+    "Corpus ingestion",
+    "Memory and Knowledge",
+    "Ingest a document into the handbook. A document with a known id replaces the old text. The corpus is in the list of scope.knowledge.list.",
+  ),
+  knowledge(
+    "Search",
+    "Memory and Knowledge",
+    "Search the handbook from the card and read the Passages with their docId, score and metadata. The search_handbook Tool returns the same Passages to the Agent, and the answer names the document.",
+  ),
+  knowledge(
+    "Inline context",
+    "Memory and Knowledge",
+    "The notices corpus is in the Prompt under # Knowledge: notices. The Agent answers from it with no Tool call. A corpus over 32,000 code points fails the Turn.",
+  ),
+  knowledge(
+    "Bulk Jobs",
+    "Memory and Knowledge",
+    "A bulk ingest of 40 documents returns a pending Job. The card shows its progress, and a completed document is searchable.",
+  ),
+  knowledge(
+    "Deletion",
+    "Memory and Knowledge",
+    "Delete a document, and a search no longer finds it. Destroy a corpus, and it leaves the list of the Scope. Reset destroys each corpus and ingests the starting documents again.",
+  ),
+  {
+    group: "Memory and Knowledge",
+    feature: "Vector and hybrid retrieval",
+    observable: "Not shown. It needs Workers AI or a Vectorize index, which local development does not have.",
+  },
   turns("Capability grants", "Agents", `The longRunning grant gives the Turn ${String(MAX_STEPS)} Steps.`),
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),
   shown("Cancellation on reset", "Threads", "Reset cancels a Turn that waits for an Approval."),

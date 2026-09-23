@@ -1,4 +1,5 @@
 import { reply, type ReplyScript } from "@karmi/core/testing";
+import { z } from "zod";
 
 /** The script of the guided refund: look up the order, ask for the refund, then tell the outcome. */
 export const refundReplies: ReplyScript = ({ request }) => {
@@ -160,6 +161,29 @@ export const scriptReplies: ReplyScript = ({ request }) => {
   return result.isError ? "The Script failed." : "The Script finished.";
 };
 
+/**
+ * The script of the Knowledge scenario. The Agent searches the handbook with `search_handbook` and answers with
+ * the first Passage and its document id. It answers a question about a notice from the inline Knowledge of its
+ * Prompt, which the Harness renders under `# Knowledge: notices`.
+ */
+export const librarianReplies: ReplyScript = ({ request }) => {
+  const turn = request.messages.slice(request.messages.findLastIndex((message) => message.role === "user"));
+  const asked = JSON.stringify(turn[0]).toLowerCase();
+  const results = turn.filter((message) => message.role === "toolResult");
+  if (asked.includes("handbook")) {
+    if (results.length === 0) {
+      const lot = /lot (\d+)/.exec(asked)?.[1];
+      return [reply.toolCall("search_handbook", { query: lot ? `lot ${lot}` : "return product" })];
+    }
+    const text = results[0]?.content.map((block) => ("text" in block ? block.text : "")).join("") ?? "[]";
+    const passages = z.array(z.object({ docId: z.string(), text: z.string() })).parse(JSON.parse(text));
+    const first = passages[0];
+    return first ? `The handbook says: ${first.text} (${first.docId})` : "The handbook has nothing about that.";
+  }
+  const notices = /# Knowledge: notices\n([\s\S]*?)(?:\n\n# |$)/.exec(request.system ?? "")?.[1] ?? "";
+  return notices.includes("closed on Sunday") ? "The shop is closed on Sunday." : "I have no notice about Sunday.";
+};
+
 /** The script of the browser checks. It selects the replies from the Prompt, thus one Provider serves each scenario. */
 export const playgroundReplies: ReplyScript = (ctx) => {
   const system = ctx.request.system ?? "";
@@ -170,6 +194,7 @@ export const playgroundReplies: ReplyScript = (ctx) => {
   if (system.includes("ledger") || system.includes("compacting")) return ledgerReplies(ctx);
   if (system.includes("manage a small shop") || system.includes("purchase desk")) return delegationReplies(ctx);
   if (system.includes("concierge")) return conciergeReplies(ctx);
+  if (system.includes("handbook")) return librarianReplies(ctx);
   if (system.includes("Usage desk") || system.includes("Do not invent a cost")) return observabilityReplies(ctx);
   if (system.includes("run_script exactly")) return scriptReplies(ctx);
   if (system.includes("attached file")) return "I received the sample file.";

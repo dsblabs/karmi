@@ -7,13 +7,15 @@ import type { ProviderSetup } from "./provider-options";
 import { SCHEDULES } from "./reminders";
 import { routeError } from "./route-error";
 import { CONCIERGE, MEMORY } from "./concierge";
+import { knowledgeScenarioRoutes } from "./knowledge-routes";
+import { KNOWLEDGE } from "./librarian";
 import { memoryScenarioRoutes } from "./memory-routes";
 import { OTHER_SCOPE, SAMPLE_SCOPES, scenarioRuntimes, SCOPE, USER, type Runtime } from "./runtimes";
 import { sampleData, type SampleDataDO } from "./sample-data";
 import { COVERAGE, SCENARIOS, viewScenario } from "./scenarios";
 import { scheduleScenarioRoutes, triggerSupplierDelivery } from "./schedule-routes";
 
-export { CONCIERGE, MEMORY, OTHER_SCOPE, SCOPE, USER };
+export { CONCIERGE, KNOWLEDGE, MEMORY, OTHER_SCOPE, SCOPE, USER };
 
 /** What `createPlayground` needs. The tests give it a karmi with a scripted Provider. */
 export interface PlaygroundOptions {
@@ -156,6 +158,7 @@ function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, media: R2Bucket 
     [FORKS]: forkScenarioRoutes({ ...sample, media }),
     [SCHEDULES]: scheduleScenarioRoutes(sample),
     [MEMORY]: memoryScenarioRoutes({ scope: (id) => karmi.scope(id), scopeIds: SAMPLE_SCOPES, user, data }),
+    [KNOWLEDGE]: knowledgeScenarioRoutes(sample),
   } satisfies Record<string, ScenarioRoutes>;
 }
 
