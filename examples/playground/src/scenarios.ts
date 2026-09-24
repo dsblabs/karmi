@@ -11,6 +11,7 @@ import type { ProviderSetup } from "./provider-options";
 import { DELEGATION, PURCHASE_PROMPTS } from "./purchases";
 import { REFUND, REFUND_PROMPT } from "./refund";
 import { REMINDER_PROMPTS, SCHEDULES } from "./reminders";
+import { MCP, MCP_PROMPTS } from "./remote-mcp";
 import { SCRIPT_LIMITS, SCRIPT_PROMPTS, SCRIPTS } from "./scripts";
 import { STOCKROOM, STOCKROOM_PROMPTS } from "./stockroom";
 
@@ -247,8 +248,28 @@ export const SCENARIOS: readonly Scenario[] = [
       "Key rotation needs a terminal. The README of the Playground tells each command.",
     ],
   },
-  notBuilt("mcp", "Providers and MCP", "Provider switching, AI Gateway and remote MCP Tools", [
-    "A remote MCP server.",
+  {
+    id: MCP,
+    group: "Providers and MCP",
+    title: "Remote MCP Tools and OAuth Connections",
+    summary:
+      "Register a real remote MCP server in a disposable Scope, with no credential, with a static header or with a user-level OAuth Connection. The Agent gets the Tools of the server, and the Permission Policy decides each call. When the Turn has a tool list but no grant, a call asks for the Connection in the conversation and continues after OAuth.",
+    built: true,
+    prerequisites: [
+      "A remote MCP server with a public https URL. karmi refuses a private address, and the Worker reaches public hosts only.",
+      "For a server with a static credential: the header value that the server expects, for example a Bearer token.",
+      "For a server with OAuth: PLAYGROUND_ORIGIN, the public https origin of the Playground, which pnpm deploy sets. The authorization server must accept a Client ID Metadata Document or Dynamic Client Registration.",
+    ],
+    needs: ["toolCalls"],
+    prompts: MCP_PROMPTS,
+    code: `${CODE}/src/remote-mcp.ts`,
+    notes: [
+      "The Playground has no sample MCP server. The server that you register is a real service, and each allowed call can change its data.",
+      "A reset destroys the disposable Scope with the registration, the Scope credential, the Connection and the cached tool list, and moves to a new Scope id. It does not revoke the grant at the authorization server.",
+      "A Turn can offer the Tools of a server only from a tool list. Most servers list their Tools only for a User with a grant, thus the first Connection comes from Connect in the Connection card.",
+    ],
+  },
+  notBuilt("providers", "Providers and MCP", "Provider switching and AI Gateway", [
     "AI Gateway needs a Cloudflare account.",
   ]),
   notBuilt("http", "HTTP and media", "WebSocket and reconnects"),
@@ -370,6 +391,14 @@ const observability = row(OBSERVABILITY);
 const scripts = row(SCRIPTS);
 const knowledge = row(KNOWLEDGE);
 const lifecycle = row(LIFECYCLE);
+// The tests use the fake MCP servers of the Test kit. Each row tells what a check by hand with a real server covered.
+const mcp = (feature: string, observable: string, verification: string): CoverageRow => ({
+  group: "Providers and MCP",
+  feature,
+  scenario: MCP,
+  observable,
+  verification: `Worker tests with the scripted Provider and the fake MCP servers of the Test kit. ${verification}`,
+});
 // The tests run container Scripts on a fake container runtime, thus the rows say that no real container ran yet.
 const containers = (feature: string, group: string, observable: string): CoverageRow => ({
   ...row(CONTAINERS)(feature, group, observable),
@@ -621,6 +650,41 @@ export const COVERAGE: readonly CoverageRow[] = [
     verification:
       "Setup tests rotate the key ring. Checked by hand with wrangler dev and the scripted Provider: a restart with the rotated ring, a rewrap of 1 credential, and a passed test after the old key was retired. No check ran with a real Provider or in a Cloudflare account.",
   },
+  mcp(
+    "Remote MCP servers",
+    "Register a server. The Scope config gets the server as remote, and egress.mcpHosts permits its host only.",
+    "Browser checks with a fake server. Checked by hand with wrangler dev and https://mcp.deepwiki.com/mcp, which has no credential.",
+  ),
+  mcp(
+    "MCP tool discovery",
+    "The Tools card shows the tools/list of the server with its catalogVersion, cacheScope and protocol era: modern for the 2026 protocol, legacy for an older one.",
+    "Browser checks with a fake server. Checked by hand with wrangler dev and https://mcp.deepwiki.com/mcp, which has no credential. It listed 3 Tools in the legacy era with a private tool list.",
+  ),
+  mcp(
+    "MCP Tools and the Permission Policy",
+    "Without trustAnnotations, each call waits for an Approval. With trustAnnotations, the Policy allows a read-only Tool.",
+    "Browser checks with a fake server. No real model called a real server yet.",
+  ),
+  mcp(
+    "Static MCP credentials",
+    "The header value is the Scope credential scope:mcp-remote. No route returns it. A revoked credential makes the next tool list fail.",
+    "Not verified with a real server yet.",
+  ),
+  mcp(
+    "OAuth Connections",
+    "Connect opens the consent page. The callback stores the grant as the Connection mcp:remote of the User and sends the browser back. Disconnect removes it.",
+    "Not verified with a real authorization server yet. pnpm deploy sets PLAYGROUND_ORIGIN with a second deploy, which did not run in a Cloudflare account yet.",
+  ),
+  mcp(
+    "Connection Approvals",
+    "A call without a grant parks the Turn on a connect Approval with the consent URL. OAuth completes it, and the call runs. A deny gives an error result.",
+    "Not verified with a real authorization server yet.",
+  ),
+  mcp(
+    "Failed and denied connections",
+    "The Scope config refuses a private address. A wrong credential or a server that does not answer gives a failed tool list with the error code of the Framework.",
+    "Browser checks with a fake server. The refused private address was checked by hand with wrangler dev.",
+  ),
   turns("Capability grants", "Agents", `The longRunning grant gives the Turn ${String(MAX_STEPS)} Steps.`),
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),
   shown("Cancellation on reset", "Threads", "Reset cancels a Turn that waits for an Approval."),

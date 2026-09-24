@@ -780,3 +780,45 @@ test("a long container Script becomes a Job with progress, and cancel and reset 
   await page.getByRole("button", { name: "Reset scenario" }).click();
   await expect(page.locator("#container-runs")).toContainText("No Script ran yet");
 });
+
+test("a remote MCP server lists its Tools, and the Permission Policy asks before a call", async ({ page }) => {
+  await openScenario(page, "mcp");
+  const server = page.locator("#mcp-server");
+  await expect(server).toContainText("not registered");
+  await expect(page.getByRole("link", { name: "Example code" })).toHaveAttribute("href", /src\/remote-mcp\.ts$/);
+
+  await page.getByLabel("Server URL").fill("https://board.mcp.test/mcp");
+  await page.getByRole("button", { name: "Register the server" }).click();
+  await expect(server).toContainText("board.mcp.test");
+  await expect(server).toContainText("not trusted");
+  await expect(page.locator("#mcp-tools")).toContainText("read_notice");
+  await expect(page.locator("#mcp-tools")).toContainText("post_notice");
+
+  // Without trusted annotations, each Tool of the server is destructive, thus the call waits for an Approval.
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator(".approval")).toContainText("remote__read_notice");
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect(page.locator("#steps .agent").last()).toContainText("The shop opens at 9.");
+
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(server).toContainText("not registered");
+  await expect(page.locator("#steps")).toBeEmpty();
+});
+
+test("a static MCP credential stays write-only, and a refused credential gives a failed tool list", async ({
+  page,
+}) => {
+  const secret = "Bearer browser-secret-2024";
+  await openScenario(page, "mcp");
+  await page.getByLabel("Server URL").fill("https://keyed.mcp.test/mcp");
+  await page.getByLabel("Credential of the server").selectOption("static");
+  await page.getByLabel("Header value").fill(secret);
+  await page.getByRole("button", { name: "Register the server" }).click();
+  await expect(page.locator("#mcp-credential")).toContainText("version 1");
+  // The fake server accepts another value only, thus the tool list fails with the error of the Framework.
+  await expect(page.locator("#mcp-tools")).toContainText("mcp.discovery.failed");
+  await page.getByRole("button", { name: "Revoke the credential" }).click();
+  await expect(page.locator("#mcp-credential")).toContainText("revoked");
+  await expect(page.locator("#mcp-tools")).toContainText("scope:mcp-remote is missing");
+  expect(await page.content()).not.toContain(secret);
+});

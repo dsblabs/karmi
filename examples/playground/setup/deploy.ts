@@ -114,14 +114,25 @@ async function main(): Promise<void> {
       ...(local.PLAYGROUND_BASE_URL && { PLAYGROUND_BASE_URL: local.PLAYGROUND_BASE_URL }),
       // The Worker offers container Scripts only when this variable names where the containers run.
       ...(manifest.container && { PLAYGROUND_CONTAINERS: "cloudflare" }),
+      // The OAuth Connections of the MCP scenario need the public origin, which an earlier deploy recorded.
+      ...(manifest.origin && { PLAYGROUND_ORIGIN: manifest.origin }),
     };
-    await writeCloudflareConfig(configFile, buildCloudflareConfig(await readBaseConfig(), manifest, variables));
+    const base = await readBaseConfig();
+    await writeCloudflareConfig(configFile, buildCloudflareConfig(base, manifest, variables));
     const secrets = {
       PROVIDER_API_KEY: local.PROVIDER_API_KEY ?? "",
       PLAYGROUND_TOKEN: local.PLAYGROUND_TOKEN ?? "",
       KARMI_KEYRING: local.KARMI_KEYRING ?? "",
     };
-    const address = await deploy(manifest, secrets, configFile.pathname, runner, new FileManifestStore(manifestFile));
+    const store = new FileManifestStore(manifestFile);
+    let address = await deploy(manifest, secrets, configFile.pathname, runner, store);
+    // Wrangler reports the workers.dev address only after the first deploy. A second deploy gives it to the Worker.
+    if (address && address !== variables.PLAYGROUND_ORIGIN) {
+      console.log(`\nDeploy again with PLAYGROUND_ORIGIN ${address}, which OAuth Connections need.`);
+      const withOrigin = { ...variables, PLAYGROUND_ORIGIN: address };
+      await writeCloudflareConfig(configFile, buildCloudflareConfig(base, manifest, withOrigin));
+      address = await deploy(manifest, secrets, configFile.pathname, runner, store);
+    }
     console.log(`\nDeployed ${name}${address ? ` at ${address}` : ""}.`);
     console.log(`Keep .deployments/${name}/manifest.json until you remove the deployment.`);
   } finally {

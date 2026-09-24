@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has fourteen browser scenarios:
+This version has fifteen browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -18,6 +18,7 @@ This version has fourteen browser scenarios:
 - **Knowledge ingestion and document search**
 - **Container Scripts, files and artifacts**
 - **Scope lifecycle, credentials and key rotation**
+- **Remote MCP Tools and OAuth Connections**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -53,7 +54,7 @@ The terminal shows the credential while you type it.
 
 The Worker checks the access token on each route below `/api` and `/threads`. A request without the token gets a `401` answer. The browser files have no data, so the Worker serves them without the token. There is no signup.
 
-The token opens two sample Scopes, `sample-a` and `sample-b`. A request acts in `sample-a`. A Thread route with the query parameter `scope=sample-b` acts in `sample-b`. Only the Memory scenario uses it. The token also opens the disposable Scopes of the Scope lifecycle scenario, `sample-lifecycle-<number>`. A request that names a different Scope gets a `401` answer.
+The token opens two sample Scopes, `sample-a` and `sample-b`. A request acts in `sample-a`. A Thread route with the query parameter `scope=sample-b` acts in `sample-b`. Only the Memory scenario uses it. The token also opens the current disposable Scope of the Scope lifecycle scenario, `sample-lifecycle-<number>`, and of the MCP scenario, `sample-mcp-<number>`. A request that names a different Scope gets a `401` answer.
 
 The browser shows the Provider and the model. No route returns the Provider credential.
 
@@ -478,7 +479,7 @@ The key ring `KARMI_KEYRING` encrypts each Scope credential. `pnpm setup` makes 
    ```
 
 2. Start `pnpm dev` again. The **Key ring** card shows `v2` as the active key and both keys in the ring. Select **Test the credential**: it passes, because the ring can still decrypt with `v1`.
-3. Select **Rewrap the credentials**. The route calls `scope.credentials.rewrap()` for the disposable Scope and for `sample-a` and `sample-b`. The card shows the count for each Scope: 1 for the disposable Scope and 0 for the others. A second rewrap gives 0, because each credential already uses the active key.
+3. Select **Rewrap the credentials**. The route calls `scope.credentials.rewrap()` for the disposable Scope, for `sample-a` and `sample-b`, and for the current Scope of the MCP scenario. The card shows the count for each Scope: 1 for the disposable Scope, 0 for the sample Scopes, and the count of the static MCP credential and OAuth client secrets of the MCP Scope. A second rewrap gives 0, because each credential already uses the active key.
 4. Stop `pnpm dev` and remove the old key:
 
    ```sh
@@ -493,9 +494,73 @@ The state stays until you select **Reset scenario**. A reset cancels the Turn an
 
 The Agent and the Scope config are in [`src/lifecycle.ts`](./src/lifecycle.ts). The routes are in [`src/lifecycle-routes.ts`](./src/lifecycle-routes.ts). The key rotation command is in [`setup/rotate-key.ts`](./setup/rotate-key.ts).
 
+## The remote MCP and OAuth Connections scenario
+
+**Remote MCP Tools and OAuth Connections** connects a real remote MCP server. The Playground has no sample server: the server that you register is a real service, and each call that you allow can change its data. The scenario runs in a disposable Scope, `sample-mcp-<number>`, thus a reset can remove each trace of the server.
+
+You need a server with a public `https` URL. karmi refuses a private address, and the Worker reaches public hosts only. [DeepWiki](https://mcp.deepwiki.com/mcp) needs no credential and is good for a first run.
+
+### Register a server
+
+1. Type the URL in the **Remote MCP server** card and select how the Playground authenticates:
+   - **No credential.**
+   - **Static header.** Type the header name and the value, for example `Authorization` and `Bearer <token>`. The route stores the value with `scope.credentials.put` as the Scope credential `mcp-remote` and clears the field. No route, event or log returns it.
+   - **OAuth, one Connection for each User.** It needs `PLAYGROUND_ORIGIN`. Refer to [OAuth Connections](#oauth-connections).
+2. Select **Trust the annotations of the server** only when you trust the server. Without it, karmi treats each Tool as destructive.
+3. Select **Register the server**. The route writes this Scope config. The static header names the credential, never the value:
+
+   ```json
+   {
+     "mcp": {
+       "servers": {
+         "remote": { "url": "https://mcp.deepwiki.com/mcp", "trustAnnotations": false, "auth": { "type": "none" } }
+       }
+     },
+     "egress": { "mcpHosts": ["mcp.deepwiki.com"] }
+   }
+   ```
+
+   The route then stores a new version of the Agent `mcp-desk` with the Tool reference `mcp:remote`, and lists the Tools with `scope.mcp.refreshCatalog`. The **Tools of the server** card shows each Tool with its annotations, the version of the tool list, its cache scope and the protocol era.
+
+A server that refuses the credential or does not answer gives a failed tool list with the error code and message of the Framework, for example `mcp.discovery.failed`. A private address gets `config.invalid` at registration. To register a different server, select **Reset scenario**.
+
+### Run a Tool
+
+Select **Run**. The Agent sees each Tool of the server as `remote__<tool>`. Its Permission Policy allows a Tool with `readOnlyHint`, thus each other call waits for your Approval in the conversation. Without trusted annotations, each call waits.
+
+**Revoke the credential** in the **Static credential** card revokes the header value. **List the Tools again** then fails, because the credential is missing.
+
+### OAuth Connections
+
+OAuth needs `PLAYGROUND_ORIGIN`, the public `https` origin of the Playground. `pnpm deploy` sets it. For local development, the dev server needs a public `https` address, for example a tunnel. Add the origin to `.dev.vars`. `pnpm setup` keeps the line:
+
+```sh
+PLAYGROUND_ORIGIN='https://playground.example.com'
+```
+
+The authorization server must accept a Client ID Metadata Document at `/.well-known/karmi-mcp-client.json`, or Dynamic Client Registration. The Playground does not register a client of its own. The callback route is `/mcp/oauth/callback`. Without the origin, the OAuth choice of the form is off and tells why.
+
+Do these steps with a server that uses OAuth:
+
+1. Register the server with **OAuth, one Connection for each User**. The **Connection of the User** card shows **no Connection**. Most servers list their Tools only for a User with a grant, thus the Tools card has no tool list yet.
+2. Select **Connect**. The route calls `scope.mcp.authorize` for the User `operator`, and the browser opens the consent page. After your consent, the callback stores the grant as the Connection `mcp:remote` and sends the browser back to the scenario. A refused consent shows that the authorization server did not grant the Connection.
+3. Select **List the Tools again**, then **Run**. The call uses the grant of the User.
+4. A call without a grant parks the Turn on a `connect` Approval. The conversation shows the authorization server with **Open the consent page** and **Deny**. Complete OAuth in the new tab: the call runs again one time, and the Turn continues. **Deny** gives the call an error result with `connection not granted`.
+
+A Turn can offer a Tool only from a tool list. Thus step 4 needs a tool list without a grant. It occurs in two cases:
+
+- The server revokes the grant, for example when you remove the access of the Playground in the settings of the service. karmi drops the grant after the refresh fails. The tool list stays, and the next call asks for the Connection.
+- The tool list is `public`. Only servers of the 2026 protocol can say so. **Disconnect** then removes the grant and keeps the list. For a `private` list, **Disconnect** removes the list too, and the Agent has no Tool of the server until you connect again.
+
+### Reset
+
+**Reset scenario** cancels the Turn and destroys the disposable Scope. The Destroy walk removes the registration, the Agent version, the Scope credential, the Connection, the client registration and the cached tool lists. The next Scope has a new id. A reset does not revoke the grant at the authorization server, and it does not change `.dev.vars`, the Provider credential of setup or another scenario.
+
+The Agent and the config are in [`src/remote-mcp.ts`](./src/remote-mcp.ts). The routes are in [`src/mcp-routes.ts`](./src/mcp-routes.ts).
+
 ## Model limits
 
-These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Knowledge, Usage and logging, isolate Scripts and container Scripts.
+These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Knowledge, Usage and logging, isolate Scripts, container Scripts and remote MCP.
 
 The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
@@ -538,7 +603,7 @@ The command stores the Provider credential, access token and key ring as Worker 
 
 The command records ownership in `.deployments/<name>/manifest.json` before it creates resources. Git ignores this directory. Keep the manifest until removal finishes.
 
-At the end, the command prints the `workers.dev` address of the Worker.
+At the end, the command prints the `workers.dev` address of the Worker. The manifest records it as `origin`. The OAuth Connections of the MCP scenario need it as the variable `PLAYGROUND_ORIGIN`, and Wrangler reports it only after a deploy. Thus the first deploy deploys a second time with the variable. A later deploy of the same name sets it at once.
 
 Run the same command with the deployment name to recover from an interruption:
 
@@ -573,6 +638,7 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 - Local development does not run a cron trigger on its own. Call the `scheduled` handler as the Schedules scenario describes.
 - Local workerd does not enforce the `cpuMs` limit of a Script. Only a deployed Worker shows it.
 - `pnpm dev` has no container runtime. Container Scripts need `pnpm dev:containers` and Docker.
+- OAuth Connections need a public `https` origin. The `http` address of `pnpm dev` cannot take part in OAuth.
 
 ## Tests
 
@@ -582,6 +648,8 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 | `pnpm test:browser` | Each scenario, token access, reset and the layout at three screen sizes, in a browser.       |
 
 The Worker tests use the in-memory credential store of the Test kit, which encrypts nothing. The browser checks store the Scope credential in the envelope store with a fixed key ring of one key, thus their rewrap moves no credential. Only a check by hand with `wrangler dev` covered a rewrap after a rotation.
+
+The tests of the MCP scenario use the fake MCP servers of the Test kit in [`test/mcp-servers.ts`](./test/mcp-servers.ts), with a fake authorization server for OAuth. The browser cannot reach the consent page of a fake, thus only the Worker tests cover OAuth. No check with a real authorization server ran yet.
 
 The tests run container Scripts on a fake container runtime through the `sandbox.driver` option of `createKarmi`, in [`test/container-driver.ts`](./test/container-driver.ts). The Harness, the Workspace, the Jobs and the artifacts are real. The fake runs no code and enforces no network rule, thus only a deployment shows the network rules.
 

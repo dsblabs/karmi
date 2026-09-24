@@ -11,7 +11,9 @@ export type RouteErrorCode =
   | "playground.forkPosition"
   | "playground.noJob"
   | "playground.noUsageBatch"
+  | "playground.oauthUnavailable"
   | "playground.originalDeleted"
+  | "playground.serverRegistered"
   | "schedule.invalid"
   | "schedule.limit"
   | "schedule.notFound";

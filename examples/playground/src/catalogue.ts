@@ -7,6 +7,7 @@ import { ledgerAgent, postEntry, readLedger } from "./ledger";
 import { librarianAgent } from "./librarian";
 import { scopeDeskAgent } from "./lifecycle";
 import { forksAgent } from "./media-forks";
+import { mcpDeskAgent } from "./remote-mcp";
 import { buyerAgent, listSuppliers, managerAgent, placeOrder } from "./purchases";
 import { getOrder, refundAgent, refundOrder } from "./refund";
 import { remindersAgent, sampleInbox, sendReminder } from "./reminders";
@@ -58,6 +59,7 @@ export const catalogue = (model: string): CatalogueInput => ({
     librarianAgent(model),
     containerAgent(model),
     scopeDeskAgent(model),
+    mcpDeskAgent(model),
   ],
   usageHandler: sampleUsageHandler,
 });

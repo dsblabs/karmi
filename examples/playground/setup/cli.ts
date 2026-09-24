@@ -43,8 +43,8 @@ export function parseDevVars(text: string): Record<string, string> {
 }
 
 /**
- * Writes the content of `.dev.vars`. It keeps the token and the key ring of `previous` when they exist. Throws when a
- * value contains a single quote or a line break.
+ * Writes the content of `.dev.vars`. It keeps the token, the key ring and the public origin of `previous` when they
+ * exist. Throws when a value contains a single quote or a line break.
  */
 export function buildDevVars(answers: SetupAnswers, previous: Record<string, string>, fresh: Generated): string {
   const vars: Record<string, string> = {
@@ -54,6 +54,8 @@ export function buildDevVars(answers: SetupAnswers, previous: Record<string, str
     PROVIDER_API_KEY: answers.apiKey,
     PLAYGROUND_TOKEN: previous.PLAYGROUND_TOKEN || fresh.token,
     KARMI_KEYRING: previous.KARMI_KEYRING || fresh.keyring,
+    // The operator adds the public origin by hand for OAuth in local development. Setup keeps it.
+    ...(previous.PLAYGROUND_ORIGIN && { PLAYGROUND_ORIGIN: previous.PLAYGROUND_ORIGIN }),
   };
   // wrangler reads a value in single quotes with no change. In double quotes, it would keep each `\"` of the key ring.
   const lines = Object.entries(vars).map(([name, value]) => {

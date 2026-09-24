@@ -7,6 +7,7 @@ import { catalogue } from "./catalogue";
 import { playgroundLogger } from "./observability";
 import { CONTAINER_IMAGE, containerRuntime } from "./containers";
 import { keyringView } from "./keyring";
+import { CLIENT_NAME, oauthSetup } from "./remote-mcp";
 
 // `pnpm setup` writes the selection and the credential to `.dev.vars`. Without it, the Playground still starts
 // and tells the operator what is missing.
@@ -19,10 +20,15 @@ const model = `${ADAPTER}/${setup?.model ?? "none"}`;
 // binding has no container behind it, thus the Worker offers no container Scripts.
 const containers = containerRuntime(env.PLAYGROUND_CONTAINERS);
 
+// The OAuth Connections of the MCP scenario need the public https origin of the Worker. Without it, the scenario
+// still registers a server with no credential or with a static header.
+const oauth = oauthSetup(env.PLAYGROUND_ORIGIN);
+
 const karmi = createKarmi({
   catalogue: catalogue(model),
   logger: playgroundLogger(),
   ...(containers && { sandbox: { image: CONTAINER_IMAGE } }),
+  ...("origin" in oauth && { oauth: { origin: oauth.origin, clientName: CLIENT_NAME } }),
   ...(setup &&
     apiKey && {
       providers: { [ADAPTER]: buildProvider(setup) },
@@ -50,6 +56,7 @@ const playground = createPlayground({
   keyring: keyringView(env.KARMI_KEYRING),
   hasLoader: env.KARMI_LOADER !== undefined,
   containers,
+  oauth,
 });
 
 /** The Durable Object classes of karmi that wrangler.jsonc names. */

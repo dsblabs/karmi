@@ -270,6 +270,8 @@ describe("Cloudflare deployment", () => {
     expect(retryCalls.every((request) => request.env?.CLOUDFLARE_ACCOUNT_ID === account.id)).toBe(true);
     expect(manifest.worker.status).toBe("created");
     expect(address).toBe("https://karmi-playground-test-a1b2.example.workers.dev");
+    // The next deploy gives the recorded origin to the Worker as PLAYGROUND_ORIGIN.
+    expect(saved.at(-1)?.origin).toBe(address);
   });
 
   it("adds container Scripts to a deployment that exists already", () => {
