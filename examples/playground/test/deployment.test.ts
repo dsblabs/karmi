@@ -4,6 +4,7 @@ import {
   addVectorRetrieval,
   createManifest,
   decodeAccounts,
+  decodeManifest,
   deploy,
   parseDeploymentArguments,
   recordGateway,
@@ -22,6 +23,16 @@ function copy(manifest: DeploymentManifest): DeploymentManifest {
 }
 
 describe("Cloudflare deployment", () => {
+  it("reads back each field of a stored manifest, with the origin of the last deploy", () => {
+    const manifest = recordGateway(
+      addVectorRetrieval(createManifest("karmi-playground-a1b2c3d4", account, {}, { isolateScripts: true })),
+      "default",
+    );
+    manifest.origin = "https://karmi-playground-a1b2c3d4.example.workers.dev";
+    expect(decodeManifest(JSON.parse(JSON.stringify(manifest)))).toEqual(manifest);
+    expect(() => decodeManifest({ version: 1, name: "x" })).toThrow("The deployment manifest is invalid.");
+  });
+
   it("selects an authenticated account by position, id or name", () => {
     const accounts = decodeAccounts({ accounts: [account, { id: "account-2", name: "Second" }] });
     expect(selectAccount(accounts, "2")?.id).toBe("account-2");

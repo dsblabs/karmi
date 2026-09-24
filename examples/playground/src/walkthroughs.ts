@@ -100,12 +100,12 @@ karmi doctor found problems that will break a deploy.`,
     purpose:
       "The deploy command creates the resources in your Cloudflare account and records them in a manifest. The remove command deletes only the resources of that manifest.",
     commands: [
-      "pnpm deploy",
+      "pnpm run deploy",
       "# After an interruption, run the command again with the deployment name that it printed:",
-      "pnpm deploy karmi-playground-a1b2c3d4",
+      "pnpm run deploy karmi-playground-a1b2c3d4",
       "pnpm run remove karmi-playground-a1b2c3d4",
     ].join("\n"),
     expected:
-      "pnpm deploy prints the workers.dev address of the Worker. A retry reads the manifest and continues the work that stopped. pnpm run remove prints Removed all resources owned by the deployment name, and one Preserved line for each resource that you supplied. If a resource remains, it lists the resource and exits with code 1. The README of the Playground tells each question and each option.",
+      "pnpm run deploy prints the workers.dev address of the Worker. A retry reads the manifest and continues the work that stopped. pnpm run remove prints Removed all resources owned by the deployment name, and one Preserved line for each resource that you supplied. If a resource remains, it lists the resource and exits with code 1. The README of the Playground tells each question and each option.",
   },
 ];

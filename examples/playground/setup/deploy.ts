@@ -26,7 +26,9 @@ import { parseDevVars } from "./cli.ts";
 /** Stops before any resource exists when container Scripts are selected and Docker does not answer. */
 function requireDocker(): void {
   if (spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0) return;
-  throw new Error("Container Scripts need Docker, which builds the image. Start Docker, then run pnpm deploy again.");
+  throw new Error(
+    "Container Scripts need Docker, which builds the image. Start Docker, then run pnpm run deploy again.",
+  );
 }
 
 /** The variables of `.dev.vars` that hold the Provider selections of setup. None of them is a secret. */

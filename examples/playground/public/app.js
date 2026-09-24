@@ -130,7 +130,8 @@ function render() {
 function intro(scenario, ...actions) {
   // The notes stay closed, thus the conversation gets the height of the view. Only the reason why a scenario cannot
   // run stays open, because the operator cannot use the scenario without it.
-  const notes = [...scenario.modelNotes, ...(scenario.notes ?? [])];
+  const localLimits = scenario.localLimits ?? [];
+  const notes = [...scenario.modelNotes, ...localLimits, ...(scenario.notes ?? [])];
   const { prerequisites } = scenario;
   return el(
     "section",
@@ -148,7 +149,7 @@ function intro(scenario, ...actions) {
       el(
         "details",
         { className: "notes" },
-        el("summary", {}, notesLabel(notes.length, prerequisites.length)),
+        el("summary", {}, notesLabel(notes.length - localLimits.length, localLimits.length, prerequisites.length)),
         el(
           "div",
           {},
@@ -166,9 +167,29 @@ function intro(scenario, ...actions) {
 }
 
 // The summary of the closed notes of a scenario, with the number of each kind of item.
-function notesLabel(notes, prerequisites) {
+function notesLabel(notes, localLimits, prerequisites) {
   const count = (number, word) => (number === 0 ? [] : [`${String(number)} ${word}${number === 1 ? "" : "s"}`]);
-  return `Notes and prerequisites (${[...count(notes, "note"), ...count(prerequisites, "prerequisite")].join(", ")})`;
+  const counts = [
+    ...count(notes, "note"),
+    ...count(localLimits, "local limit"),
+    ...count(prerequisites, "prerequisite"),
+  ];
+  return `Notes and prerequisites (${counts.join(", ")})`;
+}
+
+// A scenario with a prerequisite other than Provider setup is optional. The others run after pnpm setup and pnpm dev.
+const setupOf = (scenario) => (scenario.prerequisites.length > 0 ? "Optional scenario" : "Default scenario");
+
+// A table cell with one line for each text, or a muted sentence when there is none. A phone shows no header row,
+// thus the sentence names the column.
+function linesCell(texts, empty) {
+  return el(
+    "td",
+    {},
+    texts.length > 0
+      ? el("ul", {}, ...texts.map((text) => el("li", { textContent: text })))
+      : el("span", { className: "muted", textContent: empty }),
+  );
 }
 
 function renderCoverage() {
@@ -181,16 +202,53 @@ function renderCoverage() {
       el("h1", { textContent: "Feature coverage" }),
       el("p", { textContent: "Each row is a documented feature. A row without a scenario is not shown yet." }),
     ),
+    el("h2", { textContent: "Scenarios" }),
+    el("p", {
+      className: "fine",
+      textContent:
+        "A default scenario runs after pnpm setup and pnpm dev. An optional scenario needs its prerequisites. In local development, the state is in .wrangler/ and not in a Cloudflare account.",
+    }),
     el(
       "div",
-      { className: "table" },
+      { className: "table", id: "coverage-scenarios" },
       el(
         "table",
         {},
         el(
           "tr",
           {},
-          ...["Feature", "Scenario", "What you see", "Verification"].map((text) => el("th", { textContent: text })),
+          ...["Scenario", "Setup", "Starting data", "Prerequisites", "Local limits"].map((text) =>
+            el("th", { textContent: text }),
+          ),
+        ),
+        ...playground.scenarios
+          .filter((scenario) => scenario.built)
+          .map((scenario) =>
+            el(
+              "tr",
+              {},
+              el("td", {}, el("a", { href: `#${scenario.id}`, textContent: scenario.title })),
+              el("td", { textContent: setupOf(scenario) }),
+              el("td", { textContent: scenario.startingData }),
+              linesCell(scenario.prerequisites, "No prerequisite."),
+              linesCell(scenario.localLimits ?? [], "No local limit."),
+            ),
+          ),
+      ),
+    ),
+    el("h2", { textContent: "Features" }),
+    el(
+      "div",
+      { className: "table", id: "coverage-features" },
+      el(
+        "table",
+        {},
+        el(
+          "tr",
+          {},
+          ...["Feature", "Scenario", "What you do and see", "Verification"].map((text) =>
+            el("th", { textContent: text }),
+          ),
         ),
         ...[...groups].flatMap(([group, rows]) => [
           el("tr", { className: "group" }, el("td", { colSpan: 4, textContent: group })),
@@ -3122,12 +3180,13 @@ async function renderScenario(scenario) {
     if (!state.handler?.waiting) return void (queueChecks = 0);
     if (queueChecks++ < 30) queueTimer = setTimeout(() => mine === view && refreshPanel(), 2000);
   };
-  // A bulk ingest Job of the Knowledge scenario and the Destroy walk of a Scope run without a Thread event, thus the
-  // page reads their progress on a timer. One timer runs at a time.
+  // A bulk ingest Job of the Knowledge scenario, the Destroy walk of a Scope and a Tool call that a held ledger keeps
+  // running change the state without a Thread event, thus the page reads the state on a timer. One timer runs at a time.
   let jobTimer;
   const watchProgress = () => {
     clearTimeout(jobTimer);
-    if (state.job?.state === "pending" || state.destroy?.state === "destroying")
+    const held = state.ledger?.held && state.turn?.state === "running";
+    if (state.job?.state === "pending" || state.destroy?.state === "destroying" || held)
       jobTimer = setTimeout(() => mine === view && refreshPanel(), 1000);
   };
   showPanel();

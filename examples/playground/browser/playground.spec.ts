@@ -71,9 +71,16 @@ test("reset cancels the pending Approval and restores the scenario", async ({ pa
 test("the Feature coverage page links each row to its scenario", async ({ page }) => {
   await open(page);
   await page.getByRole("link", { name: "Feature coverage" }).click();
-  await expect(page.locator("table")).toContainText("Approvals");
-  await expect(page.locator("table")).not.toContainText("Not built yet");
+  await expect(page.locator("#coverage-features table")).toContainText("Approvals");
+  await expect(page.locator("#coverage-features table")).not.toContainText("Not built yet");
   await expect(page.locator("#planned a")).toHaveCount(0);
+  // The audit of each scenario: default or optional, starting data, prerequisites and local limits.
+  const refund = page.locator("#coverage-scenarios tr", { hasText: "Approve or deny a refund" });
+  await expect(refund).toContainText("Default scenario");
+  await expect(refund).toContainText("A-1042");
+  const vectors = page.locator("#coverage-scenarios tr", { hasText: "Vector retrieval and index rebuild" });
+  await expect(vectors).toContainText("Optional scenario");
+  await expect(vectors).toContainText("no Workers AI and no Vectorize");
 });
 
 async function openScenario(page: Page, id: string): Promise<void> {
@@ -693,7 +700,8 @@ async function runScript(page: Page, chip: string): Promise<void> {
 
 test("a Script calls sample Tools, and each nested call shows under its Script", async ({ page }) => {
   await openScenario(page, "scripts");
-  await expect(page.locator(".note", { hasText: "cpuMs" })).toContainText("does not enforce cpuMs");
+  await expect(page.locator(".note", { hasText: "Local workerd" })).toContainText("does not enforce cpuMs");
+  await expect(page.locator("details.notes summary")).toContainText("1 local limit");
   await expect(page.getByRole("link", { name: "Example code" })).toHaveAttribute("href", /src\/scripts\.ts$/);
   await runScript(page, "Tool calls");
   await expect(page.locator("#steps")).toContainText("The Script finished.");

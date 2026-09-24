@@ -52,6 +52,8 @@ pnpm dev
 
 `pnpm setup` writes `.dev.vars`. Git ignores this file. The file holds the Provider credentials, the access token and the key ring. Run `pnpm setup` again to change the Provider or the model. The command keeps the access token and the key ring.
 
+A Scope keeps a copy of each Agent of the code from its first Turn. After a change of the model, select **Reset scenario** in each scenario that you ran before. The reset stores the Agent of the scenario again with the new model. [Issue 229](https://github.com/dsblabs/karmi/issues/229) tracks this behaviour of the Framework.
+
 The terminal shows the credential while you type it.
 
 ## Access
@@ -117,7 +119,7 @@ The scenario needs a model that supports Tool calls. A small model can call `adj
 
 ## The Turn control scenario
 
-**Control a Turn and its parked work** has an Agent that packs the parcels of a sample dispatch system. The Agent has a `longRunning` grant of 6 Steps, thus a Turn parks for a continuation Approval before it packs every parcel. One Tool gives its call to a Job.
+**Control a Turn and its parked work** has an Agent that packs the parcels of a sample dispatch system. The Agent has a `longRunning` grant of 6 Steps, thus the Turn of the **Budget** prompt parks for a continuation Approval before it ends. One Tool gives its call to a Job.
 
 The composer has three more buttons. Each one acts on the Turn that runs or is parked now:
 
@@ -129,7 +131,7 @@ The composer has three more buttons. Each one acts on the Turn that runs or is p
 
 Do these steps:
 
-1. Select **Run** with the **Budget** prompt. The Agent packs parcels until it spends the 6 Steps of its budget.
+1. Select **Run** with the **Budget** prompt. The Agent packs the parcels and lists them again until it spends the 6 Steps of its budget. Each model call is one Step, and each batch of Tool calls is one Step. A model that packs each parcel in its own call parks before it packs every parcel. A model that packs the parcels in one batch parks before its answer. The prompt asks for a second list, thus both kinds of model spend the budget.
 2. Read the **Turn** card. It shows the state of the Turn, what it waits for and the Steps that it spent.
 3. Write an instruction and select **Add to this Turn**. The event `turn.input` with `steer` appears when the Turn continues.
 4. Select **Allow** on the budget Approval. The Turn gets a new budget and packs the rest. A **Deny** ends the Turn with the stop reason `budget`. An Approval with no answer becomes a deny after 24 hours.
@@ -415,7 +417,7 @@ Each suggested prompt has a Script. The instructions tell the model to run it as
 | **Network** | `fetch` throws. The isolate has no network access. |
 | **Tool-call limit** | The Script asks for 12 calls. The Harness refuses the eleventh and ends the Script with `limit_exceeded: maxToolCalls`. |
 | **Time limit** | The Script waits for 60 seconds. The Harness ends it after 10 seconds with `limit_exceeded: wallMs`. |
-| **CPU limit** | The Script runs a long loop. On Cloudflare, it fails with `limit_exceeded: cpuMs`. Local workerd does not enforce `cpuMs`, thus the Script finishes in local development. |
+| **CPU limit** | The Script runs a long loop. It must fail with `limit_exceeded: cpuMs` on Cloudflare. Local workerd does not enforce `cpuMs`, thus the Script finishes in local development. In a live check on Cloudflare, the Script also finished. [Issue 228](https://github.com/dsblabs/karmi/issues/228) tracks it. |
 | **Cancel** | The Script packs one open order each two seconds. Select **Cancel the Turn** after the first box. The Script stops and packs no more boxes. The boxes that it packed stay packed. |
 
 In the conversation, the card of each `run_script` call lists the Tool calls of its Script. The model does not see them: it gets only the result of `run_script`. The **Script runs** card shows, for each Script, the value or the error, a plain explanation of a known error, the console lines and each nested call with its call id and its `parentCallId`. The parent is the call id of the `run_script` call, in the form `{threadId}:{seq}`. Open **Event log** to see the `tool.call` and `tool.result` events with `parentCallId`.
@@ -527,7 +529,7 @@ The key ring `KARMI_KEYRING` encrypts each Scope credential. `pnpm setup` makes 
 
 5. Start `pnpm dev` again and select **Test the credential**. It passes with the same version. Without step 3, the test fails with `Key "v1" is not in KARMI_KEYRING`.
 
-The Provider credential of setup is a Worker variable, not a Scope credential, thus a rotation does not change it. The other scenarios store no Scope credential. Do step 4 only after a rewrap of each Scope. For a deployment, run `pnpm deploy` with the deployment name after step 1 and after step 4. It stores the new key ring as a Worker secret.
+The Provider credential of setup is a Worker variable, not a Scope credential, thus a rotation does not change it. The other scenarios store no Scope credential. Do step 4 only after a rewrap of each Scope. For a deployment, run `pnpm run deploy` with the deployment name after step 1 and after step 4. It stores the new key ring as a Worker secret.
 
 The state stays until you select **Reset scenario**. A reset cancels the Turn and destroys the disposable Scope, when it is not destroyed yet. The next Scope has a new id, because a destroyed id never holds data again. A reset does not change `.dev.vars`, the Provider credential of setup or another scenario.
 
@@ -571,7 +573,7 @@ Select **Run**. The Agent sees each Tool of the server as `remote__<tool>`. Its 
 
 ### OAuth Connections
 
-OAuth needs `PLAYGROUND_ORIGIN`, the public `https` origin of the Playground. `pnpm deploy` sets it. For local development, the dev server needs a public `https` address, for example a tunnel. Add the origin to `.dev.vars`. `pnpm setup` keeps the line:
+OAuth needs `PLAYGROUND_ORIGIN`, the public `https` origin of the Playground. `pnpm run deploy` sets it. For local development, the dev server needs a public `https` address, for example a tunnel. Add the origin to `.dev.vars`. `pnpm setup` keeps the line:
 
 ```sh
 PLAYGROUND_ORIGIN='https://playground.example.com'
@@ -724,7 +726,7 @@ The recording step makes real model calls with the credential of `pnpm setup`.
 
 The recording keeps the Prompt, the messages and the answers of the model. It keeps no credential: a Provider profile holds only the name of the credential. The file replaces the sample recording of the repository. `git checkout test/recordings/front-desk.jsonl` restores the sample.
 
-The sample recording has a real request of the Harness for Anthropic `claude-sonnet-5`. Its answer and its token counts were written by hand with the `reply` helpers of the Test kit, because no valid Provider credential was available when the sample was made. No real model answer is in the repository.
+The sample recording is a real Turn of OpenRouter with the model `z-ai/glm-5.3-flashx`, which `pnpm dev:record` and `pnpm record` saved.
 
 ### Check the configuration with karmi doctor
 
@@ -766,7 +768,7 @@ The last line of the output is `karmi doctor found problems that will break a de
 
 ### Deploy, retry and remove
 
-The last step of the walkthrough is `pnpm deploy` and `pnpm run remove`. The sections [Deploy to Cloudflare](#deploy-to-cloudflare) and [Remove a Cloudflare deployment](#remove-a-cloudflare-deployment) tell each question, each option and each result.
+The last step of the walkthrough is `pnpm run deploy` and `pnpm run remove`. The sections [Deploy to Cloudflare](#deploy-to-cloudflare) and [Remove a Cloudflare deployment](#remove-a-cloudflare-deployment) tell each question, each option and each result.
 
 ## Model limits
 
@@ -780,7 +782,15 @@ A custom endpoint must have a public address. The Worker refuses requests to a p
 
 ## Feature coverage
 
-The **Feature coverage** page in the browser lists each feature group of karmi, the scenario that shows it and the check that verified it. The list is in [`src/scenarios.ts`](./src/scenarios.ts). A row without a scenario is not built yet.
+The **Feature coverage** page in the browser has two tables. The **Scenarios** table tells for each scenario whether it is default or optional, its starting data, its prerequisites and its local limits. The **Features** table lists each feature of karmi, the scenario that shows it, what you do and see, and the check that verified it. The lists are in [`src/scenarios.ts`](./src/scenarios.ts). A row without a scenario is not built yet.
+
+A live acceptance ran on 2026-09-24 with OpenRouter and `z-ai/glm-5.3-flashx`, in `pnpm dev` without a Cloudflare login and in a temporary deployment that `pnpm run remove` then removed. The **Features** table tells what each check covered. These parts were not verified live:
+
+- OpenAI, Anthropic, Google Gemini and a custom endpoint, because no credential for them was available.
+- A Provider Tool call and AI Gateway. The two OpenRouter profiles accept no Provider Tool, and the gateway of setup needs a token that setup did not have.
+- OAuth Connections and a static MCP credential, because no real server for them was available.
+- The `cpuMs` limit of an isolate Script. On Cloudflare, the CPU limit Script finished. [Issue 228](https://github.com/dsblabs/karmi/issues/228) tracks it.
+- Container Scripts with `pnpm dev:containers` and local Docker, and key rotation in a Cloudflare account.
 
 ## Deploy to Cloudflare
 
@@ -789,8 +799,10 @@ Run setup first.
 Start the guided deployment command:
 
 ```sh
-pnpm deploy
+pnpm run deploy
 ```
+
+Type `run`. `pnpm deploy` and `pnpm remove` are commands of pnpm itself, thus without `run` pnpm does not start the script of the Playground as you typed it.
 
 The command checks your Cloudflare login and lists your accounts. It then creates these resources in the account that you select:
 
@@ -820,13 +832,13 @@ At the end, the command prints the `workers.dev` address of the Worker. The mani
 Run the same command with the deployment name to recover from an interruption:
 
 ```sh
-pnpm deploy karmi-playground-a1b2c3d4
+pnpm run deploy karmi-playground-a1b2c3d4
 ```
 
 You can supply existing resources. The manifest marks them as external, and removal preserves them:
 
 ```sh
-pnpm deploy karmi-playground-a1b2c3d4 --bucket existing-media --queue existing-queue --dead-letter-queue existing-dlq
+pnpm run deploy karmi-playground-a1b2c3d4 --bucket existing-media --queue existing-queue --dead-letter-queue existing-dlq
 ```
 
 `--vector-index existing-vectors` supplies a Vectorize index and selects vector retrieval. It also adds vector retrieval to a deployment that exists already. The command refuses an index without 1024 dimensions, the cosine metric and a string metadata index on `knowledge` and on `doc`. Do not give one index to two Playground deployments: each one writes to the namespaces `sample-a` and `sample-b`, and a remove in one deployment deletes the vectors of the other.
@@ -845,7 +857,7 @@ The command removes the owned Worker, Queues and R2 bucket. It deletes all objec
 
 The command keeps the AI Gateway of setup and its logs, because the Playground did not create it.
 
-A supplied Vectorize index keeps the vectors that the Playground wrote. The command cannot reach the Knowledge Durable Objects, which list them. To delete them, reset the vector retrieval scenario before you remove the deployment.
+A supplied R2 bucket keeps the media that the Playground wrote, for example the artifacts of container Scripts. A supplied Vectorize index keeps the vectors that the Playground wrote. The command cannot reach the Knowledge Durable Objects, which list them. To delete them, reset the vector retrieval scenario before you remove the deployment.
 
 If cleanup fails, the command lists each remaining resource and keeps its ownership record. Fix the reported problem. Then run the command again. A repeated removal skips resources that a prior attempt removed.
 
@@ -854,7 +866,7 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 - The state is in the local emulation, in `.wrangler/`. It is not in a Cloudflare account.
 - Local development and a deployed Worker use separate state.
 - Local development does not run a cron trigger on its own. Call the `scheduled` handler as the Schedules scenario describes.
-- Local workerd does not enforce the `cpuMs` limit of a Script. Only a deployed Worker shows it.
+- Local workerd does not enforce the `cpuMs` limit of a Script. A live check on Cloudflare did not show the limit either, see [issue 228](https://github.com/dsblabs/karmi/issues/228).
 - `pnpm dev` has no container runtime. Container Scripts need `pnpm dev:containers` and Docker.
 - `pnpm dev` has no Workers AI and no Vectorize, thus the vector retrieval scenario needs a deployment.
 - OAuth Connections need a public `https` origin. The `http` address of `pnpm dev` cannot take part in OAuth.
@@ -868,15 +880,15 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 
 The Worker tests also check the walkthrough. `test/walkthroughs.test.ts` runs the checks of `karmi doctor` on `wrangler.jsonc` and on the broken copy and compares the lines with the walkthrough. `test/replay.test.ts` replays the recording.
 
-The Worker tests use the in-memory credential store of the Test kit, which encrypts nothing. The browser checks store the Scope credential in the envelope store with a fixed key ring of one key, thus their rewrap moves no credential. Only a check by hand with `wrangler dev` covered a rewrap after a rotation.
+The Worker tests use the in-memory credential store of the Test kit, which encrypts nothing. The browser checks store the Scope credential in the envelope store with a fixed key ring of one key, thus their rewrap moves no credential. The live acceptance covered a rewrap after a rotation, with a real Provider key as the Scope credential.
 
-The tests of the MCP scenario use the fake MCP servers of the Test kit in [`test/mcp-servers.ts`](./test/mcp-servers.ts), with a fake authorization server for OAuth. The browser cannot reach the consent page of a fake, thus only the Worker tests cover OAuth. No check with a real authorization server ran yet.
+The tests of the MCP scenario use the fake MCP servers of the Test kit in [`test/mcp-servers.ts`](./test/mcp-servers.ts), with a fake authorization server for OAuth. The browser cannot reach the consent page of a fake, thus only the Worker tests cover OAuth. No check with a real authorization server ran.
 
-The tests run container Scripts on a fake container runtime through the `sandbox.driver` option of `createKarmi`, in [`test/container-driver.ts`](./test/container-driver.ts). The Harness, the Workspace, the Jobs and the artifacts are real. The fake runs no code and enforces no network rule, thus only a deployment shows the network rules.
+The tests run container Scripts on a fake container runtime through the `sandbox.driver` option of `createKarmi`, in [`test/container-driver.ts`](./test/container-driver.ts). The Harness, the Workspace, the Jobs and the artifacts are real. The fake runs no code and enforces no network rule, thus only a deployment shows the network rules. The live acceptance ran them in a deployment.
 
 The tests of the vector retrieval scenario use a deterministic Embedder and an index in the memory of the Worker, in [`test/vector-index.ts`](./test/vector-index.ts). The Retriever, the Knowledge Durable Object, the rebuild and the destroy are real.
 
-The tests of the Provider scenario register the scripted Provider under the adapter names `anthropic` and `ai-sdk`. The script streams a Provider Tool call and a gateway log id as a real adapter does. Unit tests check the gateway URL and the `cf-aig-*` headers of the OpenAI and the Anthropic clients against a recording `fetch`. No check with a real Provider, a real Provider Tool or a real AI Gateway ran yet.
+The tests of the Provider scenario register the scripted Provider under the adapter names `anthropic` and `ai-sdk`. The script streams a Provider Tool call and a gateway log id as a real adapter does. Unit tests check the gateway URL and the `cf-aig-*` headers of the OpenAI and the Anthropic clients against a recording `fetch`. The live acceptance switched between two real OpenRouter profiles. No check with a real Provider Tool or a real AI Gateway ran.
 
 Before the first browser check, run `pnpm exec playwright install chromium`. No test needs a credential.
 

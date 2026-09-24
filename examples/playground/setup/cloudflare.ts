@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { experimental_readRawConfig } from "wrangler";
 import {
+  decodeManifest,
   selectBindings,
   type BucketCleaner,
   type CommandRequest,
@@ -117,64 +118,7 @@ export class FileManifestStore implements ManifestStore {
 
 /** Reads a deployment manifest from disk. */
 export async function readManifest(file: URL): Promise<DeploymentManifest> {
-  const value: unknown = JSON.parse(await readFile(file, "utf8"));
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("version" in value) ||
-    value.version !== 1 ||
-    !("name" in value) ||
-    typeof value.name !== "string" ||
-    !("account" in value) ||
-    !("worker" in value) ||
-    !("queue" in value) ||
-    !("deadLetterQueue" in value) ||
-    !("bucket" in value) ||
-    typeof value.account !== "object" ||
-    value.account === null ||
-    !("id" in value.account) ||
-    typeof value.account.id !== "string" ||
-    !("name" in value.account) ||
-    typeof value.account.name !== "string"
-  ) {
-    throw new Error("The deployment manifest is invalid.");
-  }
-  const decodeResource = (resource: unknown): DeploymentManifest["worker"] => {
-    if (
-      typeof resource !== "object" ||
-      resource === null ||
-      !("name" in resource) ||
-      typeof resource.name !== "string" ||
-      !("owned" in resource) ||
-      typeof resource.owned !== "boolean" ||
-      !("status" in resource) ||
-      (resource.status !== "pending" &&
-        resource.status !== "creating" &&
-        resource.status !== "created" &&
-        resource.status !== "removed")
-    ) {
-      throw new Error("The deployment manifest has an invalid resource.");
-    }
-    return { name: resource.name, owned: resource.owned, status: resource.status };
-  };
-  return {
-    version: 1,
-    name: value.name,
-    account: { id: value.account.id, name: value.account.name },
-    worker: decodeResource(value.worker),
-    queue: decodeResource(value.queue),
-    deadLetterQueue: decodeResource(value.deadLetterQueue),
-    bucket: decodeResource(value.bucket),
-    // A manifest from before this option has no field. Its Worker has no Worker Loader binding.
-    isolateScripts: "isolateScripts" in value && value.isolateScripts === true,
-    // A manifest without the field has no container application.
-    ...("container" in value && value.container !== undefined && { container: decodeResource(value.container) }),
-    // A manifest without the field has no vector index.
-    ...("vectorIndex" in value &&
-      value.vectorIndex !== undefined && { vectorIndex: decodeResource(value.vectorIndex) }),
-    // A manifest without the field has no AI Gateway.
-    ...("gateway" in value && value.gateway !== undefined && { gateway: decodeResource(value.gateway) }),
-  };
+  return decodeManifest(JSON.parse(await readFile(file, "utf8")));
 }
 
 /** Builds the Wrangler configuration for one deployment. */

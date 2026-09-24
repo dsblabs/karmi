@@ -277,6 +277,7 @@ export function knowledgeScenarioRoutes(options: KnowledgeRouteOptions) {
   return {
     state: () => scenarioState(options),
     reset: () => resetScenario(options),
+    agents: [LIBRARIAN],
     handle: (request: Request, path: string) => handle(options, request, path),
   };
 }

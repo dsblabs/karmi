@@ -46,6 +46,9 @@ describe("the operations walkthrough", () => {
   });
 
   it("names only scripts of package.json and files that exist", () => {
+    // Commands of pnpm that a script cannot replace in the short form `pnpm <script>`. `exec` and `run` are not here,
+    // because the check reads the word after them.
+    const PNPM_COMMANDS = ["add", "audit", "deploy", "install", "link", "pack", "publish", "remove", "update"];
     const scripts = Object.keys(packageJson.scripts);
     const commands = OPERATIONS_WALKTHROUGH.flatMap((item) => item.commands.split("\n")).filter(
       (line) => !line.startsWith("#"),
@@ -55,6 +58,8 @@ describe("the operations walkthrough", () => {
       expect(tool).toBe("pnpm");
       if (first === "exec") expect(second).toBe("karmi");
       else expect(scripts).toContain(first === "run" ? second : first);
+      // pnpm runs its own command, not the script, when a script has the name of a pnpm command.
+      expect(PNPM_COMMANDS, command).not.toContain(first);
       if (first === "test" && second) expect(testFiles).toContain(second);
     }
     expect(recordings).toContain(RECORDING_FILE);

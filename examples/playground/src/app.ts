@@ -18,6 +18,7 @@ import { LIFECYCLE } from "./lifecycle";
 import { lifecycleScenarioRoutes } from "./lifecycle-routes";
 import { mcpScenarioRoutes } from "./mcp-routes";
 import { memoryScenarioRoutes } from "./memory-routes";
+import { refreshAgents } from "./code-agents";
 import { OTHER_SCOPE, SAMPLE_SCOPES, scenarioRuntimes, SCOPE, USER, type Runtime } from "./runtimes";
 import { sampleData, type SampleDataDO } from "./sample-data";
 import { mediaDownload } from "./media-download";
@@ -76,18 +77,24 @@ interface ScenarioRoutes {
   reset(): Promise<Response>;
   /** Answers a route of the scenario, or returns undefined for each other path. */
   handle(request: Request, path: string): Promise<Response | undefined>;
+  /** The code-defined Agents of the scenario in the sample Scopes. A reset stores each one again from the code. */
+  agents?: readonly string[];
 }
 
 /** Answers a route of a scenario that has its own routes, or returns undefined for each other path. */
 async function ownRoutes(
   own: Record<string, ScenarioRoutes>,
+  refresh: (agentIds: readonly string[]) => Promise<void>,
   request: Request,
   path: string,
 ): Promise<Response | undefined> {
   const [, id, action] = /^\/api\/scenarios\/([^/]+)(\/reset)?$/.exec(path) ?? [];
   const named = id === undefined ? undefined : own[id];
   if (named && action === undefined && request.method === "GET") return named.state();
-  if (named && action !== undefined && request.method === "POST") return named.reset();
+  if (named && action !== undefined && request.method === "POST") {
+    await refresh(named.agents ?? []);
+    return named.reset();
+  }
   for (const routes of Object.values(own)) {
     const response = await routes.handle(request, path);
     if (response) return response;
@@ -168,6 +175,15 @@ async function resetScenario(
   await stub.reset();
   if (restore) await runtime.restore?.();
 }
+
+/**
+ * Returns the function that a reset calls with the code-defined Agents of its scenario. It stores each one again in
+ * each sample Scope that holds a copy from an older Catalogue.
+ */
+const agentRefresher = (karmi: Karmi) => async (agentIds: readonly string[]) => {
+  for (const scopeId of SAMPLE_SCOPES)
+    await refreshAgents(karmi.catalogue.agents, karmi.scope(scopeId).agents, agentIds);
+};
 
 /** The sample Scope, the User and the sample systems that the routes of a scenario work with. */
 interface SampleOptions {
@@ -255,6 +271,7 @@ export function createPlayground(options: PlaygroundOptions): Playground {
   const runtimes = scenarioRuntimes(scope, model);
   const sample: SampleOptions = { scope, scopeId: SCOPE, user: USER, data };
   const own = ownScenarioRoutes(karmi, sample, options);
+  const refresh = agentRefresher(karmi);
 
   // A browser cannot set headers on an EventSource, so the token can also be a query parameter.
   const authenticate = authentication(
@@ -278,7 +295,7 @@ export function createPlayground(options: PlaygroundOptions): Playground {
   async function api(request: Request, path: string): Promise<Response> {
     if (path === "/api/playground" && request.method === "GET") return describePlayground(setup, options);
     if (path === "/api/recording" && request.method === "GET") return recordingAnswer(options.recording);
-    const answered = await ownRoutes(own, request, path);
+    const answered = await ownRoutes(own, refresh, request, path);
     if (answered) return answered;
     const [, id, action, mediaId] =
       /^\/api\/scenarios\/([^/]+)(?:\/(reset|spec|job|hold|fail|replay|redact|media\/([^/]+)))?$/.exec(path) ?? [];
@@ -294,7 +311,7 @@ export function createPlayground(options: PlaygroundOptions): Playground {
       await resetScenario(stub, thread, runtime, restore);
       return scenarioState(id, runtime);
     };
-    if (action === "reset" && request.method === "POST") return restart(true);
+    if (action === "reset" && request.method === "POST") return refresh([runtime.agent]).then(() => restart(true));
     const act = action === undefined ? undefined : runtime.actions?.[action];
     if (act && request.method === "POST")
       return (await act(sampleData(data, SCOPE, id), open, request)) ?? scenarioState(id, runtime);
