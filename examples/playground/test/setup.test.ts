@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildDevVars, chooseOption, generate, parseDevVars } from "../setup/cli.ts";
+import { rotateDevVars } from "../setup/rotate-key.ts";
+import { decodeKeyring, keyringView } from "../src/keyring";
 import { PROVIDER_OPTIONS, readSetup } from "../src/provider-options";
 
 describe("setup", () => {
@@ -46,5 +48,27 @@ describe("setup", () => {
   it("reports no selection when a custom endpoint has no base URL", () => {
     expect(readSetup({ PLAYGROUND_PROVIDER: "custom", PLAYGROUND_MODEL: "m" })).toBeUndefined();
     expect(readSetup({})).toBeUndefined();
+  });
+
+  it("rotates the key ring and keeps each other line of the file", () => {
+    const option = chooseOption("openai");
+    if (!option) throw new Error("The openai option is missing.");
+    const text = buildDevVars({ option, model: "m", apiKey: "k1" }, {}, generate());
+    const before = parseDevVars(text);
+    const rotated = rotateDevVars(text, "new$&key", false);
+    const after = parseDevVars(rotated.text);
+    expect(rotated.keyring.active).toBe("v2");
+    expect(decodeKeyring(after.KARMI_KEYRING)).toEqual({
+      active: "v2",
+      keys: { v1: decodeKeyring(before.KARMI_KEYRING)?.keys.v1, v2: "new$&key" },
+    });
+    expect({ ...after, KARMI_KEYRING: "" }).toEqual({ ...before, KARMI_KEYRING: "" });
+
+    const retired = parseDevVars(rotateDevVars(rotated.text, "unused", true).text);
+    expect(keyringView(retired.KARMI_KEYRING)).toEqual({ active: "v2", keys: ["v2"] });
+  });
+
+  it("refuses to rotate a file without a key ring", () => {
+    expect(() => rotateDevVars("PLAYGROUND_TOKEN='t'\n", "key", false)).toThrow(/pnpm setup/);
   });
 });

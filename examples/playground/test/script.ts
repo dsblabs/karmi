@@ -217,6 +217,7 @@ export const playgroundReplies: ReplyScript = (ctx) => {
   if (system.includes("data desk")) return containerReplies(ctx);
   if (system.includes("run_script exactly")) return scriptReplies(ctx);
   if (system.includes("attached file")) return "I received the sample file.";
+  if (system.includes("assistant of the karmi Playground")) return "Hello from the Scope desk.";
   const days = /for (\d+) days/.exec(system)?.[1];
   return system.includes("pirate") ? `Arr, ye have ${days} days.` : `You can return it for ${days} days.`;
 };

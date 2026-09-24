@@ -432,6 +432,73 @@ test("cancel of the parent Turn stops the child, and reset deletes the children"
   await expect(page.locator("#usage")).toContainText("No model call ran yet");
 });
 
+/** Runs the first suggested prompt of the Scope lifecycle scenario. A sent prompt clears the editor. */
+async function runScopeDesk(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Run" })).toBeEnabled();
+  await page.getByRole("button", { name: "Say hello", exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+}
+
+test("a Scope suspends and resumes, keeps a write-only credential and gets a new identity after a destroy", async ({
+  page,
+}) => {
+  const secret = "sk-browser-secret-0815";
+  await openScenario(page, "scopes");
+  const scope = page.locator("#scope");
+  const credential = page.locator("#scope-credential-card");
+  await expect(scope).toContainText("active");
+  const first = await scope.locator("dd code").textContent();
+  await expect(page.getByRole("link", { name: "Example code" })).toHaveAttribute("href", /src\/lifecycle\.ts$/);
+
+  // Without a Scope credential, the Step falls back to the Deployment profile.
+  await runScopeDesk(page);
+  await expect(page.locator("#steps .agent").last()).toContainText("Hello from the Scope desk.");
+  await expect(page.locator("#steps")).toContainText(
+    "runs under the Deployment profile default. The credential of the profile scope-key is missing.",
+  );
+
+  await page.getByLabel("Scope credential").fill(secret);
+  await page.getByRole("button", { name: "Store the credential" }).click();
+  await expect(credential).toContainText("version 1");
+  await expect(page.getByLabel("Scope credential")).toHaveValue("");
+  await page.getByRole("button", { name: "Test the credential" }).click();
+  await expect(credential).toContainText("passed");
+  await runScopeDesk(page);
+  await expect(page.locator("#steps-credentials")).toContainText("with scope:provider, version 1.");
+
+  await page.getByRole("button", { name: "Revoke the credential" }).click();
+  await expect(credential).toContainText("revoked");
+  await page.getByRole("button", { name: "Test the credential" }).click();
+  await expect(credential).toContainText("failed");
+  await runScopeDesk(page);
+  await expect(page.locator("#steps-credentials li").last()).toContainText("Fallback to the Deployment profile");
+
+  await page.getByRole("button", { name: "Rewrap the credentials" }).click();
+  await expect(page.locator("#keyring")).toContainText('"sample-a": 0');
+  await expect(page.locator("#keyring")).toContainText("Active keyv1");
+
+  await page.getByRole("button", { name: "Suspend the Scope" }).click();
+  await expect(scope).toContainText("suspended");
+  await runScopeDesk(page);
+  await expect(page.locator("#steps")).toContainText("parked, because the Scope is suspended");
+  await page.getByRole("button", { name: "Resume the Scope" }).click();
+  await expect(scope).toContainText("active");
+  await expect(page.locator("#steps .agent")).toHaveCount(4);
+
+  await page.getByRole("button", { name: "Destroy the Scope" }).click();
+  await expect(scope).toContainText("Destroy walk");
+  await expect(scope.locator("h4 .badge")).toHaveText("destroyed", { timeout: 15_000 });
+  await expect(scope).toContainText("Threads deleted1");
+  await expect(page.getByRole("button", { name: "Resume the Scope" })).toBeDisabled();
+  expect(await page.content()).not.toContain(secret);
+
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(scope.locator("dd code")).not.toHaveText(first ?? "");
+  await expect(scope).toContainText("active");
+  await expect(credential).toContainText("The Scope has no credential.");
+  await expect(page.locator("#steps")).toBeEmpty();
+});
+
 async function openMemory(page: Page): Promise<void> {
   await openScenario(page, "memory");
   await expect(page.locator("#memory-sample-a")).toContainText("Nothing is stored");

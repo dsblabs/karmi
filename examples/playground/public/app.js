@@ -388,7 +388,10 @@ const PARKED = {
   approval: { waits: "your Approval of a Tool call" },
   budget: { waits: "a new budget", line: "The Turn is parked. It spent the Steps of its budget." },
   job: { waits: "the Job", line: "The Turn is parked. It waits for the Job and uses no Worker time." },
-  scope_suspended: { waits: "the Scope" },
+  scope_suspended: {
+    waits: "the Scope",
+    line: "The Turn is parked, because the Scope is suspended. Resume the Scope to continue it.",
+  },
 };
 
 // What the conversation tells for each Schedule event.
@@ -1743,6 +1746,277 @@ function knowledgeCards({ corpora, known, inlineLimit, bulkSize, job, search }, 
   ];
 }
 
+// What each state of a Scope means for the operator.
+const SCOPE_STATES = {
+  active: "Each Turn runs.",
+  suspended: "A new Turn parks until you resume the Scope. The data of the Scope stays.",
+  destroying: "The Scope is a tombstone. The Destroy walk deletes its data in batches.",
+  destroyed: "Only the tombstone stays. The id can never hold data again.",
+};
+
+/**
+ * The Scope lifecycle and credentials scenario: the disposable Scope with its Destroy walk, the Scope credential, the
+ * credential of each model Step, the Provider profile and the key ring.
+ */
+function lifecycleCards(
+  { scopeId, scope, destroy, profile, fallback, reference, credential, test, keyring, rewrap, steps },
+  onChanged,
+  isCurrent,
+) {
+  const path = "/api/scenarios/scopes";
+  const changed = (note) => (next) => isCurrent() && onChanged(next, note);
+  const live = scope.state === "active" || scope.state === "suspended";
+  const time = (at) => (at === undefined ? "never" : new Date(at).toLocaleTimeString());
+  const action = (label, name, note, result, { primary = false, enabled = live, body } = {}) => {
+    const button = cardAction(label, () => api("POST", `${path}/${name}`, body), changed(note), result, primary);
+    button.disabled = !enabled;
+    return button;
+  };
+
+  const scopeResult = el("p", { className: "fine" });
+  const scopeCard = el(
+    "div",
+    { className: "card titled", id: "scope" },
+    el("h3", {}, "Disposable Scope", badge(scope.state)),
+    rows(["Scope id", el("code", { textContent: scopeId })], ["Config revision", String(scope.configRevision)]),
+    el("p", { className: "outcome", textContent: SCOPE_STATES[scope.state] }),
+    el(
+      "div",
+      { className: "row" },
+      action(
+        "Suspend the Scope",
+        "suspend",
+        `The Scope ${scopeId} is suspended. Run a prompt: the Turn parks.`,
+        scopeResult,
+        {
+          primary: scope.state === "active",
+          enabled: scope.state === "active",
+        },
+      ),
+      action(
+        "Resume the Scope",
+        "resume",
+        `The Scope ${scopeId} is active again. A parked Turn continues.`,
+        scopeResult,
+        { primary: scope.state === "suspended", enabled: scope.state === "suspended" },
+      ),
+      action(
+        "Destroy the Scope",
+        "destroy",
+        `The Scope ${scopeId} is a tombstone. The Destroy walk runs.`,
+        scopeResult,
+      ),
+    ),
+    scopeResult,
+    destroy &&
+      el(
+        "div",
+        {},
+        el("h4", {}, "Destroy walk ", badge(destroy.state)),
+        rows(
+          ["Phase", destroy.progress.phase],
+          ["Threads deleted", String(destroy.progress.threads)],
+          ["Memories deleted", String(destroy.progress.memory)],
+          ["Knowledge corpora deleted", String(destroy.progress.knowledge)],
+          ["R2 objects deleted", String(destroy.progress.objects)],
+          ["Items skipped", String(destroy.progress.skipped)],
+        ),
+        destroy.externalCleanup && el("pre", { textContent: JSON.stringify(destroy.externalCleanup, null, 2) }),
+      ),
+    el("p", {
+      className: "fine",
+      textContent:
+        "A suspension is reversible and keeps each Thread, Memory and credential. A destroy is permanent: the tombstone keeps the id, and the walk deletes the data. Reset scenario destroys this Scope and moves to a new Scope id.",
+    }),
+  );
+
+  const credentialResult = el("p", { className: "fine" });
+  const value = el("input", {
+    id: "scope-credential",
+    type: "password",
+    autocomplete: "off",
+    placeholder: "Paste a Provider key",
+    ariaLabel: "Scope credential",
+    disabled: !live,
+  });
+  const store = cardAction(
+    "Store the credential",
+    () => api("POST", `${path}/credential`, { value: value.value }),
+    changed("The Scope stored a new version of the credential. The answer has its metadata only."),
+    credentialResult,
+    true,
+  );
+  store.disabled = !live;
+  const credentialState = !credential ? "none" : credential.revokedAt ? "revoked" : `version ${credential.version}`;
+  const credentialCard = el(
+    "div",
+    { className: "card titled", id: "scope-credential-card" },
+    el("h3", {}, "Scope credential", badge(credentialState)),
+    credential
+      ? rows(
+          ["Reference", el("code", { textContent: reference })],
+          ["Version", String(credential.version)],
+          ["Stored at", time(credential.updatedAt)],
+          ["Revoked at", time(credential.revokedAt)],
+        )
+      : el("p", { className: "muted", textContent: "The Scope has no credential. Store one to use it." }),
+    value,
+    el(
+      "div",
+      { className: "row" },
+      store,
+      action(
+        "Test the credential",
+        "test",
+        "The Scope tested its profile with one small Provider call.",
+        credentialResult,
+      ),
+      action(
+        "Revoke the credential",
+        "revoke",
+        "The credential is revoked. The next model Step finds it missing.",
+        credentialResult,
+        { enabled: live && credential !== null && credential.revokedAt === undefined },
+      ),
+    ),
+    credentialResult,
+    test &&
+      el(
+        "div",
+        {},
+        el("h4", {}, `Last test at ${time(test.at)} `, badge(test.ok ? "passed" : "failed")),
+        el("pre", {
+          className: test.ok ? "" : "error",
+          textContent: JSON.stringify(test.ok ? (test.credential ?? {}) : test.error, null, 2),
+        }),
+      ),
+    el("p", {
+      className: "fine",
+      textContent:
+        "The route stores the value with scope.credentials.put and clears the field. No route returns it: the card shows the metadata of scope.credentials.describe.",
+    }),
+  );
+
+  const stepsCard = el(
+    "div",
+    { className: "card", id: "steps-credentials" },
+    el("h3", { textContent: "Credential of each model Step" }),
+    steps.length > 0
+      ? el(
+          "ul",
+          {},
+          ...steps.map((step) =>
+            el(
+              "li",
+              {},
+              el("code", { textContent: `seq ${step.seq}` }),
+              " ",
+              ...(step.fallback
+                ? [
+                    "Fallback to the Deployment profile ",
+                    el("code", { textContent: step.profile }),
+                    ". The reason is ",
+                    el("code", { textContent: step.fallback.reason }),
+                    ".",
+                  ]
+                : [
+                    "The profile ",
+                    el("code", { textContent: step.profile }),
+                    " with ",
+                    el("code", {
+                      textContent: step.credential
+                        ? `${step.credential.ref}, version ${step.credential.version}`
+                        : "no credential",
+                    }),
+                    ".",
+                  ]),
+            ),
+          ),
+        )
+      : el("p", {
+          className: "muted",
+          textContent: live
+            ? "Run a prompt. Each model Step shows the credential that it ran under."
+            : "The Destroy walk deleted the Thread with its events.",
+        }),
+    el("p", {
+      className: "fine",
+      textContent:
+        "The Thread resolves the credential immediately before each model Step. Thus a store or a revoke applies at the next Step, also during a Turn.",
+    }),
+  );
+
+  const profileResult = el("p", { className: "fine" });
+  const profileCard = el(
+    "div",
+    { className: "card titled", id: "scope-profile" },
+    el(
+      "h3",
+      {},
+      "Provider profile of the Scope",
+      badge(!profile ? "no config" : fallback ? "fallback on" : "fallback off"),
+    ),
+    profile
+      ? el("pre", { textContent: JSON.stringify(profile, null, 2) })
+      : el("p", { className: "muted", textContent: "A destroyed Scope has no config." }),
+    el(
+      "div",
+      { className: "row" },
+      action(
+        fallback ? "Turn the fallback off" : "Turn the fallback on",
+        "fallback",
+        fallback
+          ? "The profile has no fallback. A Step without the Scope credential fails the Turn."
+          : "A Step without the Scope credential runs under the Deployment profile of setup.",
+        profileResult,
+        { body: { on: !fallback } },
+      ),
+    ),
+    profileResult,
+    el("p", {
+      className: "fine",
+      textContent:
+        "The Agent runs on this profile. With the fallback, a missing Scope credential gives the Step to the Deployment profile default, which uses the credential of pnpm setup.",
+    }),
+  );
+
+  const keyResult = el("p", { className: "fine" });
+  const keyCard = el(
+    "div",
+    { className: "card", id: "keyring" },
+    el("h3", { textContent: "Key ring" }),
+    keyring
+      ? rows(["Active key", el("code", { textContent: keyring.active })], ["Keys in the ring", keyring.keys.join(", ")])
+      : el("p", { className: "muted", textContent: "The Worker has no KARMI_KEYRING. Run pnpm setup." }),
+    el(
+      "div",
+      { className: "row" },
+      action(
+        "Rewrap the credentials",
+        "rewrap",
+        "Each credential of the Playground Scopes is now encrypted with the active key.",
+        keyResult,
+        { enabled: keyring !== null },
+      ),
+    ),
+    keyResult,
+    rewrap &&
+      el(
+        "div",
+        {},
+        el("h4", { textContent: "Credentials rewrapped, by Scope" }),
+        el("pre", { textContent: JSON.stringify(rewrap, null, 2) }),
+      ),
+    el("p", {
+      className: "fine",
+      textContent:
+        "The page shows the ids of the keys, never a key. To rotate, run pnpm rotate-key and start pnpm dev again, then rewrap. The ring keeps the old key, thus each credential stays readable until the rewrap.",
+    }),
+  );
+
+  return [scopeCard, credentialCard, stepsCard, profileCard, keyCard];
+}
+
 // The cards next to the conversation, by scenario id.
 const PANELS = {
   refund: (state) => [orderCard(state.order)],
@@ -1758,6 +2032,7 @@ const PANELS = {
   observability: observabilityCards,
   scripts: scriptCards,
   "container-scripts": containerCards,
+  scopes: lifecycleCards,
 };
 
 /**
@@ -1868,9 +2143,9 @@ async function renderScenario(scenario) {
   let state = await api("GET", path);
   if (mine !== view) return;
   // The Thread that the conversation shows and that receives each Turn, and the sample Scope that it is in. The
-  // Scope is undefined for a scenario that acts in the default Scope only.
+  // Scope is undefined for a scenario that acts in the default Scope only. A scenario in a Scope of its own names it.
   let threadKey = state.threadKey;
-  let scopeId;
+  let scopeId = state.scopeId;
   // A Thread route with the Scope of the conversation. The token goes in the query for a stream.
   const threadRoute = (suffix, ...params) => {
     const query = [...params, scopeId && `scope=${encodeURIComponent(scopeId)}`].filter(Boolean).join("&");
@@ -1896,7 +2171,7 @@ async function renderScenario(scenario) {
           shownPanel = undefined;
           showPanel();
           awaitQueue();
-          watchJob();
+          watchProgress();
           if (syncTarget()) showThread();
         }
         $("panel").append(el("p", { id: "saved", className: "outcome", textContent: note }));
@@ -1918,7 +2193,7 @@ async function renderScenario(scenario) {
     state = next;
     showPanel();
     awaitQueue();
-    watchJob();
+    watchProgress();
   };
   // The Queue delivers Usage records to the UsageHandler after the Turn, and no Thread event tells the page. Thus
   // the page reads the state again while the UsageHandler waits for the last record. It stops after one minute,
@@ -1930,16 +2205,17 @@ async function renderScenario(scenario) {
     if (!state.handler?.waiting) return void (queueChecks = 0);
     if (queueChecks++ < 30) queueTimer = setTimeout(() => mine === view && refreshPanel(), 2000);
   };
-  // A bulk ingest Job of the Knowledge scenario runs without a Thread event, thus the page reads its progress on a
-  // timer. One timer runs at a time.
+  // A bulk ingest Job of the Knowledge scenario and the Destroy walk of a Scope run without a Thread event, thus the
+  // page reads their progress on a timer. One timer runs at a time.
   let jobTimer;
-  const watchJob = () => {
+  const watchProgress = () => {
     clearTimeout(jobTimer);
-    if (state.job?.state === "pending") jobTimer = setTimeout(() => mine === view && refreshPanel(), 1000);
+    if (state.job?.state === "pending" || state.destroy?.state === "destroying")
+      jobTimer = setTimeout(() => mine === view && refreshPanel(), 1000);
   };
   showPanel();
   awaitQueue();
-  watchJob();
+  watchProgress();
   // One request covers a burst of events, for example the replay of the event log after a reload.
   let panelTimer;
   const refreshSoon = () => {
@@ -2190,7 +2466,21 @@ async function renderScenario(scenario) {
               textContent: `${COMPACTION_TRIGGERS[event.trigger] ?? "The Harness compacts the Thread."} A compact Step runs before the model Step.`,
             }),
           );
-        } else if (event.attempt > 1)
+        } else if (event.fallback)
+          add(
+            el(
+              "p",
+              { className: "outcome" },
+              "This model Step runs under the Deployment profile ",
+              el("code", { textContent: event.profile }),
+              ". The credential of the profile ",
+              el("code", { textContent: event.fallback.from }),
+              " is ",
+              el("code", { textContent: event.fallback.reason }),
+              ".",
+            ),
+          );
+        else if (event.attempt > 1)
           add(
             el("p", {
               className: "outcome",
@@ -2460,7 +2750,9 @@ async function renderScenario(scenario) {
                   ? "You cancelled the Turn. The Framework cannot undo an action that a Tool finished in another system."
                   : event.reason === "recovery"
                     ? `The Turn failed: ${event.message} Each Step has three attempts.`
-                    : `The Turn failed: ${event.message} Check the model name and the credential that you gave to pnpm setup.`,
+                    : event.reason === "credential.missing"
+                      ? `The Turn failed: ${event.message} The profile has no fallback to run on.`
+                      : `The Turn failed: ${event.message} Check the model name and the credential that you gave to pnpm setup.`,
             }),
           );
         busy = false;
@@ -2620,6 +2912,7 @@ async function renderScenario(scenario) {
     stream?.close();
     state = next;
     threadKey = state.threadKey;
+    scopeId = state.scopeId;
     if (file) setFile();
     syncTarget();
     showThread();

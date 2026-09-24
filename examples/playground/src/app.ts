@@ -9,6 +9,9 @@ import { routeError } from "./route-error";
 import { CONCIERGE, MEMORY } from "./concierge";
 import { knowledgeScenarioRoutes } from "./knowledge-routes";
 import { KNOWLEDGE } from "./librarian";
+import type { KeyringView } from "./keyring";
+import { LIFECYCLE } from "./lifecycle";
+import { lifecycleScenarioRoutes } from "./lifecycle-routes";
 import { memoryScenarioRoutes } from "./memory-routes";
 import { OTHER_SCOPE, SAMPLE_SCOPES, scenarioRuntimes, SCOPE, USER, type Runtime } from "./runtimes";
 import { sampleData, type SampleDataDO } from "./sample-data";
@@ -31,6 +34,8 @@ export interface PlaygroundOptions extends Services {
   data: DurableObjectNamespace<SampleDataDO>;
   /** The media bucket used by the authenticated download route. */
   media: R2Bucket | undefined;
+  /** The ids of the `KARMI_KEYRING` keys, which the Scope lifecycle scenario shows. Undefined without a key ring. */
+  keyring: KeyringView | undefined;
 }
 
 /** The Playground as a Worker `fetch`. */
@@ -80,16 +85,17 @@ async function sameToken(given: string, expected: string): Promise<boolean> {
 }
 
 /**
- * Maps a request to its Principal. The token opens the sample Scopes only. The `scope` query parameter selects
- * one of them for the Thread routes, and a request without it acts in the first one.
+ * Maps a request to its Principal. The token opens the sample Scopes only: the two fixed ones, and the current
+ * disposable Scope of the Scope lifecycle scenario, which `opens` checks. The `scope` query parameter selects one of
+ * them for the Thread routes, and a request without it acts in the first one.
  */
-function authentication(token: string | undefined) {
+function authentication(token: string | undefined, opens: (scope: string) => Promise<boolean>) {
   return async (request: Request): Promise<Principal | null> => {
     const query = new URL(request.url).searchParams;
     const header = request.headers.get("authorization") ?? "";
     const given = header.startsWith("Bearer ") ? header.slice(7) : query.get("token");
     const scope = query.get("scope") ?? SCOPE;
-    if (!SAMPLE_SCOPES.includes(scope)) return null;
+    if (!SAMPLE_SCOPES.includes(scope) && !(await opens(scope))) return null;
     return token && given && (await sameToken(given, token)) ? { scope, user: USER } : null;
   };
 }
@@ -156,13 +162,24 @@ interface SampleOptions {
  * Returns the routes of each scenario that has its own state, reset and routes, by scenario id. These are the
  * scenarios with more than one Thread, or with state outside their sample data.
  */
-function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, media: R2Bucket | undefined) {
+function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, options: PlaygroundOptions) {
   const { user, data } = sample;
+  const { media, model, setup, keyring } = options;
   return {
     [FORKS]: forkScenarioRoutes({ ...sample, media }),
     [SCHEDULES]: scheduleScenarioRoutes(sample),
     [MEMORY]: memoryScenarioRoutes({ scope: (id) => karmi.scope(id), scopeIds: SAMPLE_SCOPES, user, data }),
     [KNOWLEDGE]: knowledgeScenarioRoutes(sample),
+    [LIFECYCLE]: lifecycleScenarioRoutes({
+      scope: (id) => karmi.scope(id),
+      home: SCOPE,
+      sampleScopes: SAMPLE_SCOPES,
+      user,
+      data,
+      model,
+      baseUrl: setup?.baseUrl,
+      keyring,
+    }),
   } satisfies Record<string, ScenarioRoutes>;
 }
 
@@ -201,16 +218,16 @@ function describePlayground(setup: ProviderSetup | undefined, services: Services
  */
 export function createPlayground(options: PlaygroundOptions): Playground {
   const { karmi, model, setup, token, data, media } = options;
-  // A browser cannot set headers on an EventSource, so the token can also be a query parameter.
-  const authenticate = authentication(token);
-  const http = createHttpHandler({ karmi, authenticate });
-
   // `karmi.scope` makes random values, which the Workers runtime allows only while it handles a request.
   const scope = () => karmi.scope(SCOPE);
 
   const runtimes = scenarioRuntimes(scope, model);
   const sample: SampleOptions = { scope, scopeId: SCOPE, user: USER, data };
-  const own = ownScenarioRoutes(karmi, sample, media);
+  const own = ownScenarioRoutes(karmi, sample, options);
+
+  // A browser cannot set headers on an EventSource, so the token can also be a query parameter.
+  const authenticate = authentication(token, own[LIFECYCLE].opens);
+  const http = createHttpHandler({ karmi, authenticate });
 
   const threadOf = (runtime: Runtime, generation: number) =>
     scope().thread({ agent: runtime.agent, user: USER, threadId: `${runtime.agent}-${generation}` });

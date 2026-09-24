@@ -27,6 +27,7 @@ const playground = createPlayground({
   token: TOKEN,
   data: env.PLAYGROUND_DATA,
   media: env.KARMI_MEDIA,
+  keyring: { active: "v2", keys: ["v1", "v2"] },
   hasLoader: env.KARMI_LOADER !== undefined,
   containers: "docker",
 });
@@ -38,6 +39,7 @@ export const bare = createPlayground({
   token: undefined,
   data: env.PLAYGROUND_DATA,
   media: env.KARMI_MEDIA,
+  keyring: undefined,
   hasLoader: env.KARMI_LOADER !== undefined,
 });
 

@@ -6,6 +6,7 @@ import { catalogue } from "../src/catalogue";
 import { playgroundLogger } from "../src/observability";
 import { CONTAINER_IMAGE } from "../src/containers";
 import { fakeContainer } from "./container-driver";
+import { keyringView } from "../src/keyring";
 import { playgroundReplies } from "./script";
 import { setup, TOKEN } from "./worker-options";
 
@@ -26,6 +27,7 @@ const playground = createPlayground({
   token: TOKEN,
   data: env.PLAYGROUND_DATA,
   media: env.KARMI_MEDIA,
+  keyring: keyringView(env.KARMI_KEYRING),
   hasLoader: env.KARMI_LOADER !== undefined,
   containers: "docker",
 });
