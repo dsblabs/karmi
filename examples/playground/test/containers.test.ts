@@ -3,12 +3,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { containerRuns } from "../src/container-runs";
 import { CONTAINER_LIMITS, CONTAINER_PROMPTS, CONTAINERS, SAMPLE_FILES } from "../src/containers";
+import { USER } from "../src/runtimes";
 import { SCENARIOS, viewScenario } from "../src/scenarios";
 import { SCRIPTS } from "../src/scripts";
 import { api as request, events } from "./client";
 import { fakeContainer } from "./container-driver";
 import { containerReplies } from "./script";
-import { clock, provider } from "./worker";
+import { clock, karmi, provider } from "./worker";
 import { setup, TOKEN } from "./worker-options";
 
 const api = (method: string, path: string, body?: unknown) => request(TOKEN, method, path, body);
@@ -147,6 +148,13 @@ describe("the container Scripts scenario", () => {
     expect((await api("GET", `${PATH}/media/${artifact?.id ?? ""}`)).status).toBe(404);
     const after = (await (await api("GET", `/api/scenarios/${SCRIPTS}`)).json()) as { threadKey: string };
     expect(after.threadKey).toBe(other.threadKey);
+  });
+
+  it("a reset finishes the work of a reset that stopped after it deleted the Thread", async () => {
+    const { threadId, threadKey } = await state();
+    await karmi.scope("sample-a").thread({ agent: CONTAINERS, user: USER, threadId }).delete();
+    expect((await api("POST", `${PATH}/reset`)).status).toBe(200);
+    expect((await state()).threadKey).not.toBe(threadKey);
   });
 });
 

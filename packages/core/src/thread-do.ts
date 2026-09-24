@@ -1,5 +1,5 @@
 import { decodeSocketAttachment, handleSocketFrame, excludedEventTypes, type SocketAttachment } from "./thread-sockets";
-import { ThreadWorkspace } from "./thread-workspace";
+import { DESTROY_RETRY_MS, ThreadWorkspace } from "./thread-workspace";
 import { cloudflareContainer } from "./cloudflare-container";
 import { containerLimits, type ContainerLimits } from "./container-types";
 import { knowledgeTools, knowledgeFragments } from "./knowledge-tools";
@@ -406,7 +406,17 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       });
       return;
     }
-    await this.workspace(this.row()).destroy();
+    // The delete empties the Workspace tables, thus it waits until the container is destroyed and its Scope slot is
+    // free.
+    if (!(await this.workspace(this.row()).destroy())) {
+      this.scheduler.set({
+        id: "thread-cleanup",
+        kind: "thread-cleanup",
+        dueAt: this.deployment.clock.now() + DESTROY_RETRY_MS,
+        payload: address,
+      });
+      return;
+    }
     const bucket = this.env.KARMI_MEDIA;
     if (bucket)
       for (const prefix of keys.threadObjects(address.scope, address.threadId)) {
@@ -2785,6 +2795,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       threadId: row.thread_id,
       bucket: this.env.KARMI_MEDIA,
       now: () => this.deployment.clock.now(),
+      logger: this.deployment.logger,
       driver: () =>
         this.deployment.sandbox?.driver?.(id) ??
         (this.env.KARMI_SANDBOX ? cloudflareContainer(this.env.KARMI_SANDBOX, id) : undefined),

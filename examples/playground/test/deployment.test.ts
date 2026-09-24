@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  addContainerScripts,
   createManifest,
   decodeAccounts,
   deploy,
@@ -242,14 +243,16 @@ describe("Cloudflare deployment", () => {
     expect(saved.at(-1)).toMatchObject({ bucket: { status: "created" }, deadLetterQueue: { status: "created" } });
 
     const retryCalls: CommandRequest[] = [];
-    await deploy(
+    const address = await deploy(
       manifest,
       { PROVIDER_API_KEY: "secret" },
       ".deployments/test/wrangler.jsonc",
       {
         run(request) {
           retryCalls.push(request);
-          return Promise.resolve("");
+          return Promise.resolve(
+            request.args[0] === "deploy" ? "Uploaded\n  https://karmi-playground-test-a1b2.example.workers.dev\n" : "",
+          );
         },
       },
       {
@@ -266,6 +269,15 @@ describe("Cloudflare deployment", () => {
     ]);
     expect(retryCalls.every((request) => request.env?.CLOUDFLARE_ACCOUNT_ID === account.id)).toBe(true);
     expect(manifest.worker.status).toBe("created");
+    expect(address).toBe("https://karmi-playground-test-a1b2.example.workers.dev");
+  });
+
+  it("adds container Scripts to a deployment that exists already", () => {
+    const manifest = createManifest("karmi-play", account);
+    const added = addContainerScripts(manifest);
+    expect(added.container).toEqual({ name: "karmi-play-sandbox", owned: true, status: "pending" });
+    expect(manifest.container).toBeUndefined();
+    expect(addContainerScripts(added)).toBe(added);
   });
 
   it("refuses to adopt a resource that existed before setup", async () => {

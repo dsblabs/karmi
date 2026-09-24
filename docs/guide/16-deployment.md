@@ -103,7 +103,9 @@ Do these steps only if an Agent uses [container Scripts](./07-sandbox.md#contain
        "bindings": [{ "name": "KARMI_SANDBOX", "class_name": "KarmiSandbox" }],
      },
      "migrations": [{ "tag": "karmi-sandbox-v1", "new_sqlite_classes": ["KarmiSandbox"] }],
-     "containers": [{ "class_name": "KarmiSandbox", "image": "./Dockerfile", "max_instances": 10 }],
+     "containers": [
+       { "class_name": "KarmiSandbox", "image": "./Dockerfile", "instance_type": "basic", "max_instances": 10 },
+     ],
    }
    ```
 
@@ -133,6 +135,8 @@ Do these steps only if an Agent uses [container Scripts](./07-sandbox.md#contain
 `sandbox.image` must be the same as the `image` in the Wrangler configuration. Wrangler builds the image and selects it. `karmi doctor` reports the binding and the image.
 
 `ContainerProxy` adds a line to stderr for each denied hostname.
+
+Use the [instance type](https://developers.cloudflare.com/containers/platform-details/limits/) `basic` or a larger one. The image needs more than the 2 GB disk of the default type `lite`. With `lite`, Cloudflare cannot unpack the image, and each Script fails with `there is no container instance that can be provided to this durable object`.
 
 The image extends the Cloudflare Sandbox SDK image `0.12.9-python`. Keep the version of the SDK package the same as the version of the image. The image is for AMD64. An ARM computer needs AMD64 emulation to build it.
 

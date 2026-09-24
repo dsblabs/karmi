@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { experimental_readRawConfig } from "wrangler";
 import {
   selectBindings,
   type BucketCleaner,
@@ -229,7 +230,10 @@ export function buildCloudflareConfig(
 
 /** Reads the local Wrangler configuration as the source for a cloud deployment. */
 export async function readBaseConfig(): Promise<Record<string, unknown>> {
-  const value: unknown = JSON.parse(await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
+  // The file is JSONC with comments, thus Wrangler parses it and not `JSON.parse`.
+  const { rawConfig: value } = experimental_readRawConfig({
+    config: new URL("../wrangler.jsonc", import.meta.url).pathname,
+  });
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("The Playground Wrangler configuration is invalid.");
   }
