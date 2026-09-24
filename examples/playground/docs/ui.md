@@ -14,15 +14,16 @@ A scenario view has four zones. Put new content in one of them. Do not add a zon
 
 | Zone | Element | What belongs there |
 |---|---|---|
-| Title bar | `.intro` | The title, the status, the summary, notes, the link to the example code and **Reset scenario** |
+| Title bar | `.intro` | The title, the status, the summary, the closed notes, the link to the example code and **Reset scenario** |
 | Conversation | `#steps` | What the operator and the Agent did, in the sequence of the Thread events |
-| Composer | `.composer` | The prompt, the suggested prompts, **Run**, the Turn controls and the status line |
+| Composer | `.composer` | The prompt, the suggested prompts, and one `.row` with **Run**, the Turn controls and the status line |
 | Side column | `.side` | The state of the sample system, the controls that change the scenario and the event log |
 
 - An action on the full scenario goes in the title bar.
 - An action that sends a Turn goes in the composer.
 - An action on the sample system or the Agent goes in the card that shows that data.
-- The function in `PANELS` gives the cards of the side column for a scenario. The first card is the data that the scenario changes. It moves above the conversation on a phone.
+- The conversation is the largest zone at each size. Do not add content above it that is open by default.
+- The function in `PANELS` gives the cards of the side column for a scenario. The first card is the data that the scenario changes. On a phone, the side column goes below the conversation.
 
 ## Components
 
@@ -37,8 +38,8 @@ Use these classes. Add a component only when none of them fits, and add it to th
 | `.editor` | A `textarea` for code or JSON. |
 | `.row` | A primary button with its related controls. Each group has at most one `button.primary`. |
 | `.badge`, `.dot` | A status word, and a status colour in the navigation. |
-| `.note` | A limit that the operator must know before a run. |
-| `.notes` | The grid in the title bar that holds the `.note` items and the Prerequisites card side by side. It uses the full width of the view. |
+| `.note` | A limit that the operator must know before a run. Only the reason why a scenario cannot run shows open in the title bar. |
+| `details.notes` | The closed notes of the title bar. Its summary gives the number of notes and prerequisites. When it is open, a grid holds the `.note` items and the Prerequisites card side by side. |
 | `.fine`, `.muted` | A small explanation, and an empty state. |
 | `.error`, `.outcome` | A failure, and the result of an action. |
 | `.thread-events` | A closed event list for one Thread in a scenario that compares Threads. |
@@ -55,7 +56,7 @@ An empty list shows a `.muted` sentence that tells what fills it. Do not show an
 - The `sync` function owns the **Run** button, the Turn controls, the status line and the typing indicator. Change the `busy`, `waiting` and `parked` values, then call `sync`. Do not set them from a second place.
 - A scenario with `upload` gets a `.row` with the file input, **Attach the sample file** and **Remove the file**. A sent message clears the file.
 - A scenario that compares Threads or Scopes gets a `select` next to **Run**. It selects the Thread that the conversation shows and that receives each Turn. The `TARGETS` function of the scenario gives the options, and the `syncTarget` function owns them. An option with a Scope sets the `scope` query parameter of each Thread route. The `threadRoute` function builds the route.
-- A scenario with `controls` gets a second `.row` in the composer: **Add to this Turn**, **Queue for the next Turn** and **Cancel the Turn**. These buttons work only while a Turn runs or is parked.
+- A scenario with `controls` gets **Add to this Turn**, **Queue for the next Turn** and **Cancel the Turn** in the `.row` of **Run**. These buttons work only while a Turn runs or is parked.
 - The Compaction and recovery scenario gets a **Ledger system** card with **Hold the ledger** and **Release the ledger**, and a **Context of the Agent** card with **Compact the Thread**. A panel action keeps the Thread of the conversation. Only a saved Agent Spec starts a new one.
 - The Delegation scenario gets a **Child Threads** card and a **Usage records** card. A `delegation.started` event adds a `.tool.child` card and opens a stream of the child Thread. The `childStreams` set holds each one, and `closeStreams` closes them with the stream of the page. An Approval of a child shows in the parent conversation with the label of the child, and its answer goes to the parent route.
 - The Memory scenario gets a **Memory** card for each sample Scope, with **Start a new Thread** and **Forget the User**. Its **Scope boundary** card shows the raw answer of a Thread route in a `pre`. A closed card shows the Profile fields. A new Thread moves the composer to it when the conversation is in that Scope.
@@ -79,7 +80,8 @@ An empty list shows a `.muted` sentence that tells what fills it. Do not show an
 ## Layout and sizes
 
 - At 1100 px and less, the navigation becomes a drawer.
-- At 760 px and less, the zones stack in one column and a table becomes a list.
+- Above 760 px, the conversation and the side column fill the height of the view, and each one scrolls by itself. The conversation gets two thirds of the width.
+- At 760 px and less, the zones stack in one column and a table becomes a list. The conversation has a fixed height of 65 % of the view.
 - Each grid column uses `minmax(0, …)`, and each flex child that holds text has `min-width: 0`. Long text then wraps.
 - Do not give an element a fixed width in `px`. Use `rem`, `fr` or a percentage.
 - A button on a phone is at least 40 CSS pixels high. The mobile media query sets this value.
