@@ -5,6 +5,11 @@
   "main": "./browser-worker.ts",
   "compatibility_date": "2026-08-04",
   "compatibility_flags": ["global_fetch_strictly_public"],
+  // A fixed test key ring, thus the Scope credential of the browser checks uses the real envelope store. It is not a
+  // secret: no real credential is stored with it.
+  "vars": {
+    "KARMI_KEYRING": "{\"active\":\"v1\",\"keys\":{\"v1\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=\"}}",
+  },
   // The browser files. The Worker answers `/api` and `/threads`, where it checks the access token.
   "assets": { "directory": "../public", "run_worker_first": ["/api/*", "/threads", "/threads/*"] },
   "durable_objects": {

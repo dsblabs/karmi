@@ -5,6 +5,7 @@ import { containerAgent, sampleFiles } from "./containers";
 import { bookCourier, dispatchAgent, listParcels, packParcel } from "./dispatch";
 import { ledgerAgent, postEntry, readLedger } from "./ledger";
 import { librarianAgent } from "./librarian";
+import { scopeDeskAgent } from "./lifecycle";
 import { forksAgent } from "./media-forks";
 import { buyerAgent, listSuppliers, managerAgent, placeOrder } from "./purchases";
 import { getOrder, refundAgent, refundOrder } from "./refund";
@@ -56,6 +57,7 @@ export const catalogue = (model: string): CatalogueInput => ({
     scriptsAgent(model),
     librarianAgent(model),
     containerAgent(model),
+    scopeDeskAgent(model),
   ],
   usageHandler: sampleUsageHandler,
 });

@@ -13,7 +13,7 @@ import {
   type KnowledgeData,
   type SampleDocument,
 } from "./librarian";
-import { routeError } from "./route-error";
+import { conflictOf, routeError } from "./route-error";
 import { sampleData, type SampleDataDO } from "./sample-data";
 
 interface KnowledgeRouteOptions {
@@ -65,8 +65,7 @@ async function attempt(call: () => Promise<unknown>): Promise<Response | undefin
     await call();
     return undefined;
   } catch (caught) {
-    if (!(caught instanceof KarmiError) || !caught.code.startsWith("knowledge.")) throw caught;
-    return Response.json({ error: { code: caught.code, message: caught.message } }, { status: 409 });
+    return conflictOf(caught, "knowledge.");
   }
 }
 

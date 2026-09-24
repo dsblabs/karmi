@@ -19,7 +19,8 @@ export interface Generated {
   keyring: string;
 }
 
-function randomBase64(bytes: number): string {
+/** Returns this number of random bytes as base64 text. 32 bytes make one key of the key ring. */
+export function randomBase64(bytes: number): string {
   return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(bytes))));
 }
 

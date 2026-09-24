@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has thirteen browser scenarios:
+This version has fourteen browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -17,6 +17,7 @@ This version has thirteen browser scenarios:
 - **Isolate Scripts**
 - **Knowledge ingestion and document search**
 - **Container Scripts, files and artifacts**
+- **Scope lifecycle, credentials and key rotation**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -52,7 +53,7 @@ The terminal shows the credential while you type it.
 
 The Worker checks the access token on each route below `/api` and `/threads`. A request without the token gets a `401` answer. The browser files have no data, so the Worker serves them without the token. There is no signup.
 
-The token opens two sample Scopes, `sample-a` and `sample-b`. A request acts in `sample-a`. A Thread route with the query parameter `scope=sample-b` acts in `sample-b`. Only the Memory scenario uses it. A request that names a different Scope gets a `401` answer.
+The token opens two sample Scopes, `sample-a` and `sample-b`. A request acts in `sample-a`. A Thread route with the query parameter `scope=sample-b` acts in `sample-b`. Only the Memory scenario uses it. The token also opens the disposable Scopes of the Scope lifecycle scenario, `sample-lifecycle-<number>`. A request that names a different Scope gets a `401` answer.
 
 The browser shows the Provider and the model. No route returns the Provider credential.
 
@@ -432,6 +433,66 @@ The Playground does not use `LocalProcessSandbox`. That sandbox runs a Script as
 
 Cloudflare enforces the network rules. The Playground does not claim that local Docker enforces them in the same way. Check the **Allowed host** and **Denied host** prompts in a deployment.
 
+## The Scope lifecycle and credentials scenario
+
+**Scope lifecycle, credentials and key rotation** runs in a disposable Scope, `sample-lifecycle-<number>`. The scenario can destroy it, thus it does not use a sample Scope of the other scenarios. Its Agent `scope-desk` answers in text and needs no Tool calls.
+
+The Agent runs on the Provider profile `scope-key` of the disposable Scope. The profile uses the Provider of setup with the Scope credential `scope:provider`. Its `fallback` names the Deployment profile `default`, which uses the credential of `pnpm setup`:
+
+```json
+{
+  "adapter": "playground",
+  "credential": "scope:provider",
+  "fallback": { "profile": "default", "on": ["missing"] }
+}
+```
+
+### Suspension and destruction
+
+Do these steps:
+
+1. Select **Run**. The Scope has no credential yet, thus the conversation shows that the model Step runs under the Deployment profile `default`.
+2. Select **Suspend the Scope** in the **Disposable Scope** card. Then select **Run**. The Turn parks with the reason `scope_suspended`.
+3. Select **Resume the Scope**. The route calls `scope.resume()`, then `thread.resume()` for the parked Turn. The Turn continues. The Thread, its events and the Scope credential stay.
+4. Select **Destroy the Scope**. `scope.destroy()` writes the tombstone at once. The card then shows the Destroy walk from `scope.destroyStatus`: its phase and the Threads, Memories, Knowledge corpora and R2 objects that it deleted. The page reads it each second until the walk ends.
+5. Select **Run**. The walk deleted the Thread, thus the request gets a `404` answer with the code `thread.deleted`. Each button of the Scope gets `scope.destroyed`.
+
+A suspension is reversible. It keeps all the data of the Scope, and a Turn waits until the resume. A destroy is permanent. The tombstone keeps the Scope id forever, and the walk deletes the Threads, the Memories, the Knowledge, the media and the credentials.
+
+### The Scope credential
+
+1. Paste a key in the **Scope credential** card and select **Store the credential**. It can be the key that you gave to `pnpm setup`, or a second key of the same Provider. The route calls `scope.credentials.put` and clears the field. The card shows the version and the time from `scope.credentials.describe`. No route, event or log returns the value.
+2. Select **Test the credential**. `scope.providers.test` makes one small call to the Provider and names the credential version that it used. A wrong key gives a failed test with the error of the Provider.
+3. Select **Run**. The **Credential of each model Step** card shows `scope:provider` with its version. The card reads the `step.started` events.
+4. Select **Revoke the credential**. The test now fails with `Credential "scope:provider" is missing.` Select **Run**: the model Step runs under the Deployment profile, and `step.started` names the fallback with the reason `missing`. A revoke applies at the next model Step, also during a Turn.
+5. Select **Turn the fallback off** in the **Provider profile of the Scope** card. Select **Run**. The Turn fails, because the profile has no credential and no fallback. Store a key again: the Scope stores version 2, and the next Step uses it.
+
+### Key rotation from a terminal
+
+The key ring `KARMI_KEYRING` encrypts each Scope credential. `pnpm setup` makes it with one key. The **Key ring** card shows the ids of the keys, never a key. Run these steps with a stored Scope credential:
+
+1. Stop `pnpm dev`. Run this command. It adds the key `v2` to `.dev.vars` and makes it active. It keeps the old key and each other line of the file:
+
+   ```sh
+   pnpm rotate-key
+   ```
+
+2. Start `pnpm dev` again. The **Key ring** card shows `v2` as the active key and both keys in the ring. Select **Test the credential**: it passes, because the ring can still decrypt with `v1`.
+3. Select **Rewrap the credentials**. The route calls `scope.credentials.rewrap()` for the disposable Scope and for `sample-a` and `sample-b`. The card shows the count for each Scope: 1 for the disposable Scope and 0 for the others. A second rewrap gives 0, because each credential already uses the active key.
+4. Stop `pnpm dev` and remove the old key:
+
+   ```sh
+   pnpm rotate-key --retire
+   ```
+
+5. Start `pnpm dev` again and select **Test the credential**. It passes with the same version. Without step 3, the test fails with `Key "v1" is not in KARMI_KEYRING`.
+
+The Provider credential of setup is a Worker variable, not a Scope credential, thus a rotation does not change it. The other scenarios store no Scope credential. Do step 4 only after a rewrap of each Scope. For a deployment, run `pnpm deploy` with the deployment name after step 1 and after step 4. It stores the new key ring as a Worker secret.
+
+The state stays until you select **Reset scenario**. A reset cancels the Turn and destroys the disposable Scope, when it is not destroyed yet. The next Scope has a new id, because a destroyed id never holds data again. A reset does not change `.dev.vars`, the Provider credential of setup or another scenario.
+
+The Agent and the Scope config are in [`src/lifecycle.ts`](./src/lifecycle.ts). The routes are in [`src/lifecycle-routes.ts`](./src/lifecycle-routes.ts). The key rotation command is in [`setup/rotate-key.ts`](./setup/rotate-key.ts).
+
 ## Model limits
 
 These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Knowledge, Usage and logging, isolate Scripts and container Scripts.
@@ -519,6 +580,8 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 | ------------------- | -------------------------------------------------------------------------------------------- |
 | `pnpm test`         | The public HTTP routes of the Worker in workerd, with the scripted Provider of the Test kit. |
 | `pnpm test:browser` | Each scenario, token access, reset and the layout at three screen sizes, in a browser.       |
+
+The Worker tests use the in-memory credential store of the Test kit, which encrypts nothing. The browser checks store the Scope credential in the envelope store with a fixed key ring of one key, thus their rewrap moves no credential. Only a check by hand with `wrangler dev` covered a rewrap after a rotation.
 
 The tests run container Scripts on a fake container runtime through the `sandbox.driver` option of `createKarmi`, in [`test/container-driver.ts`](./test/container-driver.ts). The Harness, the Workspace, the Jobs and the artifacts are real. The fake runs no code and enforces no network rule, thus only a deployment shows the network rules.
 

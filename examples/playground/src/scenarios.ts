@@ -4,6 +4,7 @@ import { CONCIERGE_PROMPTS, MEMORY } from "./concierge";
 import { CONTAINER_LIMITS, CONTAINER_PROMPTS, CONTAINERS, EGRESS_ALLOW, type ContainerRuntime } from "./containers";
 import { COMPACTION, CONTEXT, LEDGER_PROMPTS } from "./ledger";
 import { KNOWLEDGE, LIBRARIAN_PROMPTS } from "./librarian";
+import { LIFECYCLE, LIFECYCLE_PROMPTS } from "./lifecycle";
 import { FORKS, FORKS_PROMPT } from "./media-forks";
 import { OBSERVABILITY, OBSERVABILITY_PROMPTS } from "./observability";
 import type { ProviderSetup } from "./provider-options";
@@ -229,7 +230,23 @@ export const SCENARIOS: readonly Scenario[] = [
       "The Playground does not use LocalProcessSandbox. That sandbox runs a Script as a process of your computer, with access to your files and with no network rule, thus it is not an isolated sandbox.",
     ],
   },
-  notBuilt("scopes", "Scopes and credentials", "Scope lifecycle, credentials and key rotation"),
+  {
+    id: LIFECYCLE,
+    group: "Scopes and credentials",
+    title: "Scope lifecycle, credentials and key rotation",
+    summary:
+      "The scenario runs in a disposable Scope. Suspend it and resume it, or destroy it and follow the Destroy walk. Store a Scope credential that no route returns, then test it, revoke it and see the next Step fall back to the credential of setup. Rotate the key ring from a terminal and rewrap each credential.",
+    built: true,
+    prerequisites: [],
+    needs: [],
+    prompts: LIFECYCLE_PROMPTS,
+    code: `${CODE}/src/lifecycle.ts`,
+    notes: [
+      "The Scope credential can be the same key that you gave to pnpm setup, or a second key of the same Provider. The page never shows it again.",
+      "A destroy is permanent. A reset destroys the disposable Scope and moves to a new Scope id. It does not change the Provider credential of setup.",
+      "Key rotation needs a terminal. The README of the Playground tells each command.",
+    ],
+  },
   notBuilt("mcp", "Providers and MCP", "Provider switching, AI Gateway and remote MCP Tools", [
     "A remote MCP server.",
     "AI Gateway needs a Cloudflare account.",
@@ -352,6 +369,7 @@ const memory = row(MEMORY);
 const observability = row(OBSERVABILITY);
 const scripts = row(SCRIPTS);
 const knowledge = row(KNOWLEDGE);
+const lifecycle = row(LIFECYCLE);
 // The tests run container Scripts on a fake container runtime, thus the rows say that no real container ran yet.
 const containers = (feature: string, group: string, observable: string): CoverageRow => ({
   ...row(CONTAINERS)(feature, group, observable),
@@ -563,6 +581,45 @@ export const COVERAGE: readonly CoverageRow[] = [
     group: "Memory and Knowledge",
     feature: "Vector and hybrid retrieval",
     observable: "Not shown. It needs Workers AI or a Vectorize index, which local development does not have.",
+  },
+  lifecycle(
+    "Scope suspension and resumption",
+    "Scopes and credentials",
+    "Suspend the Scope and run a prompt. The Turn parks with scope_suspended. Resume the Scope, and the Turn continues. The Threads and the credential stay.",
+  ),
+  lifecycle(
+    "Scope destruction and the Destroy walk",
+    "Scopes and credentials",
+    "Destroy the Scope. The card follows the phase and the counts of the walk until only the tombstone stays. Each later operation gets scope.destroyed.",
+  ),
+  lifecycle(
+    "A new Scope identity after a destroy",
+    "Scopes and credentials",
+    "Reset destroys the disposable Scope and moves to the next Scope id. The old id stays destroyed.",
+  ),
+  lifecycle(
+    "Scope credentials",
+    "Scopes and credentials",
+    "Store a credential. The card shows its version and dates. No route, event or log returns the value.",
+  ),
+  lifecycle(
+    "Provider test",
+    "Scopes and credentials",
+    "Test the credential. scope.providers.test makes one small Provider call and names the credential version.",
+  ),
+  lifecycle(
+    "Credential revocation and fallback",
+    "Scopes and credentials",
+    "Revoke the credential. The next model Step runs under the Deployment profile, and step.started names the fallback. With the fallback off, the Turn fails.",
+  ),
+  {
+    group: "Scopes and credentials",
+    feature: "Key rotation",
+    scenario: LIFECYCLE,
+    observable:
+      "pnpm rotate-key adds an active key. After a restart, Rewrap moves each credential to it, and the test passes after pnpm rotate-key --retire.",
+    verification:
+      "Setup tests rotate the key ring. Checked by hand with wrangler dev and the scripted Provider: a restart with the rotated ring, a rewrap of 1 credential, and a passed test after the old key was retired. No check ran with a real Provider or in a Cloudflare account.",
   },
   turns("Capability grants", "Agents", `The longRunning grant gives the Turn ${String(MAX_STEPS)} Steps.`),
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),

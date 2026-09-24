@@ -76,7 +76,7 @@ describe("GET /api/playground", () => {
     expect(body).toMatchObject({
       scenarios: expect.arrayContaining([
         expect.objectContaining({ id: "refund", status: "ready" }),
-        expect.objectContaining({ id: "scopes", status: "incomplete" }),
+        expect.objectContaining({ id: "http", status: "incomplete" }),
       ]),
     });
   });

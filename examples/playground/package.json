@@ -8,6 +8,7 @@
     "dev:containers": "wrangler dev --enable-containers --var PLAYGROUND_CONTAINERS:docker",
     "deploy": "node --experimental-strip-types setup/deploy.ts",
     "remove": "node --experimental-strip-types setup/remove.ts",
+    "rotate-key": "node --experimental-strip-types setup/rotate-key.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",

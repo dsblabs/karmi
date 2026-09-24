@@ -6,6 +6,7 @@ import { ADAPTER, buildProvider } from "./providers";
 import { catalogue } from "./catalogue";
 import { playgroundLogger } from "./observability";
 import { CONTAINER_IMAGE, containerRuntime } from "./containers";
+import { keyringView } from "./keyring";
 
 // `pnpm setup` writes the selection and the credential to `.dev.vars`. Without it, the Playground still starts
 // and tells the operator what is missing.
@@ -46,6 +47,7 @@ const playground = createPlayground({
   token: env.PLAYGROUND_TOKEN,
   data: env.PLAYGROUND_DATA,
   media: env.KARMI_MEDIA,
+  keyring: keyringView(env.KARMI_KEYRING),
   hasLoader: env.KARMI_LOADER !== undefined,
   containers,
 });
