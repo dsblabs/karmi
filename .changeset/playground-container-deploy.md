@@ -2,6 +2,10 @@
 "@karmi/core": patch
 ---
 
+A cancel or a reset now ends a Turn that waits for a container Job, also when Cloudflare fails to destroy the container at once. Before, the Turn stayed parked, and each later cancel, reset or delete of the Thread failed. Now the Turn ends, and the Workspace tries the destroy again after 30 seconds. The delete of a Thread waits until the container is destroyed, thus the Scope container slot is always released.
+
+**Reset scenario** in the Playground now also works after a reset that stopped after it deleted the Thread. Before, each later reset failed with `This Thread has been deleted.`
+
 Fixed `pnpm deploy` of the Playground:
 
 - The command no longer fails with a JSON syntax error when it reads `wrangler.jsonc`.

@@ -103,6 +103,47 @@ it("kills a Job that exceeds its wall deadline", async () => {
   expect(testContainer("test/container-timeout").signals).toEqual(["SIGTERM", "SIGKILL"]);
 });
 
+it("ends a cancelled Turn when the container destroy fails, and retries the destroy later", async () => {
+  await agent();
+  provider.script([[reply.toolCall("run_script", { code: "pending", language: "shell" })]]);
+  const thread = scope.thread({ agent: "container", threadId: "container-destroy-retry" });
+  await thread.send(input);
+  const driver = testContainer("test/container-destroy-retry");
+  driver.failDestroys = 1;
+  await thread.cancel();
+  expect(await thread.events()).toContainEvent({ type: "turn.failed", reason: "cancelled" });
+  expect(driver.destroyed).toBe(false);
+  await clock.advance(30000);
+  await expect.poll(() => driver.destroyed).toBe(true);
+  await thread.delete();
+});
+
+it("deletes a Thread only after its container destroy succeeds, and then frees the Scope slot", async () => {
+  await scope.config.set({ ceilings: { scripts: { maxContainers: 1 } } });
+  await agent();
+  provider.script([[reply.toolCall("run_script", { code: "pending", language: "shell" })]]);
+  const first = scope.thread({ agent: "container", threadId: "container-delete-retry" });
+  await first.send(input);
+  const driver = testContainer("test/container-delete-retry");
+  driver.failDestroys = 2;
+  await first.cancel();
+  await first.delete();
+  expect(driver.destroyed).toBe(false);
+  // The cleanup runs as an alarm. Each pass of the poll moves the clock past its next retry.
+  await expect
+    .poll(async () => {
+      await clock.advance(30000);
+      return driver.destroyed;
+    })
+    .toBe(true);
+  const second = scope.thread({ agent: "container", threadId: "container-delete-next" });
+  provider.script([[reply.toolCall("run_script", { code: "success", language: "shell" })], "done"]);
+  await expect
+    .poll(async () => JSON.stringify(await second.send(input)), { timeout: 5000 })
+    .not.toContain("maxContainers ceiling");
+  await scope.config.set({ ceilings: {} });
+});
+
 it("enforces the shared Scope container ceiling and frees capacity after cancel", async () => {
   await scope.config.set({ ceilings: { scripts: { maxContainers: 1 } } });
   await agent();

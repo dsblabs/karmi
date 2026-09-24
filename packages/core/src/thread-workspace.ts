@@ -1,9 +1,10 @@
 import { eq } from "drizzle-orm";
 import { CloudflareContainerSandbox } from "./container-sandbox";
 import type { ContainerDriver, ContainerLimits, ContainerRun } from "./container-types";
+import type { Logger } from "./context";
 import type { ThreadDatabase } from "./db/thread/database";
 import { containerRuns, containerWorkspaces } from "./db/thread/schema";
-import { KarmiError } from "./errors";
+import { errorMessage, KarmiError } from "./errors";
 import { threadMayRead } from "./keys";
 import { DEFAULT_MEDIA_BYTES, putMedia } from "./media";
 import type { Outcome } from "./outcome";
@@ -14,6 +15,11 @@ import type { ThreadEventData } from "./thread-events";
 import type { ToolPending } from "./tool";
 
 const WATCHDOG_MS = 5000;
+// A Cloudflare Sandbox Durable Object can reset while it destroys its container. The call then fails or hangs
+// for a minute, thus the Workspace stops waiting after this time and tries again after the retry time.
+const DESTROY_WAIT_MS = 10_000;
+/** The time after which the Workspace or the Thread cleanup tries a failed container destroy again. */
+export const DESTROY_RETRY_MS = 30_000;
 
 /** The container settings of the current Turn snapshot. */
 export interface WorkspaceTurn {
@@ -30,6 +36,7 @@ export interface WorkspaceHost {
   threadId: string;
   bucket: R2Bucket | undefined;
   now(): number;
+  logger: Logger;
   /** Returns the container runtime of this Thread, or undefined when the Deployment has none. */
   driver(): ContainerDriver | undefined;
   /** Returns the container settings of the current Turn, or undefined when it has no container Scripts. */
@@ -80,21 +87,46 @@ export class ThreadWorkspace {
     return this.poll();
   }
 
-  /** Stops the process, destroys the container and releases the Scope slot. Does nothing without a reservation. */
-  async destroy(): Promise<void> {
-    if (!this.host.db.select({ id: containerWorkspaces.id }).from(containerWorkspaces).get()) return;
+  /**
+   * Stops the process, destroys the container and releases the Scope slot. Does nothing without a reservation.
+   * When the container runtime fails or does not answer in time, it keeps the reservation and tries again with the
+   * `container-idle` alarm. Thus a Turn can end while its container is not destroyed yet. Returns false when the
+   * container is not destroyed yet.
+   */
+  async destroy(): Promise<boolean> {
+    if (!this.host.db.select({ id: containerWorkspaces.id }).from(containerWorkspaces).get()) return true;
     const turn = this.host.turn();
     const sandbox = turn && this.sandbox(turn);
-    if (sandbox) await sandbox.cancel();
-    else {
-      const driver = this.host.driver();
-      if (!driver) throw new Error("Cannot destroy the Workspace without its container runtime.");
-      await driver.destroy();
+    const driver = this.host.driver();
+    if (!sandbox && !driver) throw new Error("Cannot destroy the Workspace without its container runtime.");
+    let stopTimer = () => {};
+    const timeout = new Promise<never>((_, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("The container runtime did not destroy the Workspace in time.")),
+        DESTROY_WAIT_MS,
+      );
+      stopTimer = () => clearTimeout(timer);
+    });
+    try {
+      await Promise.race([sandbox ? sandbox.cancel() : driver?.destroy(), timeout]);
+    } catch (error) {
+      this.host.logger.warn("Container Workspace destroy failed. It is tried again.", { error: errorMessage(error) });
+      this.host.scheduler.cancel("container-watchdog");
+      this.host.scheduler.set({
+        id: "container-idle",
+        kind: "container-idle",
+        dueAt: this.host.now() + DESTROY_RETRY_MS,
+        payload: {},
+      });
+      return false;
+    } finally {
+      stopTimer();
     }
     await this.host.release();
     this.host.db.delete(containerWorkspaces).run();
     this.host.scheduler.cancel("container-watchdog");
     this.host.scheduler.cancel("container-idle");
+    return true;
   }
 
   /** Empties the Workspace tables when the Thread is deleted. Call it inside the delete transaction. */

@@ -1,4 +1,4 @@
-import { SpecInvalidError, type AgentSpec, type Karmi, type Scope, type Thread } from "@karmi/core";
+import { KarmiError, SpecInvalidError, type AgentSpec, type Karmi, type Scope, type Thread } from "@karmi/core";
 import { createHttpHandler, type Principal } from "@karmi/http";
 import { AGENTS, ASSISTANT } from "./assistant";
 import { forkScenarioRoutes } from "./fork-routes";
@@ -132,9 +132,14 @@ async function resetScenario(
 ): Promise<void> {
   // The order matters: the cancel stops a Turn that could still change the data which the reset restores. It also
   // cancels each child Thread. A delete does not reach a child, thus the reset deletes each one.
-  await thread.cancel();
-  for (const child of (await runtime.children?.(thread)) ?? []) await child.delete();
-  await thread.delete();
+  try {
+    await thread.cancel();
+    for (const child of (await runtime.children?.(thread)) ?? []) await child.delete();
+    await thread.delete();
+  } catch (caught) {
+    // A reset that stopped after the delete leaves a deleted Thread. This reset then does the rest of the work.
+    if (!(caught instanceof KarmiError) || caught.code !== "thread.deleted") throw caught;
+  }
   await stub.reset();
   if (restore) await runtime.restore?.();
 }

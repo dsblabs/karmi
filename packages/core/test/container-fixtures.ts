@@ -39,7 +39,13 @@ export class TestContainerDriver implements ContainerDriver {
   async keepAlive(value: boolean): Promise<void> {
     this.alive = value;
   }
+  /** The number of next `destroy` calls that fail, like a Sandbox Durable Object that resets during the call. */
+  failDestroys = 0;
   async destroy(): Promise<void> {
+    if (this.failDestroys > 0) {
+      this.failDestroys -= 1;
+      throw new Error("Connection closed: this Durable Object instance is no longer active.");
+    }
     this.destroyed = true;
     this.alive = false;
     this.processes.clear();
