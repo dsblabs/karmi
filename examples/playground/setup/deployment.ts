@@ -313,7 +313,7 @@ async function claimContainer(manifest: DeploymentManifest, runner: CommandRunne
   await store.save(manifest);
 }
 
-const listed = (value: unknown): unknown[] => {
+const requireList = (value: unknown): unknown[] => {
   if (!Array.isArray(value)) throw new Error("Wrangler did not return a JSON list.");
   return value;
 };
@@ -324,7 +324,7 @@ async function containerApplications(
   runner: CommandRunner,
 ): Promise<Array<{ id: string; name: string }>> {
   const output = await runner.run(command(["containers", "list", "--json"], manifest.account.id));
-  return listed(JSON.parse(output)).flatMap((entry) =>
+  return requireList(JSON.parse(output)).flatMap((entry) =>
     typeof entry === "object" &&
     entry !== null &&
     "id" in entry &&
@@ -339,11 +339,13 @@ async function containerApplications(
 /** Returns each tag of the registry images with the given name. */
 async function imageTags(manifest: DeploymentManifest, runner: CommandRunner, name: string): Promise<string[]> {
   const output = await runner.run(command(["containers", "images", "list", "--json"], manifest.account.id));
-  return listed(JSON.parse(output)).flatMap((entry) =>
+  return requireList(JSON.parse(output)).flatMap((entry) =>
     typeof entry === "object" &&
     entry !== null &&
     "name" in entry &&
-    entry.name === name &&
+    typeof entry.name === "string" &&
+    // The list can name an image with the registry or the account in front of it.
+    (entry.name === name || entry.name.endsWith(`/${name}`)) &&
     "tags" in entry &&
     Array.isArray(entry.tags)
       ? entry.tags.filter((tag): tag is string => typeof tag === "string")
@@ -360,6 +362,9 @@ async function removeContainer(manifest: DeploymentManifest, runner: CommandRunn
     await runner.run(
       command(["containers", "images", "delete", `${name}:${tag}`, "--skip-confirmation"], manifest.account.id),
     );
+  // Removal reports success only when the registry has no image of the application left.
+  const left = await imageTags(manifest, runner, name);
+  if (left.length > 0) throw new Error(`The registry still has ${name}:${left.join(`, ${name}:`)}.`);
 }
 
 function errorMessage(error: unknown): string {

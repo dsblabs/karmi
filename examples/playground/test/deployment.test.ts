@@ -127,25 +127,26 @@ describe("Cloudflare deployment", () => {
     manifest.container.status = "created";
     const name = manifest.container.name;
     const calls: string[] = [];
+    // The list names an image with the account in front of it. The second list is after the deletes.
+    let images = [
+      { name: `${account.id}/${name}`, tags: ["build-1", "build-2"] },
+      { name: "other-app", tags: ["build-9"] },
+    ];
     const result = await remove(
       manifest,
       {
         run(request) {
-          calls.push(request.args.join(" "));
-          if (request.args.join(" ") === "containers list --json")
+          const line = request.args.join(" ");
+          calls.push(line);
+          if (line === "containers list --json")
             return Promise.resolve(
               JSON.stringify([
                 { id: "app-7", name },
                 { id: "app-8", name: "other-app" },
               ]),
             );
-          if (request.args.join(" ") === "containers images list --json")
-            return Promise.resolve(
-              JSON.stringify([
-                { name, tags: ["build-1", "build-2"] },
-                { name: "other-app", tags: ["build-9"] },
-              ]),
-            );
+          if (line === "containers images list --json") return Promise.resolve(JSON.stringify(images));
+          if (line.includes("build-2")) images = images.filter((image) => image.name === "other-app");
           return Promise.resolve("");
         },
       },
@@ -160,8 +161,30 @@ describe("Cloudflare deployment", () => {
       "containers images list --json",
       `containers images delete ${name}:build-1 --skip-confirmation`,
       `containers images delete ${name}:build-2 --skip-confirmation`,
+      "containers images list --json",
     ]);
     expect(manifest.container.status).toBe("removed");
+  });
+
+  it("does not report removal while an image of the container application remains", async () => {
+    const manifest = createManifest("karmi-playground-test-rm-image", account, {}, { containerScripts: true });
+    if (!manifest.container) throw new Error("No container resource.");
+    manifest.container.status = "created";
+    const name = manifest.container.name;
+    const result = await remove(
+      manifest,
+      {
+        run(request) {
+          if (request.args.join(" ") === "containers images list --json")
+            return Promise.resolve(JSON.stringify([{ name, tags: ["build-1"] }]));
+          return Promise.resolve(request.args[1] === "list" ? "[]" : "");
+        },
+      },
+      { save: () => Promise.resolve() },
+      cleaner,
+    );
+    expect(result).toMatchObject({ complete: false, failures: [{ resource: `container ${name}` }] });
+    expect(manifest.container.status).toBe("created");
   });
 
   it("keeps the container application retryable when its removal fails", async () => {

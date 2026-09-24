@@ -352,7 +352,12 @@ const memory = row(MEMORY);
 const observability = row(OBSERVABILITY);
 const scripts = row(SCRIPTS);
 const knowledge = row(KNOWLEDGE);
-const containers = row(CONTAINERS);
+// The tests run container Scripts on a fake container runtime, thus the rows say that no real container ran yet.
+const containers = (feature: string, group: string, observable: string): CoverageRow => ({
+  ...row(CONTAINERS)(feature, group, observable),
+  verification:
+    "Worker tests and browser checks with the scripted Provider and a fake container runtime. Not verified in a real container yet.",
+});
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [

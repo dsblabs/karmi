@@ -424,7 +424,9 @@ The scenario needs a model that supports Tool calls. The Agent is in [`src/conta
 pnpm dev:containers
 ```
 
-Wrangler then builds the image of `@karmi/sandbox-container` with Docker and runs each Workspace in a local container. The image is for `linux/amd64`. On an ARM computer, Docker needs AMD64 emulation. The first build takes some minutes. The command sets the variable `PLAYGROUND_CONTAINERS` to `docker`, and the Worker offers container Scripts only with this variable.
+Wrangler then builds the image of `@karmi/sandbox-container` with Docker and runs each Workspace in a local container. The image is for `linux/amd64`. On an ARM computer, Docker needs AMD64 emulation. The first build takes some minutes.
+
+The local run is not verified yet. On a Linux ARM64 computer with AMD64 emulation, Wrangler 4.129 built the image, but it did not start the container, and each Script failed with `Container is starting. Please retry in a moment.` The image itself starts under the emulation. An AMD64 computer can give a different result. The command sets the variable `PLAYGROUND_CONTAINERS` to `docker`, and the Worker offers container Scripts only with this variable.
 
 The Playground does not use `LocalProcessSandbox`. That sandbox runs a Script as a process of your computer. The Script can read your files, and no network rule applies. Thus it is not an isolated sandbox, and it also cannot run in workerd.
 
@@ -467,7 +469,7 @@ The command then asks whether to enable container Scripts. Before you answer, it
 - The [Workers Paid plan](https://developers.cloudflare.com/containers/pricing/). Cloudflare bills each container that runs.
 - Docker on your computer. Wrangler builds the `linux/amd64` image there and pushes it to the Cloudflare registry. On an ARM computer, Docker needs AMD64 emulation.
 
-A yes creates one container application with the name `<deployment name>-sandbox` and pushes its image. The Worker gets the `KARMI_SANDBOX` Durable Object and the variable `PLAYGROUND_CONTAINERS` with the value `cloudflare`. Before the deploy, the command checks that no container application has that name, and it records the application in the manifest. A no removes the container, the `KARMI_SANDBOX` binding and its migration from the Worker configuration.
+A yes creates one container application with the name `<deployment name>-sandbox` and pushes its image. The Worker gets the `KARMI_SANDBOX` Durable Object and the variable `PLAYGROUND_CONTAINERS` with the value `cloudflare`. Before it creates a resource, the command checks that Docker runs. Before the deploy, it checks that no container application has that name, and it records the application in the manifest. A no removes the container, the `KARMI_SANDBOX` binding and its migration from the Worker configuration.
 
 The command stores the Provider credential, access token and key ring as Worker secrets. It writes non-secret Provider settings as Worker variables.
 

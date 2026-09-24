@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { readFile } from "node:fs/promises";
 import {
@@ -19,7 +20,13 @@ import {
 } from "./deployment.ts";
 import { parseDevVars } from "./cli.ts";
 
-const yes = (answer: string) => /^y(es)?$/i.test(answer.trim());
+/** Stops before any resource exists when container Scripts are selected and Docker does not answer. */
+function requireDocker(): void {
+  if (spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0) return;
+  throw new Error("Container Scripts need Docker, which builds the image. Start Docker, then run pnpm deploy again.");
+}
+
+const isYes = (answer: string) => /^y(es)?$/i.test(answer.trim());
 
 function validName(value: string): boolean {
   return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value);
@@ -64,8 +71,8 @@ async function createNewManifest(
   console.log("Each container that runs is billed by Cloudflare. Removal deletes the application and its images.");
   const containers = await terminal.question("Enable container Scripts? [y/N]: ");
   return createManifest(name, account, supplied, {
-    isolateScripts: yes(scripts),
-    containerScripts: yes(containers),
+    isolateScripts: isYes(scripts),
+    containerScripts: isYes(containers),
   });
 }
 
@@ -93,6 +100,7 @@ async function main(): Promise<void> {
       if (!(error instanceof Error) || !error.message.includes("ENOENT")) throw error;
       manifest = await createNewManifest(name, arguments_.supplied, terminal, runner);
     }
+    if (manifest.container) requireDocker();
     const variables = {
       PLAYGROUND_PROVIDER: local.PLAYGROUND_PROVIDER ?? "",
       PLAYGROUND_MODEL: local.PLAYGROUND_MODEL ?? "",

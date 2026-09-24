@@ -1,5 +1,6 @@
 import type { MediaRef, ThreadEvent } from "@karmi/core";
 import { z } from "zod";
+import { mediaRefSchema } from "./media-download";
 
 const inputSchema = z.object({
   code: z.string(),
@@ -7,19 +8,11 @@ const inputSchema = z.object({
   files: z.record(z.string(), z.unknown()).optional(),
 });
 
-const mediaSchema = z.object({
-  id: z.string(),
-  key: z.string(),
-  mimeType: z.string(),
-  bytes: z.number(),
-  name: z.string().optional(),
-});
-
 // The text of a container `run_script` result. The Harness writes the result of the Sandbox as JSON.
 const resultSchema = z.object({
   value: z.object({ stdout: z.string(), stderr: z.string(), exitCode: z.number() }).optional(),
   error: z.object({ message: z.string() }).optional(),
-  artifacts: z.array(mediaSchema).default([]),
+  artifacts: z.array(mediaRefSchema).default([]),
 });
 
 /** How a container Script ended, or where it is while it runs. */

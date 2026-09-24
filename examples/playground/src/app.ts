@@ -12,7 +12,6 @@ import { KNOWLEDGE } from "./librarian";
 import { memoryScenarioRoutes } from "./memory-routes";
 import { OTHER_SCOPE, SAMPLE_SCOPES, scenarioRuntimes, SCOPE, USER, type Runtime } from "./runtimes";
 import { sampleData, type SampleDataDO } from "./sample-data";
-import type { ContainerRuntime } from "./containers";
 import { mediaDownload } from "./media-download";
 import { COVERAGE, SCENARIOS, viewScenario, type Services } from "./scenarios";
 import { scheduleScenarioRoutes, triggerSupplierDelivery } from "./schedule-routes";
@@ -20,7 +19,7 @@ import { scheduleScenarioRoutes, triggerSupplierDelivery } from "./schedule-rout
 export { CONCIERGE, KNOWLEDGE, MEMORY, OTHER_SCOPE, SCOPE, USER };
 
 /** What `createPlayground` needs. The tests give it a karmi with a scripted Provider. */
-export interface PlaygroundOptions {
+export interface PlaygroundOptions extends Services {
   karmi: Karmi;
   /** The model id of the Agents, in the form `provider/model`. The Catalogue must use the same one. */
   model: string;
@@ -32,10 +31,6 @@ export interface PlaygroundOptions {
   data: DurableObjectNamespace<SampleDataDO>;
   /** The media bucket used by the authenticated download route. */
   media: R2Bucket | undefined;
-  /** Whether the Worker has the `KARMI_LOADER` binding. Without it, the isolate Scripts scenario is unavailable. */
-  hasLoader: boolean;
-  /** Where container Scripts run. Without it, the container Scripts scenario is unavailable. */
-  containers?: ContainerRuntime | undefined;
 }
 
 /** The Playground as a Worker `fetch`. */

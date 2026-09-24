@@ -1,6 +1,7 @@
 import { defineAgent, defineFragment, type MediaRef, type Thread } from "@karmi/core";
 import { env } from "cloudflare:workers";
 import { z } from "zod";
+import { mediaRefSchema } from "./media-download";
 import { decodeSample, sampleData } from "./sample-data";
 
 /** The id of the container Scripts scenario. It is also the id of its Agent. */
@@ -61,14 +62,6 @@ East,Blender,2
   },
 ];
 
-const mediaRefSchema = z.object({
-  id: z.string(),
-  key: z.string(),
-  mimeType: z.string(),
-  bytes: z.number(),
-  name: z.string().optional(),
-});
-
 const storedSchema = z.object({ files: z.record(z.string(), mediaRefSchema) });
 
 /** Reads the refs of the sample files of the current Thread. Returns undefined before the Thread has them. */
@@ -126,14 +119,14 @@ export const containerAgent = (model: string) =>
     },
   });
 
-const script = (language: "python" | "shell", code: string, files = true) =>
+const scriptPrompt = (language: "python" | "shell", code: string, files = true) =>
   `Run this ${language} script with run_script. ${files ? "Pass the sample files." : "Pass no files."} Do not change the code.\n\n\`\`\`${language === "python" ? "python" : "sh"}\n${code}\n\`\`\``;
 
 /** The prompts that the scenario suggests. Each one has the Script that the model runs. The operator can edit each one. */
 export const CONTAINER_PROMPTS = [
   {
     label: "Python report",
-    text: script(
+    text: scriptPrompt(
       "python",
       `import csv
 from collections import defaultdict
@@ -162,7 +155,7 @@ print(f"Wrote 2 files for {len(revenue)} regions. Net revenue: {sum(revenue.valu
   },
   {
     label: "Shell summary",
-    text: script(
+    text: scriptPrompt(
       "shell",
       `echo "Lines in each file:"
 wc -l /in/sales.csv /in/returns.csv
@@ -173,7 +166,7 @@ cat /out/products.txt`,
   },
   {
     label: "Long process",
-    text: script(
+    text: scriptPrompt(
       "shell",
       `for step in $(seq 1 40); do
   echo "Step $step of 40"
@@ -186,7 +179,7 @@ echo "Done"`,
   },
   {
     label: "Allowed host",
-    text: script(
+    text: scriptPrompt(
       "shell",
       `curl -sS -o /dev/null -w "example.com answered HTTP %{http_code}\\n" https://example.com`,
       false,
@@ -194,7 +187,7 @@ echo "Done"`,
   },
   {
     label: "Denied host",
-    text: script(
+    text: scriptPrompt(
       "shell",
       `curl -sS -o /dev/null -w "example.org answered HTTP %{http_code}\\n" https://example.org`,
       false,
