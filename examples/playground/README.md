@@ -469,11 +469,15 @@ The command then asks whether to enable container Scripts. Before you answer, it
 - The [Workers Paid plan](https://developers.cloudflare.com/containers/pricing/). Cloudflare bills each container that runs.
 - Docker on your computer. Wrangler builds the `linux/amd64` image there and pushes it to the Cloudflare registry. On an ARM computer, Docker needs AMD64 emulation.
 
-A yes creates one container application with the name `<deployment name>-sandbox` and pushes its image. The Worker gets the `KARMI_SANDBOX` Durable Object and the variable `PLAYGROUND_CONTAINERS` with the value `cloudflare`. Before it creates a resource, the command checks that Docker runs. Before the deploy, it checks that no container application has that name, and it records the application in the manifest. A no removes the container, the `KARMI_SANDBOX` binding and its migration from the Worker configuration.
+A yes creates one container application with the name `<deployment name>-sandbox` and pushes its image. The application uses the instance type `basic`, because the image does not fit on the disk of the smaller type `lite`. The Worker gets the `KARMI_SANDBOX` Durable Object and the variable `PLAYGROUND_CONTAINERS` with the value `cloudflare`. Before it creates a resource, the command checks that Docker runs. Before the deploy, it checks that no container application has that name, and it records the application in the manifest. A no removes the container, the `KARMI_SANDBOX` binding and its migration from the Worker configuration.
+
+A deployment without container Scripts can add them later. When you run the command again with its deployment name, it asks the question again. A yes adds the container application to the manifest. The command cannot remove container Scripts from a deployment.
 
 The command stores the Provider credential, access token and key ring as Worker secrets. It writes non-secret Provider settings as Worker variables.
 
 The command records ownership in `.deployments/<name>/manifest.json` before it creates resources. Git ignores this directory. Keep the manifest until removal finishes.
+
+At the end, the command prints the `workers.dev` address of the Worker.
 
 Run the same command with the deployment name to recover from an interruption:
 

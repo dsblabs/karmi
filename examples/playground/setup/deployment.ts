@@ -116,6 +116,18 @@ function resource(name: string, owned: boolean): DeploymentResource {
   return { name, owned, status: owned ? "pending" : "created" };
 }
 
+function containerResource(name: string): DeploymentResource {
+  return resource(`${name}-sandbox`, true);
+}
+
+/**
+ * Returns the manifest with a container application for container Scripts. A deployment that exists already can add
+ * them later. The next deploy creates the application. It never removes container Scripts from a deployment.
+ */
+export function addContainerScripts(manifest: DeploymentManifest): DeploymentManifest {
+  return manifest.container ? manifest : { ...manifest, container: containerResource(manifest.name) };
+}
+
 /** Creates an ownership record before the first Cloudflare resource is created. */
 export function createManifest(
   name: string,
@@ -128,7 +140,7 @@ export function createManifest(
     name,
     account,
     isolateScripts,
-    ...(containerScripts && { container: resource(`${name}-sandbox`, true) }),
+    ...(containerScripts && { container: containerResource(name) }),
     worker: resource(name, true),
     queue: resource(supplied.queue ?? `${name}-queue`, supplied.queue === undefined),
     deadLetterQueue: resource(supplied.deadLetterQueue ?? `${name}-dlq`, supplied.deadLetterQueue === undefined),
@@ -268,14 +280,17 @@ async function verifySuppliedResources(manifest: DeploymentManifest, runner: Com
   }
 }
 
-/** Creates missing owned resources, stores secrets and deploys the Worker. */
+/**
+ * Creates missing owned resources, stores secrets and deploys the Worker. Returns the workers.dev address that
+ * Wrangler reports, or `undefined` when it reports none.
+ */
 export async function deploy(
   manifest: DeploymentManifest,
   secrets: Readonly<Record<string, string>>,
   configPath: string,
   runner: CommandRunner,
   store: ManifestStore,
-): Promise<void> {
+): Promise<string | undefined> {
   await store.save(manifest);
   if (manifest.worker.status === "pending") {
     try {
@@ -294,10 +309,12 @@ export async function deploy(
   await claimContainer(manifest, runner, store);
   await runner.run(command(["secret", "bulk", "--config", configPath], manifest.account.id, JSON.stringify(secrets)));
   // Wrangler builds the image, pushes it and creates the container application in the same deploy.
-  await runner.run(command(["deploy", "--config", configPath], manifest.account.id));
+  const output = await runner.run(command(["deploy", "--config", configPath], manifest.account.id));
   manifest.worker.status = "created";
   if (manifest.container) manifest.container.status = "created";
   await store.save(manifest);
+  // The image push can print other addresses, thus only a workers.dev address counts.
+  return /https:\/\/[\w.-]+\.workers\.dev\b/.exec(output)?.[0];
 }
 
 /**

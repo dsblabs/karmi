@@ -23,9 +23,15 @@
     { "tag": "karmi-sandbox-v1", "new_sqlite_classes": ["KarmiSandbox"] }
   ],
   // Container Scripts. `pnpm dev` does not build the image, thus it needs no Docker. `pnpm dev:containers` builds
-  // it with Docker. `pnpm deploy` keeps this entry only when you select container Scripts.
+  // it with Docker. `pnpm deploy` keeps this entry only when you select container Scripts. The image does not fit on
+  // the 2 GB disk of the default `lite` instance, thus the entry selects `basic`.
   "containers": [
-    { "class_name": "KarmiSandbox", "image": "./node_modules/@karmi/sandbox-container/Dockerfile", "max_instances": 2 }
+    {
+      "class_name": "KarmiSandbox",
+      "image": "./node_modules/@karmi/sandbox-container/Dockerfile",
+      "instance_type": "basic",
+      "max_instances": 2
+    }
   ],
   "dev": { "enable_containers": false },
   "worker_loaders": [{ "binding": "KARMI_LOADER" }],

@@ -10,6 +10,7 @@ import {
   writeCloudflareConfig,
 } from "./cloudflare.ts";
 import {
+  addContainerScripts,
   createManifest,
   decodeAccounts,
   deploy,
@@ -64,16 +65,20 @@ async function createNewManifest(
   console.log("\nThe isolate Scripts scenario needs Dynamic Workers, which need the Workers Paid plan.");
   console.log("The Worker then gets a Worker Loader binding. It creates no other resource.");
   const scripts = await terminal.question("Enable isolate Scripts? [y/N]: ");
+  return createManifest(name, account, supplied, {
+    isolateScripts: isYes(scripts),
+    containerScripts: await askContainerScripts(terminal),
+  });
+}
+
+/** Tells what container Scripts need before it asks for them, because they create a billed resource. */
+async function askContainerScripts(terminal: ReturnType<typeof createInterface>): Promise<boolean> {
   console.log("\nThe container Scripts scenario needs Cloudflare Containers, which need the Workers Paid plan.");
   console.log("Wrangler builds the container image on this computer, thus Docker must run here.");
   console.log("The image is for linux/amd64. On an ARM computer, Docker needs AMD64 emulation.");
   console.log("A yes creates one container application and pushes its image to the Cloudflare registry.");
   console.log("Each container that runs is billed by Cloudflare. Removal deletes the application and its images.");
-  const containers = await terminal.question("Enable container Scripts? [y/N]: ");
-  return createManifest(name, account, supplied, {
-    isolateScripts: isYes(scripts),
-    containerScripts: isYes(containers),
-  });
+  return isYes(await terminal.question("Enable container Scripts? [y/N]: "));
 }
 
 async function main(): Promise<void> {
@@ -96,6 +101,8 @@ async function main(): Promise<void> {
       const options = [manifest.isolateScripts && "isolate Scripts", manifest.container && "container Scripts"];
       const selected = options.filter(Boolean).join(" and ");
       console.log(`Resume ${name} in ${manifest.account.name}${selected ? `, with ${selected}` : ""}.`);
+      // A deployment can add container Scripts later, for example one made before the option existed.
+      if (!manifest.container && (await askContainerScripts(terminal))) manifest = addContainerScripts(manifest);
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("ENOENT")) throw error;
       manifest = await createNewManifest(name, arguments_.supplied, terminal, runner);
@@ -114,8 +121,8 @@ async function main(): Promise<void> {
       PLAYGROUND_TOKEN: local.PLAYGROUND_TOKEN ?? "",
       KARMI_KEYRING: local.KARMI_KEYRING ?? "",
     };
-    await deploy(manifest, secrets, configFile.pathname, runner, new FileManifestStore(manifestFile));
-    console.log(`\nDeployed ${name}. Wrangler printed its address above.`);
+    const address = await deploy(manifest, secrets, configFile.pathname, runner, new FileManifestStore(manifestFile));
+    console.log(`\nDeployed ${name}${address ? ` at ${address}` : ""}.`);
     console.log(`Keep .deployments/${name}/manifest.json until you remove the deployment.`);
   } finally {
     terminal.close();
