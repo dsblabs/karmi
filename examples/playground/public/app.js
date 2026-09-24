@@ -1786,6 +1786,150 @@ function knowledgeCards({ corpora, known, inlineLimit, bulkSize, job, search }, 
   ];
 }
 
+// The label of each search mode of the vector retrieval scenario.
+const VECTOR_MODES = {
+  keyword: "Keyword (fts5)",
+  vector: "Vector",
+  hybrid: "Hybrid",
+};
+
+const vectorCount = (count) => `${count} ${count === 1 ? "vector" : "vectors"}`;
+
+/** The vector retrieval scenario: the Passages of each Scope, the Vectorize index and the guides of each Scope. */
+function vectorCards({ missing, reference, scopes, search, startingQuery }, onChanged, isCurrent) {
+  if (missing) return [el("div", { className: "card" }, el("p", { className: "muted", textContent: missing }))];
+  const path = "/api/scenarios/vector-retrieval";
+  const changed = (note) => (next) => isCurrent() && onChanged(next, note);
+  const [home, other] = scopes;
+  const query = el("input", {
+    id: "vector-query",
+    type: "text",
+    ariaLabel: "Search query",
+    value: search?.query ?? startingQuery,
+    spellcheck: false,
+  });
+  const mode = el(
+    "select",
+    { id: "vector-mode", ariaLabel: "Search mode" },
+    ...Object.entries(VECTOR_MODES).map(([value, label]) =>
+      el("option", { value, textContent: label, selected: value === (search?.mode ?? "vector") }),
+    ),
+  );
+  const passagesOf = (scopeId, passages) => [
+    el("h4", {}, "Scope ", el("code", { textContent: scopeId })),
+    passages.length > 0
+      ? el("pre", { textContent: JSON.stringify(passages, null, 2) })
+      : el("p", { className: "muted", textContent: "No Passage matches." }),
+  ];
+  const searchResult = el("p", { className: "fine" });
+  const indexResult = el("p", { className: "fine" });
+  return [
+    el(
+      "div",
+      { className: "card titled", id: "vector-passages" },
+      el("h3", {}, "Passages of a search", search && badge(search.mode)),
+      el("div", { className: "row" }, query, mode),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          "Search both Scopes",
+          () => api("POST", `${path}/search`, { query: query.value.trim(), mode: mode.value }),
+          changed("Each Scope searched its own guides with the same query and mode."),
+          searchResult,
+          true,
+        ),
+      ),
+      search && el("h4", {}, "Query ", el("code", { textContent: search.query })),
+      ...(search
+        ? [...passagesOf(home.id, search.passages), ...passagesOf(other.id, search.other)]
+        : [el("p", { className: "muted", textContent: "Search here, or run a suggested prompt." })]),
+      searchResult,
+      el("p", {
+        className: "fine",
+        textContent:
+          "Keyword uses the default Retriever fts5: it finds a Passage only when a word of the query is in it. Vector ranks by embedding similarity from the index, and also finds a Passage with the same meaning. Hybrid fuses the two ranks. Each Passage names its source.",
+      }),
+    ),
+    el(
+      "div",
+      { className: "card titled", id: "vector-index" },
+      el(
+        "h3",
+        {},
+        "Vectorize index",
+        el("span", { className: "badge", textContent: vectorCount(home.vectors.length) }),
+      ),
+      rows(...scopes.map((scope) => [`Scope ${scope.id}`, `${vectorCount(scope.vectors.length)} in the index`])),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          "Rebuild the index",
+          () => api("POST", `${path}/rebuild`),
+          changed(`The Framework wrote the saved vectors of ${home.id} to the index again, with no embedding call.`),
+          indexResult,
+          true,
+        ),
+        cardAction(
+          "Remove the vectors from the index",
+          () => api("POST", `${path}/clear`),
+          changed(`The index lost the vectors of ${home.id}. The Knowledge Durable Object still has them.`),
+          indexResult,
+        ),
+        cardAction(
+          "Read the index again",
+          () => api("GET", path),
+          changed("The page read the index again."),
+          indexResult,
+        ),
+      ),
+      indexResult,
+      el("p", {
+        className: "fine",
+        textContent:
+          "The Knowledge Durable Object keeps each vector, and the index keeps a copy. The copy has the opaque ids of the Framework, and each Scope is a namespace. Vectorize applies writes asynchronously, often after one or two minutes. Wait until the count changes before the next step. A remove deletes only the vectors that the index shows.",
+      }),
+    ),
+    el(
+      "details",
+      { className: "card", id: "vector-ids" },
+      el("summary", { textContent: `Opaque vector ids of ${home.id} (${home.vectors.length})` }),
+      home.vectors.length > 0
+        ? el("pre", { textContent: home.vectors.join("\n") })
+        : el("p", { className: "muted", textContent: "The index has no vector of this Scope. Rebuild it." }),
+      el("p", {
+        className: "fine",
+        textContent: "The Framework makes each id. The index keeps it unchanged, and a rebuild writes the same ids.",
+      }),
+    ),
+    el(
+      "details",
+      { className: "card", id: "vector-guides" },
+      el("summary", {
+        textContent: `Corpus guides (${scopes.reduce((sum, scope) => sum + scope.documents.length, 0)} documents)`,
+      }),
+      ...scopes.flatMap((scope) => [
+        el("h4", {}, "Scope ", el("code", { textContent: scope.id }), ` (${scope.documents.length} documents)`),
+        el(
+          "ul",
+          {},
+          ...scope.documents.map((doc) =>
+            el("li", {}, el("code", { textContent: doc.id }), ` ${doc.title}, ${doc.chars} code points`),
+          ),
+        ),
+      ]),
+      el("h4", { textContent: "Corpus reference of the Agent Spec" }),
+      el("pre", { textContent: JSON.stringify(reference, null, 2) }),
+      el("p", {
+        className: "fine",
+        textContent:
+          "The Knowledge scenario names no Retriever, thus it gets fts5. This reference names the vector Retriever with hybrid settings. The first ingest fixed the embedding model, its dimensions and its metric for the corpus.",
+      }),
+    ),
+  ];
+}
+
 // What each state of a Scope means for the operator.
 const SCOPE_STATES = {
   active: "Each Turn runs.",
@@ -2388,6 +2532,7 @@ const PANELS = {
   delegation: purchaseCards,
   memory: memoryCards,
   knowledge: knowledgeCards,
+  "vector-retrieval": vectorCards,
   observability: observabilityCards,
   scripts: scriptCards,
   "container-scripts": containerCards,

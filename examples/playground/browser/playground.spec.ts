@@ -745,13 +745,50 @@ test("a bulk ingest runs as a Job, its pages are searchable, and reset restores 
 
   await page.getByRole("button", { name: "Destroy the corpus" }).first().click();
   await expect(page.locator("#corpus-handbook")).toContainText("has no document");
-  await page.locator("details.card", { hasText: "Corpora of the Scope" }).locator("summary").click();
-  await expect(page.locator("details.card", { hasText: "Corpora of the Scope (1)" })).toBeVisible();
+  const known = page.locator("details.card", { hasText: "Corpora of the Scope" });
+  await known.locator("summary").click();
+  // The list has each corpus of the Scope. The guides of the vector retrieval scenario can be in it too.
+  await expect(known.locator("li code")).toContainText(["notices"]);
+  await expect(known.locator("li code", { hasText: /^handbook$/ })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Reset scenario" }).click();
   await expect(page.locator("#corpus-handbook")).toContainText("Documents (3)");
   await expect(page.locator("#bulk")).toContainText("No bulk ingest ran");
   await expect(page.locator("#steps")).toBeEmpty();
+});
+
+test("a vector search finds a guide by meaning, and a rebuild restores a cleared index", async ({ page }) => {
+  await openScenario(page, "vector-retrieval");
+  const passages = page.locator("#vector-passages");
+  const index = page.locator("#vector-index");
+  await expect(index).toContainText("5 vectors");
+  await page.getByLabel("Search mode").selectOption("keyword");
+  await page.getByRole("button", { name: "Search both Scopes" }).click();
+  await expect(passages.locator(".badge")).toHaveText("keyword");
+  await expect(passages).toContainText("No Passage matches.");
+  await page.getByLabel("Search mode").selectOption("vector");
+  await page.getByRole("button", { name: "Search both Scopes" }).click();
+  await expect(passages).toContainText('"docId": "returns"');
+  await expect(passages).toContainText('"source": "vector"');
+  // The second Scope finds its own guide with the same id.
+  await expect(passages).toContainText("shop credit only");
+
+  await page.getByRole("button", { name: "Remove the vectors from the index" }).click();
+  await expect(page.locator("#saved")).toContainText("The index lost the vectors");
+  await expect(index.locator("h3 .badge")).toHaveText("0 vectors");
+  await page.getByRole("button", { name: "Search both Scopes" }).click();
+  await expect(passages.locator("pre")).toHaveCount(1);
+  await page.getByRole("button", { name: "Rebuild the index" }).click();
+  await expect(index.locator("h3 .badge")).toHaveText("5 vectors");
+
+  await page.getByRole("button", { name: "Fresh beans", exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps .tool")).toContainText("search_guides");
+  await expect(page.locator("#steps .agent").last()).toContainText("(storage, hybrid)");
+
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#steps")).toBeEmpty();
+  await expect(passages).toContainText("Search here, or run a suggested prompt.");
 });
 
 test("a container Script reads the sample files, and each artifact downloads", async ({ page }) => {

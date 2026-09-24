@@ -14,6 +14,11 @@ async function main(): Promise<void> {
     new CloudflareBucketCleaner(runner),
   );
   for (const resource of result.preserved) console.log(`Preserved supplied ${resource}.`);
+  // Removal cannot reach the Knowledge Durable Objects, which list the vectors that the Playground wrote.
+  if (manifest.vectorIndex && !manifest.vectorIndex.owned)
+    console.log(
+      `The supplied index ${manifest.vectorIndex.name} keeps each vector that a reset of the vector retrieval scenario did not delete.`,
+    );
   if (!result.complete) {
     console.error("Removal is incomplete. These owned resources remain:");
     for (const failure of result.failures) console.error(`- ${failure.resource}: ${failure.message}`);

@@ -11,6 +11,7 @@ import {
 } from "./cloudflare.ts";
 import {
   addContainerScripts,
+  addVectorRetrieval,
   createManifest,
   decodeAccounts,
   deploy,
@@ -68,7 +69,19 @@ async function createNewManifest(
   return createManifest(name, account, supplied, {
     isolateScripts: isYes(scripts),
     containerScripts: await askContainerScripts(terminal),
+    // A supplied index selects vector retrieval, thus the question is only for an index that the deploy creates.
+    vectorRetrieval: supplied.vectorIndex !== undefined || (await askVectorRetrieval(terminal)),
   });
+}
+
+/** Tells what vector retrieval needs before it asks for it, because it creates a resource and calls billed services. */
+async function askVectorRetrieval(terminal: ReturnType<typeof createInterface>): Promise<boolean> {
+  console.log("\nThe vector retrieval scenario needs Workers AI, which embeds the text, and a Vectorize index.");
+  console.log("Both are on the Workers Free and Paid plans. Cloudflare bills the use above the free allocation.");
+  console.log("A yes creates one Vectorize index with 1024 dimensions, the cosine metric and two metadata indexes.");
+  console.log("The Worker then gets a Workers AI binding, which creates no resource. Removal deletes the index.");
+  console.log("Local development has no Workers AI or Vectorize, thus the scenario runs only in this deployment.");
+  return isYes(await terminal.question("Enable vector retrieval? [y/N]: "));
 }
 
 /** Tells what container Scripts need before it asks for them, because they create a billed resource. */
@@ -79,6 +92,30 @@ async function askContainerScripts(terminal: ReturnType<typeof createInterface>)
   console.log("A yes creates one container application and pushes its image to the Cloudflare registry.");
   console.log("Each container that runs is billed by Cloudflare. Removal deletes the application and its images.");
   return isYes(await terminal.question("Enable container Scripts? [y/N]: "));
+}
+
+/**
+ * Tells what a recorded deployment has, and asks for each optional service that it does not have yet. A deployment
+ * can add them later, for example one made before the option existed. A supplied index adds vector retrieval.
+ */
+async function resumeManifest(
+  recorded: DeploymentManifest,
+  supplied: SuppliedResources,
+  terminal: ReturnType<typeof createInterface>,
+): Promise<DeploymentManifest> {
+  let manifest = recorded;
+  const options = [
+    manifest.isolateScripts && "isolate Scripts",
+    manifest.container && "container Scripts",
+    manifest.vectorIndex && "vector retrieval",
+  ];
+  const selected = options.filter(Boolean).join(" and ");
+  console.log(`Resume ${manifest.name} in ${manifest.account.name}${selected ? `, with ${selected}` : ""}.`);
+  if (!manifest.container && (await askContainerScripts(terminal))) manifest = addContainerScripts(manifest);
+  const { vectorIndex } = supplied;
+  if (!manifest.vectorIndex && (vectorIndex !== undefined || (await askVectorRetrieval(terminal))))
+    manifest = addVectorRetrieval(manifest, vectorIndex);
+  return manifest;
 }
 
 async function main(): Promise<void> {
@@ -97,12 +134,7 @@ async function main(): Promise<void> {
     const configFile = new URL("wrangler.json", directory);
     let manifest;
     try {
-      manifest = await readManifest(manifestFile);
-      const options = [manifest.isolateScripts && "isolate Scripts", manifest.container && "container Scripts"];
-      const selected = options.filter(Boolean).join(" and ");
-      console.log(`Resume ${name} in ${manifest.account.name}${selected ? `, with ${selected}` : ""}.`);
-      // A deployment can add container Scripts later, for example one made before the option existed.
-      if (!manifest.container && (await askContainerScripts(terminal))) manifest = addContainerScripts(manifest);
+      manifest = await resumeManifest(await readManifest(manifestFile), arguments_.supplied, terminal);
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("ENOENT")) throw error;
       manifest = await createNewManifest(name, arguments_.supplied, terminal, runner);

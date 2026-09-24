@@ -20,6 +20,8 @@ import { mediaDownload } from "./media-download";
 import { MCP, type OAuthSetup } from "./remote-mcp";
 import { COVERAGE, SCENARIOS, viewScenario, type Services } from "./scenarios";
 import { scheduleScenarioRoutes, triggerSupplierDelivery } from "./schedule-routes";
+import { vectorScenarioRoutes } from "./vector-routes";
+import { VECTORS } from "./vectors";
 
 export { CONCIERGE, KNOWLEDGE, MEMORY, OTHER_SCOPE, SCOPE, USER };
 
@@ -171,13 +173,22 @@ interface SampleOptions {
  */
 function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, options: PlaygroundOptions) {
   const { user, data } = sample;
-  const { media, model, setup, keyring, oauth } = options;
+  const { media, model, setup, keyring, oauth, vectors } = options;
   const mcp = mcpScenarioRoutes({ scope: (id) => karmi.scope(id), home: SCOPE, user, data, model, oauth });
   return {
     [FORKS]: forkScenarioRoutes({ ...sample, media }),
     [SCHEDULES]: scheduleScenarioRoutes(sample),
     [MEMORY]: memoryScenarioRoutes({ scope: (id) => karmi.scope(id), scopeIds: SAMPLE_SCOPES, user, data }),
     [KNOWLEDGE]: knowledgeScenarioRoutes(sample),
+    [VECTORS]: vectorScenarioRoutes({
+      scope: (id) => karmi.scope(id),
+      home: SCOPE,
+      other: OTHER_SCOPE,
+      user,
+      data,
+      index: vectors,
+      model,
+    }),
     [LIFECYCLE]: lifecycleScenarioRoutes({
       scope: (id) => karmi.scope(id),
       home: SCOPE,

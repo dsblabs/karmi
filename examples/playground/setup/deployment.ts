@@ -1,3 +1,5 @@
+import { INDEX_METADATA, INDEX_SHAPE, VECTOR_BINDINGS } from "../src/vector-config.ts";
+
 /** A Cloudflare account available to the operator. */
 export interface CloudflareAccount {
   /** The Cloudflare account identifier. */
@@ -43,6 +45,11 @@ export interface DeploymentManifest {
    */
   container?: DeploymentResource;
   /**
+   * The Vectorize index of the vector retrieval scenario, when the deployment selected it. The Worker then also gets
+   * the Workers AI binding, which creates no resource. Removal deletes an owned index with its vectors.
+   */
+  vectorIndex?: DeploymentResource;
+  /**
    * The `workers.dev` origin that the last deploy reported. The Worker gets it as `PLAYGROUND_ORIGIN`, which the OAuth
    * Connections of the MCP scenario need.
    */
@@ -55,6 +62,8 @@ export interface OptionalServices {
   isolateScripts?: boolean;
   /** Creates the container application of container Scripts. Containers need the Workers Paid plan and Docker. */
   containerScripts?: boolean;
+  /** Creates a Vectorize index and binds Workers AI for the vector retrieval scenario. */
+  vectorRetrieval?: boolean;
 }
 
 /** Options for resources that an operator supplies instead of creating. */
@@ -65,6 +74,8 @@ export interface SuppliedResources {
   deadLetterQueue?: string;
   /** An existing R2 bucket name. */
   bucket?: string;
+  /** An existing Vectorize index name. It selects vector retrieval. */
+  vectorIndex?: string;
 }
 
 /** Command-line choices for a deployment. */
@@ -125,6 +136,19 @@ function containerResource(name: string): DeploymentResource {
   return resource(`${name}-sandbox`, true);
 }
 
+function vectorIndexResource(name: string, supplied: string | undefined): DeploymentResource {
+  return resource(supplied ?? `${name}-vectors`, supplied === undefined);
+}
+
+/**
+ * Returns the manifest with a Vectorize index for vector retrieval. A deployment that exists already can add it later.
+ * `supplied` names an existing index; without it, the next deploy creates one. It never removes vector retrieval from
+ * a deployment or changes its index.
+ */
+export function addVectorRetrieval(manifest: DeploymentManifest, supplied?: string): DeploymentManifest {
+  return manifest.vectorIndex ? manifest : { ...manifest, vectorIndex: vectorIndexResource(manifest.name, supplied) };
+}
+
 /**
  * Returns the manifest with a container application for container Scripts. A deployment that exists already can add
  * them later. The next deploy creates the application. It never removes container Scripts from a deployment.
@@ -138,7 +162,7 @@ export function createManifest(
   name: string,
   account: CloudflareAccount,
   supplied: SuppliedResources = {},
-  { isolateScripts = false, containerScripts = false }: OptionalServices = {},
+  { isolateScripts = false, containerScripts = false, vectorRetrieval = false }: OptionalServices = {},
 ): DeploymentManifest {
   return {
     version: 1,
@@ -146,6 +170,9 @@ export function createManifest(
     account,
     isolateScripts,
     ...(containerScripts && { container: containerResource(name) }),
+    ...((vectorRetrieval || supplied.vectorIndex !== undefined) && {
+      vectorIndex: vectorIndexResource(name, supplied.vectorIndex),
+    }),
     worker: resource(name, true),
     queue: resource(supplied.queue ?? `${name}-queue`, supplied.queue === undefined),
     deadLetterQueue: resource(supplied.deadLetterQueue ?? `${name}-dlq`, supplied.deadLetterQueue === undefined),
@@ -167,14 +194,24 @@ const namesSandbox = (entry: unknown) =>
 /**
  * Returns the base Wrangler configuration with the optional bindings that the deployment selected. Without isolate
  * Scripts, the Worker gets no Worker Loader binding. Without container Scripts, it gets no container, no sandbox
- * Durable Object and no sandbox migration. Thus an account without the Workers Paid plan can deploy it.
+ * Durable Object and no sandbox migration. Thus an account without the Workers Paid plan can deploy it. With vector
+ * retrieval, it gets the Workers AI binding and the binding of the Vectorize index. The base configuration has
+ * neither, because `wrangler dev` needs a Cloudflare login for them.
  */
 export function selectBindings(
   base: Readonly<Record<string, unknown>>,
   manifest: DeploymentManifest,
 ): Record<string, unknown> {
   const { worker_loaders: loaders, containers, ...rest } = base;
-  const selected: Record<string, unknown> = { ...rest, ...(manifest.isolateScripts && { worker_loaders: loaders }) };
+  const { vectorIndex } = manifest;
+  const selected: Record<string, unknown> = {
+    ...rest,
+    ...(manifest.isolateScripts && { worker_loaders: loaders }),
+    ...(vectorIndex && {
+      ai: { binding: VECTOR_BINDINGS.ai },
+      vectorize: [{ binding: VECTOR_BINDINGS.index, index_name: vectorIndex.name }],
+    }),
+  };
   const { container } = manifest;
   if (container)
     return {
@@ -236,6 +273,7 @@ export function parseDeploymentArguments(args: readonly string[]): DeploymentArg
     if (argument === "--bucket") supplied.bucket = value;
     else if (argument === "--queue") supplied.queue = value;
     else if (argument === "--dead-letter-queue") supplied.deadLetterQueue = value;
+    else if (argument === "--vector-index") supplied.vectorIndex = value;
     else throw new Error(`Unknown deployment option: ${argument}.`);
     index += 1;
   }
@@ -283,6 +321,36 @@ async function verifySuppliedResources(manifest: DeploymentManifest, runner: Com
   for (const entry of resources) {
     if (!entry.resource.owned) await runner.run(command(entry.args, manifest.account.id));
   }
+  if (manifest.vectorIndex && !manifest.vectorIndex.owned)
+    await checkSuppliedIndex(manifest, manifest.vectorIndex.name, runner);
+}
+
+/**
+ * Stops the deploy when a supplied Vectorize index does not fit the Worker: other dimensions or another metric, or no
+ * metadata index for a property that the Framework filters on. Such an index gives no error, only empty searches.
+ */
+async function checkSuppliedIndex(manifest: DeploymentManifest, name: string, runner: CommandRunner): Promise<void> {
+  const info: unknown = JSON.parse(
+    await runner.run(command(["vectorize", "get", name, "--json"], manifest.account.id)),
+  );
+  const config = typeof info === "object" && info !== null && "config" in info ? info.config : undefined;
+  const shape =
+    typeof config === "object" && config !== null && "dimensions" in config && "metric" in config
+      ? { dimensions: config.dimensions, metric: config.metric }
+      : undefined;
+  if (shape?.dimensions !== INDEX_SHAPE.dimensions || shape.metric !== INDEX_SHAPE.metric)
+    throw new Error(
+      `vector index ${name} must have ${String(INDEX_SHAPE.dimensions)} dimensions and the ${INDEX_SHAPE.metric} metric.`,
+    );
+  const output = await runner.run(command(["vectorize", "list-metadata-index", name, "--json"], manifest.account.id));
+  const indexed = requireList(JSON.parse(output)).flatMap((entry) =>
+    typeof entry === "object" && entry !== null && "propertyName" in entry && typeof entry.propertyName === "string"
+      ? [entry.propertyName]
+      : [],
+  );
+  const missing = INDEX_METADATA.filter((property) => !indexed.includes(property));
+  if (missing.length > 0)
+    throw new Error(`vector index ${name} needs a string metadata index on ${missing.join(" and ")}.`);
 }
 
 /**
@@ -312,6 +380,7 @@ export async function deploy(
   await createOwnedResource(manifest, "deadLetterQueue", runner, store);
   await createOwnedResource(manifest, "queue", runner, store);
   await claimContainer(manifest, runner, store);
+  await createVectorIndex(manifest, runner, store);
   await runner.run(command(["secret", "bulk", "--config", configPath], manifest.account.id, JSON.stringify(secrets)));
   // Wrangler builds the image, pushes it and creates the container application in the same deploy.
   const output = await runner.run(command(["deploy", "--config", configPath], manifest.account.id));
@@ -322,6 +391,41 @@ export async function deploy(
   if (address) manifest.origin = address;
   await store.save(manifest);
   return address;
+}
+
+/**
+ * Creates the owned Vectorize index and its metadata indexes. An index that exists before the first attempt belongs to
+ * someone else, thus the deploy stops. A retry after an interruption creates what is missing. The Framework filters on
+ * the metadata, thus the metadata indexes must exist before the first vector.
+ */
+async function createVectorIndex(manifest: DeploymentManifest, runner: CommandRunner, store: ManifestStore) {
+  const index = manifest.vectorIndex;
+  if (!index?.owned || index.status === "created") return;
+  // A retry can create the index again. Vectorize refuses a second index with `vectorize.index.duplicate_name`, and it
+  // accepts a second metadata index for the same property.
+  const create = async (args: string[]) => {
+    try {
+      await runner.run(command(args, manifest.account.id));
+    } catch (error) {
+      if (!errorMessage(error).includes("duplicate_name")) throw error;
+    }
+  };
+  if (index.status === "pending") {
+    try {
+      await runner.run(command(["vectorize", "get", index.name], manifest.account.id));
+      throw new Error(`vector index ${index.name} already exists and is not owned by this deployment.`);
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+    index.status = "creating";
+    await store.save(manifest);
+  }
+  const { dimensions, metric } = INDEX_SHAPE;
+  await create(["vectorize", "create", index.name, `--dimensions=${String(dimensions)}`, `--metric=${metric}`]);
+  for (const property of INDEX_METADATA)
+    await create(["vectorize", "create-metadata-index", index.name, `--propertyName=${property}`, "--type=string"]);
+  index.status = "created";
+  await store.save(manifest);
 }
 
 /**
@@ -397,7 +501,8 @@ function errorMessage(error: unknown): string {
 
 function isMissing(error: unknown): boolean {
   const message = errorMessage(error).toLowerCase();
-  return message.includes("not found") || message.includes("does not exist");
+  // Vectorize reports a missing index as `vectorize.index.not_found`.
+  return message.includes("not found") || message.includes("not_found") || message.includes("does not exist");
 }
 
 async function removeQueueConsumer(
@@ -433,7 +538,7 @@ export async function remove(
   const consumerFailure = await removeQueueConsumer(manifest, runner);
   if (consumerFailure) failures.push(consumerFailure);
   const operations: Array<{
-    key: "worker" | "container" | "queue" | "deadLetterQueue" | "bucket";
+    key: "worker" | "container" | "vectorIndex" | "queue" | "deadLetterQueue" | "bucket";
     args: string[];
   }> = [
     {
@@ -442,6 +547,8 @@ export async function remove(
     },
     // The container application goes after the Worker, thus no Durable Object starts a container during removal.
     { key: "container", args: [] },
+    // Deleting the index deletes its vectors. An index that the operator supplied keeps the vectors of the Playground.
+    { key: "vectorIndex", args: ["vectorize", "delete", manifest.vectorIndex?.name ?? "", "--force"] },
     {
       key: "queue",
       args: ["queues", "delete", manifest.queue.name],

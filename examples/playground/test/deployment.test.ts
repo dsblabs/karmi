@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addContainerScripts,
+  addVectorRetrieval,
   createManifest,
   decodeAccounts,
   deploy,
@@ -280,6 +281,150 @@ describe("Cloudflare deployment", () => {
     expect(added.container).toEqual({ name: "karmi-play-sandbox", owned: true, status: "pending" });
     expect(manifest.container).toBeUndefined();
     expect(addContainerScripts(added)).toBe(added);
+  });
+
+  it("binds Workers AI and the Vectorize index only when the deployment selected vector retrieval", () => {
+    const base = { name: "karmi-playground" };
+    expect(selectBindings(base, createManifest("plain-deployment", account))).toEqual(base);
+    const vectors = createManifest("vector-deployment", account, {}, { vectorRetrieval: true });
+    expect(vectors.vectorIndex).toEqual({ name: "vector-deployment-vectors", owned: true, status: "pending" });
+    expect(selectBindings(base, vectors)).toEqual({
+      name: "karmi-playground",
+      ai: { binding: "KARMI_AI" },
+      vectorize: [{ binding: "KNOWLEDGE_VECTORS", index_name: "vector-deployment-vectors" }],
+    });
+    // A supplied index selects vector retrieval. The deployment does not own it.
+    const supplied = createManifest(
+      "shared-deployment",
+      account,
+      parseDeploymentArguments(["--vector-index", "shared-vectors"]).supplied,
+    );
+    expect(supplied.vectorIndex).toEqual({ name: "shared-vectors", owned: false, status: "created" });
+    expect(addVectorRetrieval(supplied)).toBe(supplied);
+    expect(addVectorRetrieval(createManifest("later", account)).vectorIndex?.name).toBe("later-vectors");
+    // A resumed deployment can name an existing index in place of a new one.
+    expect(addVectorRetrieval(createManifest("later", account), "shared-vectors").vectorIndex).toEqual({
+      name: "shared-vectors",
+      owned: false,
+      status: "created",
+    });
+  });
+
+  it("creates the Vectorize index with its metadata indexes and retries an interrupted creation", async () => {
+    const manifest = createManifest("karmi-playground-test-vec", account, {}, { vectorRetrieval: true });
+    const name = "karmi-playground-test-vec-vectors";
+    const saved: DeploymentManifest[] = [];
+    const store = {
+      save(current: DeploymentManifest) {
+        saved.push(copy(current));
+        return Promise.resolve();
+      },
+    };
+    const calls: string[] = [];
+    // The first run stops after the index exists, before its second metadata index.
+    let interrupt = true;
+    const runner = {
+      run(request: CommandRequest) {
+        const line = request.args.join(" ");
+        calls.push(line);
+        if (line === `vectorize get ${name}`)
+          return Promise.reject(new Error("vectorize.index.not_found [code: 3000]"));
+        if (request.args.includes("info") || request.args[0] === "deployments")
+          return Promise.reject(new Error("not found"));
+        if (interrupt && line.includes("--propertyName=doc")) return Promise.reject(new Error("interrupted"));
+        if (!interrupt && line.startsWith("vectorize create "))
+          return Promise.reject(new Error(`vectorize.index.duplicate_name - Index name "${name}" [code: 3002]`));
+        return Promise.resolve("");
+      },
+    };
+    await expect(deploy(manifest, {}, "config.json", runner, store)).rejects.toThrow("interrupted");
+    expect(calls).toContain(`vectorize create ${name} --dimensions=1024 --metric=cosine`);
+    expect(calls).toContain(`vectorize create-metadata-index ${name} --propertyName=knowledge --type=string`);
+    expect(saved.at(-1)?.vectorIndex?.status).toBe("creating");
+
+    interrupt = false;
+    calls.length = 0;
+    await deploy(manifest, {}, "config.json", runner, store);
+    // A retry does not ask again whether the index exists, because the record says that this deployment made it.
+    expect(calls).not.toContain(`vectorize get ${name}`);
+    expect(calls).toContain(`vectorize create-metadata-index ${name} --propertyName=doc --type=string`);
+    expect(manifest.vectorIndex?.status).toBe("created");
+  });
+
+  it("refuses a Vectorize index that existed before the deploy, and checks a supplied one", async () => {
+    const manifest = createManifest("karmi-playground-test-vec2", account, {}, { vectorRetrieval: true });
+    const found = {
+      run(request: CommandRequest) {
+        if (request.args.includes("info") || request.args[0] === "deployments")
+          return Promise.reject(new Error("not found"));
+        return Promise.resolve("");
+      },
+    };
+    const store = { save: () => Promise.resolve() };
+    await expect(deploy(manifest, {}, "config.json", found, store)).rejects.toThrow(
+      "vector index karmi-playground-test-vec2-vectors already exists and is not owned by this deployment",
+    );
+    expect(manifest.vectorIndex?.status).toBe("pending");
+
+    // A supplied index must exist and have the shape and the metadata indexes that the Worker needs.
+    const supplied = (name: string) => createManifest(name, account, { vectorIndex: "shared-vectors" });
+    const answers = (shape: object | undefined, metadata: string[]) => ({
+      run(request: CommandRequest) {
+        const line = request.args.join(" ");
+        if (line === "vectorize get shared-vectors --json")
+          return shape
+            ? Promise.resolve(JSON.stringify({ name: "shared-vectors", config: shape }))
+            : Promise.reject(new Error("vectorize.index.not_found"));
+        if (line === "vectorize list-metadata-index shared-vectors --json")
+          return Promise.resolve(
+            JSON.stringify(metadata.map((propertyName) => ({ propertyName, indexType: "String" }))),
+          );
+        return found.run(request);
+      },
+    });
+    const good = { dimensions: 1024, metric: "cosine" };
+    await expect(deploy(supplied("vec-missing"), {}, "config.json", answers(undefined, []), store)).rejects.toThrow(
+      "not_found",
+    );
+    await expect(
+      deploy(supplied("vec-shape"), {}, "config.json", answers({ dimensions: 768, metric: "cosine" }, []), store),
+    ).rejects.toThrow("must have 1024 dimensions and the cosine metric");
+    await expect(deploy(supplied("vec-meta"), {}, "config.json", answers(good, ["knowledge"]), store)).rejects.toThrow(
+      "needs a string metadata index on doc",
+    );
+    const fits = supplied("vec-fits");
+    fits.worker.status = "created";
+    await deploy(fits, {}, "config.json", answers(good, ["knowledge", "doc"]), store);
+    expect(fits.vectorIndex).toEqual({ name: "shared-vectors", owned: false, status: "created" });
+  });
+
+  it("deletes the owned Vectorize index after the Worker and preserves a supplied one", async () => {
+    const owned = createManifest("karmi-playground-test-vrm", account, {}, { vectorRetrieval: true });
+    owned.worker.status = "created";
+    if (!owned.vectorIndex) throw new Error("No vector index.");
+    owned.vectorIndex.status = "created";
+    const calls: string[] = [];
+    const runner = {
+      run(request: CommandRequest) {
+        calls.push(request.args.join(" "));
+        return Promise.resolve("");
+      },
+    };
+    const store = { save: () => Promise.resolve() };
+    expect(await remove(owned, runner, store, cleaner)).toEqual({ complete: true, preserved: [] });
+    expect(calls).toEqual([
+      `delete ${owned.worker.name} --force`,
+      `vectorize delete ${owned.vectorIndex.name} --force`,
+    ]);
+    expect(owned.vectorIndex.status).toBe("removed");
+
+    const supplied = createManifest("karmi-playground-test-vkeep", account, { vectorIndex: "shared-vectors" });
+    calls.length = 0;
+    expect(await remove(supplied, runner, store, cleaner)).toEqual({
+      complete: true,
+      preserved: ["vectorIndex shared-vectors"],
+    });
+    expect(calls).toEqual([]);
   });
 
   it("refuses to adopt a resource that existed before setup", async () => {

@@ -8,6 +8,7 @@ import { playgroundLogger } from "./observability";
 import { CONTAINER_IMAGE, containerRuntime } from "./containers";
 import { keyringView } from "./keyring";
 import { CLIENT_NAME, oauthSetup } from "./remote-mcp";
+import { semanticRetriever, vectorizeIndex } from "./vectors";
 
 // `pnpm setup` writes the selection and the credential to `.dev.vars`. Without it, the Playground still starts
 // and tells the operator what is missing.
@@ -24,8 +25,12 @@ const containers = containerRuntime(env.PLAYGROUND_CONTAINERS);
 // still registers a server with no credential or with a static header.
 const oauth = oauthSetup(env.PLAYGROUND_ORIGIN);
 
+// A deployment that selected vector retrieval has Workers AI and a Vectorize index. Local development has neither,
+// because Cloudflare has no local simulation of them. The Retriever then fails with bindings.missing.
+const vectors = env.KARMI_AI && env.KNOWLEDGE_VECTORS ? vectorizeIndex(env.KNOWLEDGE_VECTORS) : undefined;
+
 const karmi = createKarmi({
-  catalogue: catalogue(model),
+  catalogue: catalogue(model, semanticRetriever(vectors)),
   logger: playgroundLogger(),
   ...(containers && { sandbox: { image: CONTAINER_IMAGE } }),
   ...("origin" in oauth && { oauth: { origin: oauth.origin, clientName: CLIENT_NAME } }),
@@ -56,6 +61,7 @@ const playground = createPlayground({
   keyring: keyringView(env.KARMI_KEYRING),
   hasLoader: env.KARMI_LOADER !== undefined,
   containers,
+  vectors,
   oauth,
 });
 

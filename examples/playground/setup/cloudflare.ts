@@ -169,6 +169,9 @@ export async function readManifest(file: URL): Promise<DeploymentManifest> {
     isolateScripts: "isolateScripts" in value && value.isolateScripts === true,
     // A manifest without the field has no container application.
     ...("container" in value && value.container !== undefined && { container: decodeResource(value.container) }),
+    // A manifest without the field has no vector index.
+    ...("vectorIndex" in value &&
+      value.vectorIndex !== undefined && { vectorIndex: decodeResource(value.vectorIndex) }),
   };
 }
 

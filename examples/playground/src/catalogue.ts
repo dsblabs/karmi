@@ -1,4 +1,4 @@
-import type { CatalogueInput } from "@karmi/core";
+import type { CatalogueInput, Retriever } from "@karmi/core";
 import { shopPolicy } from "./assistant";
 import { conciergeAgent } from "./concierge";
 import { containerAgent, sampleFiles } from "./containers";
@@ -14,12 +14,14 @@ import { remindersAgent, sampleInbox, sendReminder } from "./reminders";
 import { lookupTicket, observabilityAgent, sampleUsageHandler } from "./observability";
 import { cancelOrder, findOrders, packBox, readOrder, scriptsAgent } from "./scripts";
 import { adjustStock, checkStock, deleteProduct, restock, stockAudit, stockroomAgent } from "./stockroom";
+import { vectorAgent } from "./vectors";
 
 /**
  * The Catalogue of the Playground for the model that setup selected. It has no Agent for the Agent Spec scenario,
- * because that scenario stores its Agent at runtime.
+ * because that scenario stores its Agent at runtime. `retriever` is the vector Retriever of the vector retrieval
+ * scenario, which `semanticRetriever` defines.
  */
-export const catalogue = (model: string): CatalogueInput => ({
+export const catalogue = (model: string, retriever: Retriever): CatalogueInput => ({
   tools: [
     getOrder,
     refundOrder,
@@ -43,6 +45,7 @@ export const catalogue = (model: string): CatalogueInput => ({
   fragments: [shopPolicy, sampleFiles],
   skills: [restock],
   hooks: [stockAudit],
+  retrievers: [retriever],
   deliverers: [sampleInbox],
   agents: [
     refundAgent(model),
@@ -60,6 +63,7 @@ export const catalogue = (model: string): CatalogueInput => ({
     containerAgent(model),
     scopeDeskAgent(model),
     mcpDeskAgent(model),
+    vectorAgent(model),
   ],
   usageHandler: sampleUsageHandler,
 });

@@ -185,6 +185,27 @@ export const librarianReplies: ReplyScript = ({ request }) => {
 };
 
 /**
+ * The script of the vector retrieval scenario. The Agent searches the guides with the question as it is, then answers
+ * with the first Passage, its document id and the source of its rank.
+ */
+export const guideReplies: ReplyScript = ({ request }) => {
+  const turn = request.messages.slice(request.messages.findLastIndex((message) => message.role === "user"));
+  const asked =
+    turn[0]?.role === "user" ? turn[0].content.map((block) => ("text" in block ? block.text : "")).join("") : "";
+  const result = turn.find((message) => message.role === "toolResult");
+  if (!result) return [reply.toolCall("search_guides", { query: asked })];
+  const text = result.content.map((block) => ("text" in block ? block.text : "")).join("");
+  if (result.isError) return `The search failed: ${text}`;
+  const passages = z
+    .array(z.object({ docId: z.string(), text: z.string(), source: z.string() }))
+    .parse(JSON.parse(text));
+  const first = passages[0];
+  return first
+    ? `The guides say: ${first.text} (${first.docId}, ${first.source})`
+    : "The guides have nothing about that.";
+};
+
+/**
  * The script of the container Scripts scenario. The model runs the code of the prompt in its language. It passes the
  * sample files that the Fragment of the Agent lists, thus a Script without the Fragment gets no files.
  */
@@ -227,6 +248,7 @@ export const playgroundReplies: ReplyScript = (ctx) => {
   if (system.includes("ledger") || system.includes("compacting")) return ledgerReplies(ctx);
   if (system.includes("manage a small shop") || system.includes("purchase desk")) return delegationReplies(ctx);
   if (system.includes("concierge")) return conciergeReplies(ctx);
+  if (system.includes("shop guides")) return guideReplies(ctx);
   if (system.includes("handbook")) return librarianReplies(ctx);
   if (system.includes("Usage desk") || system.includes("Do not invent a cost")) return observabilityReplies(ctx);
   if (system.includes("data desk")) return containerReplies(ctx);
