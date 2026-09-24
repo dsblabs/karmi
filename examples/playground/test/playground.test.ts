@@ -76,7 +76,7 @@ describe("GET /api/playground", () => {
     expect(body).toMatchObject({
       scenarios: expect.arrayContaining([
         expect.objectContaining({ id: "refund", status: "ready" }),
-        expect.objectContaining({ id: "container-scripts", status: "incomplete", prerequisites: [expect.any(String)] }),
+        expect.objectContaining({ id: "scopes", status: "incomplete" }),
       ]),
     });
   });
@@ -140,7 +140,7 @@ describe("before setup", () => {
     const { viewScenario, SCENARIOS } = await import("../src/scenarios");
     const [refund] = SCENARIOS;
     if (!refund) throw new Error("The refund scenario is missing.");
-    expect(viewScenario(refund, undefined, true)).toMatchObject({
+    expect(viewScenario(refund, undefined, { hasLoader: true })).toMatchObject({
       status: "unavailable",
       reason: expect.stringContaining("pnpm setup"),
     });

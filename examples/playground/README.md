@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has twelve browser scenarios:
+This version has thirteen browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -16,6 +16,7 @@ This version has twelve browser scenarios:
 - **Usage records, costs and logs**
 - **Isolate Scripts**
 - **Knowledge ingestion and document search**
+- **Container Scripts, files and artifacts**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -386,9 +387,54 @@ The local development server has the `KARMI_LOADER` binding. A Cloudflare deploy
 
 The scenario needs a model that supports Tool calls. A small model can change the code before it calls `run_script`. The **Script runs** card shows the code that ran. The Agent and the Tools are in [`src/scripts.ts`](./src/scripts.ts).
 
+## The container Scripts scenario
+
+**Container Scripts, files and artifacts** has an Agent with the `scripts` grant of the tier `container`. The model gets the Tool `run_script`, which runs one shell or Python Script in the container Workspace of the Thread. The Agent has no other Tool. A container Script gets no Tools and no secrets.
+
+The grant has these values:
+
+- `limits`: `wallMs: 5000`, `jobMaxWallMs: 120000`, `idleMs: 60000` and `maxArtifacts: 5`. A process that runs for more than 5 seconds becomes a Job.
+- `egress.allow`: `["example.com"]`. A Script reaches only this hostname.
+
+Each Thread gets its own copy of two sample files, `sales.csv` and `returns.csv`, as Thread media. The **Sample files** card shows them with a download link. The Fragment `sample_files` gives the model their media refs. The model puts them in the `files` input of `run_script`, and the Harness writes each file to `/in`.
+
+Each suggested prompt has a Script. The instructions tell the model to run it as it is. You can edit the code.
+
+| Prompt | What you see |
+| --- | --- |
+| **Python report** | The Script reads both files and writes `revenue.csv` and `report.md` to `/out`. The **Script runs** card shows the exit code, stdout and a download link for each artifact. The net revenue is 1695. |
+| **Shell summary** | The Script counts the lines of each file and writes `products.txt`. |
+| **Long process** | The Script prints one line each second for 40 seconds. After 5 seconds the process becomes a Job and the Turn parks. Each five seconds, new lines appear as Job progress. At the end, the Job completes with `long-run.txt`. Select **Cancel the Turn** to stop it. The cancel sends SIGTERM, then SIGKILL, and destroys the Workspace. |
+| **Allowed host** | `curl` gets an answer from `example.com`. |
+| **Denied host** | `curl` gets HTTP 520 from `example.org`. stderr has the line `Egress denied (520): example.org; grant capabilities.scripts.egress.allow.` The card names the denied hostname. |
+
+An artifact is media of the Thread. Its download route is `/api/scenarios/container-scripts/media/{id}`. The route finds only media of the current Thread.
+
+The Workspace belongs to the Thread. Its files stay between the Scripts of one Turn. Each call empties `/in` and `/out` first. The Harness destroys the Workspace when the Turn ends, after `idleMs` without a Script, on a cancel and on a reset.
+
+A reset cancels the Turn, which stops a process and destroys the Workspace. It then deletes the Thread with its media, thus each artifact and each sample file copy goes away. The next Thread gets new copies of the sample files. A reset does not change another scenario or a Provider credential.
+
+The scenario needs a model that supports Tool calls. The Agent is in [`src/containers.ts`](./src/containers.ts).
+
+### Run container Scripts locally
+
+`pnpm dev` does not build the container image, thus it needs no Docker. The scenario then tells why it is not available. To run container Scripts on your computer, start Docker and run:
+
+```sh
+pnpm dev:containers
+```
+
+Wrangler then builds the image of `@karmi/sandbox-container` with Docker and runs each Workspace in a local container. The image is for `linux/amd64`. On an ARM computer, Docker needs AMD64 emulation. The first build takes some minutes.
+
+The local run is not verified yet. On a Linux ARM64 computer with AMD64 emulation, Wrangler 4.129 built the image, but it did not start the container, and each Script failed with `Container is starting. Please retry in a moment.` The image itself starts under the emulation. An AMD64 computer can give a different result. The command sets the variable `PLAYGROUND_CONTAINERS` to `docker`, and the Worker offers container Scripts only with this variable.
+
+The Playground does not use `LocalProcessSandbox`. That sandbox runs a Script as a process of your computer. The Script can read your files, and no network rule applies. Thus it is not an isolated sandbox, and it also cannot run in workerd.
+
+Cloudflare enforces the network rules. The Playground does not claim that local Docker enforces them in the same way. Check the **Allowed host** and **Denied host** prompts in a deployment.
+
 ## Model limits
 
-These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Knowledge, Usage and logging, and isolate Scripts.
+These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Knowledge, Usage and logging, isolate Scripts and container Scripts.
 
 The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
@@ -418,6 +464,13 @@ The command checks your Cloudflare login and lists your accounts. It then create
 
 The command then asks whether to enable isolate Scripts. They need Dynamic Workers, and Dynamic Workers need the [Workers Paid plan](https://developers.cloudflare.com/dynamic-workers/pricing/). A yes gives the Worker the Worker Loader binding `KARMI_LOADER`. The binding is part of the Worker, thus it creates no other resource. The manifest records the answer, and a retry uses it again. To change the answer, deploy with a new deployment name. Without isolate Scripts, the **Isolate Scripts** scenario tells why it is not available.
 
+The command then asks whether to enable container Scripts. Before you answer, it tells what they need:
+
+- The [Workers Paid plan](https://developers.cloudflare.com/containers/pricing/). Cloudflare bills each container that runs.
+- Docker on your computer. Wrangler builds the `linux/amd64` image there and pushes it to the Cloudflare registry. On an ARM computer, Docker needs AMD64 emulation.
+
+A yes creates one container application with the name `<deployment name>-sandbox` and pushes its image. The Worker gets the `KARMI_SANDBOX` Durable Object and the variable `PLAYGROUND_CONTAINERS` with the value `cloudflare`. Before it creates a resource, the command checks that Docker runs. Before the deploy, it checks that no container application has that name, and it records the application in the manifest. A no removes the container, the `KARMI_SANDBOX` binding and its migration from the Worker configuration.
+
 The command stores the Provider credential, access token and key ring as Worker secrets. It writes non-secret Provider settings as Worker variables.
 
 The command records ownership in `.deployments/<name>/manifest.json` before it creates resources. Git ignores this directory. Keep the manifest until removal finishes.
@@ -444,7 +497,7 @@ Give the exact deployment name to the removal command:
 pnpm run remove karmi-playground-a1b2c3d4
 ```
 
-The command removes the owned Worker, Queues and R2 bucket. It deletes all objects in the owned R2 bucket before it deletes the bucket. Worker deletion removes its Durable Object storage and its Worker Loader binding. The command preserves each external resource in the manifest.
+The command removes the owned Worker, Queues and R2 bucket. It deletes all objects in the owned R2 bucket before it deletes the bucket. After the Worker, it deletes the owned container application and each image in the Cloudflare registry with the name of the application. Worker deletion removes its Durable Object storage and its Worker Loader binding. The command preserves each external resource in the manifest.
 
 If cleanup fails, the command lists each remaining resource and keeps its ownership record. Fix the reported problem. Then run the command again. A repeated removal skips resources that a prior attempt removed.
 
@@ -454,6 +507,7 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 - Local development and a deployed Worker use separate state.
 - Local development does not run a cron trigger on its own. Call the `scheduled` handler as the Schedules scenario describes.
 - Local workerd does not enforce the `cpuMs` limit of a Script. Only a deployed Worker shows it.
+- `pnpm dev` has no container runtime. Container Scripts need `pnpm dev:containers` and Docker.
 
 ## Tests
 
@@ -461,6 +515,8 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 | ------------------- | -------------------------------------------------------------------------------------------- |
 | `pnpm test`         | The public HTTP routes of the Worker in workerd, with the scripted Provider of the Test kit. |
 | `pnpm test:browser` | Each scenario, token access, reset and the layout at three screen sizes, in a browser.       |
+
+The tests run container Scripts on a fake container runtime through the `sandbox.driver` option of `createKarmi`, in [`test/container-driver.ts`](./test/container-driver.ts). The Harness, the Workspace, the Jobs and the artifacts are real. The fake runs no code and enforces no network rule, thus only a deployment shows the network rules.
 
 Before the first browser check, run `pnpm exec playwright install chromium`. No test needs a credential.
 

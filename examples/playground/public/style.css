@@ -59,7 +59,7 @@ main { display: flex; flex-direction: column; gap: 1rem; padding: 1.25rem 1.5rem
 .intro > p { margin: 0.4rem 0 0; color: var(--muted); max-width: 60rem; }
 .badge { font-size: 0.7rem; font-weight: 500; padding: 0.1rem 0.5rem; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .badge.ready, .badge.refunded, .badge.collected, .badge.stored, .badge.packed, .badge.done { color: var(--good); border-color: currentColor; }
-.badge.waiting, .badge.held, .badge.duplicate, .badge.running { color: var(--accent); border-color: currentColor; }
+.badge.waiting, .badge.held, .badge.duplicate, .badge.running, .badge.job { color: var(--accent); border-color: currentColor; }
 .badge.failed, .badge.deleted, .badge.cancelled, .badge.stopped { color: var(--bad); border-color: currentColor; }
 .badge.unavailable { color: var(--warn); border-color: currentColor; }
 .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(18rem, 100%), 1fr)); align-items: start; gap: 0.7rem; margin-top: 0.8rem; }

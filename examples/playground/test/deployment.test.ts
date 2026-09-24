@@ -49,8 +49,165 @@ describe("Cloudflare deployment", () => {
     const plain = createManifest("plain-deployment", account);
     expect(plain.isolateScripts).toBe(false);
     expect(selectBindings(base, plain)).toEqual({ name: "karmi-playground" });
-    const scripts = createManifest("scripts-deployment", account, {}, true);
+    const scripts = createManifest("scripts-deployment", account, {}, { isolateScripts: true });
     expect(selectBindings(base, scripts)).toEqual(base);
+  });
+
+  it("adds the container sandbox only when the deployment selected container Scripts", () => {
+    const base = {
+      name: "karmi-playground",
+      durable_objects: {
+        bindings: [
+          { name: "KARMI_THREADS", class_name: "ThreadDO" },
+          { name: "KARMI_SANDBOX", class_name: "KarmiSandbox" },
+        ],
+      },
+      migrations: [
+        { tag: "karmi-v1", new_sqlite_classes: ["ThreadDO"] },
+        { tag: "karmi-sandbox-v1", new_sqlite_classes: ["KarmiSandbox"] },
+      ],
+      containers: [{ class_name: "KarmiSandbox", image: "./Dockerfile", max_instances: 2 }],
+    };
+    const plain = createManifest("plain-deployment", account);
+    expect(plain.container).toBeUndefined();
+    expect(selectBindings(base, plain)).toEqual({
+      name: "karmi-playground",
+      durable_objects: { bindings: [{ name: "KARMI_THREADS", class_name: "ThreadDO" }] },
+      migrations: [{ tag: "karmi-v1", new_sqlite_classes: ["ThreadDO"] }],
+    });
+    const containers = createManifest("box-deployment", account, {}, { containerScripts: true });
+    expect(containers.container).toEqual({ name: "box-deployment-sandbox", owned: true, status: "pending" });
+    expect(selectBindings(base, containers)).toMatchObject({
+      durable_objects: base.durable_objects,
+      migrations: base.migrations,
+      // The name is the owned container application. Removal finds it and its images by this name.
+      containers: [{ class_name: "KarmiSandbox", name: "box-deployment-sandbox", max_instances: 2 }],
+    });
+  });
+
+  it("records the container application of a deployment and refuses one that existed before", async () => {
+    const manifest = createManifest("karmi-playground-test-box", account, {}, { containerScripts: true });
+    const calls: string[] = [];
+    const saved: DeploymentManifest[] = [];
+    const runner = (existing: string) => ({
+      run(request: CommandRequest) {
+        calls.push(request.args.join(" "));
+        if (request.args[0] === "containers") return Promise.resolve(existing);
+        if (request.args.includes("info") || request.args[0] === "deployments")
+          return Promise.reject(new Error("not found"));
+        return Promise.resolve("");
+      },
+    });
+    const store = {
+      save(current: DeploymentManifest) {
+        saved.push(copy(current));
+        return Promise.resolve();
+      },
+    };
+    await expect(
+      deploy(
+        copy(manifest),
+        {},
+        "config.json",
+        runner(JSON.stringify([{ id: "app-1", name: "karmi-playground-test-box-sandbox" }])),
+        store,
+      ),
+    ).rejects.toThrow("is not owned by this deployment");
+    calls.length = 0;
+    await deploy(manifest, {}, "config.json", runner("[]"), store);
+    expect(calls).toContain("containers list --json");
+    expect(saved.some((current) => current.container?.status === "creating")).toBe(true);
+    expect(manifest.container?.status).toBe("created");
+  });
+
+  it("removes the owned container application and its images after the Worker", async () => {
+    const manifest = createManifest("karmi-playground-test-rm", account, {}, { containerScripts: true });
+    manifest.worker.status = "created";
+    if (!manifest.container) throw new Error("No container resource.");
+    manifest.container.status = "created";
+    const name = manifest.container.name;
+    const calls: string[] = [];
+    // The list names an image with the account in front of it. The second list is after the deletes.
+    let images = [
+      { name: `${account.id}/${name}`, tags: ["build-1", "build-2"] },
+      { name: "other-app", tags: ["build-9"] },
+    ];
+    const result = await remove(
+      manifest,
+      {
+        run(request) {
+          const line = request.args.join(" ");
+          calls.push(line);
+          if (line === "containers list --json")
+            return Promise.resolve(
+              JSON.stringify([
+                { id: "app-7", name },
+                { id: "app-8", name: "other-app" },
+              ]),
+            );
+          if (line === "containers images list --json") return Promise.resolve(JSON.stringify(images));
+          if (line.includes("build-2")) images = images.filter((image) => image.name === "other-app");
+          return Promise.resolve("");
+        },
+      },
+      { save: () => Promise.resolve() },
+      cleaner,
+    );
+    expect(result).toEqual({ complete: true, preserved: [] });
+    expect(calls).toEqual([
+      `delete ${manifest.worker.name} --force`,
+      "containers list --json",
+      "containers delete app-7",
+      "containers images list --json",
+      `containers images delete ${name}:build-1 --skip-confirmation`,
+      `containers images delete ${name}:build-2 --skip-confirmation`,
+      "containers images list --json",
+    ]);
+    expect(manifest.container.status).toBe("removed");
+  });
+
+  it("does not report removal while an image of the container application remains", async () => {
+    const manifest = createManifest("karmi-playground-test-rm-image", account, {}, { containerScripts: true });
+    if (!manifest.container) throw new Error("No container resource.");
+    manifest.container.status = "created";
+    const name = manifest.container.name;
+    const result = await remove(
+      manifest,
+      {
+        run(request) {
+          if (request.args.join(" ") === "containers images list --json")
+            return Promise.resolve(JSON.stringify([{ name, tags: ["build-1"] }]));
+          return Promise.resolve(request.args[1] === "list" ? "[]" : "");
+        },
+      },
+      { save: () => Promise.resolve() },
+      cleaner,
+    );
+    expect(result).toMatchObject({ complete: false, failures: [{ resource: `container ${name}` }] });
+    expect(manifest.container.status).toBe("created");
+  });
+
+  it("keeps the container application retryable when its removal fails", async () => {
+    const manifest = createManifest("karmi-playground-test-rm-fail", account, {}, { containerScripts: true });
+    if (!manifest.container) throw new Error("No container resource.");
+    manifest.container.status = "created";
+    const result = await remove(
+      manifest,
+      {
+        run(request) {
+          if (request.args[1] === "list")
+            return Promise.resolve(JSON.stringify([{ id: "app-7", name: manifest.container?.name }]));
+          return Promise.reject(new Error("Container delete failed"));
+        },
+      },
+      { save: () => Promise.resolve() },
+      cleaner,
+    );
+    expect(result).toMatchObject({
+      complete: false,
+      failures: [{ resource: `container ${manifest.container.name}`, message: "Container delete failed" }],
+    });
+    expect(manifest.container.status).toBe("created");
   });
 
   it("checkpoints creation and retries only unfinished resources", async () => {

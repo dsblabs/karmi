@@ -76,8 +76,8 @@ describe("the isolate Scripts scenario", () => {
   it("is unavailable without the KARMI_LOADER binding and tells how to get it", () => {
     const scenario = SCENARIOS.find((item) => item.id === SCRIPTS);
     if (!scenario) throw new Error("The Scripts scenario is missing.");
-    expect(viewScenario(scenario, setup, true).status).toBe("ready");
-    expect(viewScenario(scenario, setup, false)).toMatchObject({
+    expect(viewScenario(scenario, setup, { hasLoader: true }).status).toBe("ready");
+    expect(viewScenario(scenario, setup, { hasLoader: false })).toMatchObject({
       status: "unavailable",
       reason: expect.stringContaining("Workers Paid plan"),
     });

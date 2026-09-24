@@ -184,6 +184,24 @@ export const librarianReplies: ReplyScript = ({ request }) => {
   return notices.includes("closed on Sunday") ? "The shop is closed on Sunday." : "I have no notice about Sunday.";
 };
 
+/**
+ * The script of the container Scripts scenario. The model runs the code of the prompt in its language. It passes the
+ * sample files that the Fragment of the Agent lists, thus a Script without the Fragment gets no files.
+ */
+export const containerReplies: ReplyScript = ({ request }) => {
+  const turn = request.messages.slice(request.messages.findLastIndex((message) => message.role === "user"));
+  const asked =
+    turn[0]?.role === "user" ? turn[0].content.map((block) => ("text" in block ? block.text : "")).join("") : "";
+  const [, fence, code] = /```(python|sh)\n([\s\S]*?)\n```/.exec(asked) ?? [];
+  const listed = /```json\n([\s\S]*?)\n```/.exec(request.system ?? "")?.[1];
+  const files: unknown = listed && !asked.includes("no files") ? JSON.parse(listed) : undefined;
+  const result = turn.find((message) => message.role === "toolResult");
+  if (result) return result.isError ? "The Script failed." : "The Script finished.";
+  if (!code) return "Give me a Script to run.";
+  const language = fence === "python" ? "python" : "shell";
+  return [reply.toolCall("run_script", { code, language, ...(files !== undefined && { files }) })];
+};
+
 /** The script of the browser checks. It selects the replies from the Prompt, thus one Provider serves each scenario. */
 export const playgroundReplies: ReplyScript = (ctx) => {
   const system = ctx.request.system ?? "";
@@ -196,6 +214,7 @@ export const playgroundReplies: ReplyScript = (ctx) => {
   if (system.includes("concierge")) return conciergeReplies(ctx);
   if (system.includes("handbook")) return librarianReplies(ctx);
   if (system.includes("Usage desk") || system.includes("Do not invent a cost")) return observabilityReplies(ctx);
+  if (system.includes("data desk")) return containerReplies(ctx);
   if (system.includes("run_script exactly")) return scriptReplies(ctx);
   if (system.includes("attached file")) return "I received the sample file.";
   const days = /for (\d+) days/.exec(system)?.[1];

@@ -1,4 +1,4 @@
-import type { Scope, Thread, ThreadStatus, UsageRecord } from "@karmi/core";
+import type { MediaRef, Scope, Thread, ThreadStatus, UsageRecord } from "@karmi/core";
 import { AGENTS, ASSISTANT, presets, SCOPE_CONFIG, shopPolicy, shopPolicyArgs, startingSpec } from "./assistant";
 import { decodeDispatch, decodeReport, DISPATCH, reportBooking, TURNS } from "./dispatch";
 import { COMPACTION, CONTEXT, decodeHold, decodeLedger, isHeld, LEDGER, readLedgerOf, writeLedger } from "./ledger";
@@ -13,6 +13,8 @@ import {
   replayLastBatch,
   storeRedaction,
 } from "./observability";
+import { containerRuns } from "./container-runs";
+import { CONTAINERS, containerAgent, decodeSampleFiles, sampleFilesOf } from "./containers";
 import { decodeOrder, REFUND } from "./refund";
 import { routeError } from "./route-error";
 import { sampleData, type SampleDataDO } from "./sample-data";
@@ -97,6 +99,8 @@ export interface Runtime {
   prepare?(): Promise<void>;
   /** Runs after the reset of the Thread and the sample data. */
   restore?(): Promise<void>;
+  /** Returns the media of the Thread that the operator can download, from its sample data and its events. */
+  media?(data: string | undefined, thread: Thread): Promise<MediaRef[]>;
   /** Returns the child Threads that the Thread of the scenario delegated to. A reset deletes each one. */
   children?(thread: Thread): Promise<Thread[]>;
   /**
@@ -165,6 +169,32 @@ function scriptsRuntime(model: string): Runtime {
         grant: { ...capabilities?.scripts, limits: SCRIPT_LIMITS },
         policy,
         runs: scriptRuns(thread.identity.threadId, await thread.events(), SCRIPT_LIMITS),
+        turn: turnView(status),
+      };
+    },
+  };
+}
+
+/**
+ * The runtime of the container Scripts scenario. The page shows the sample files of the Thread, the grant and each
+ * Script with its Job progress and its artifacts, which it reads from the event log.
+ */
+function containersRuntime(model: string): Runtime {
+  const grant = containerAgent(model).spec.capabilities?.scripts;
+  return {
+    agent: CONTAINERS,
+    async media(stored, thread) {
+      const files = Object.values(decodeSampleFiles(stored) ?? {});
+      const artifacts = containerRuns(thread.identity.threadId, await thread.events()).flatMap((run) => run.artifacts);
+      return [...files, ...artifacts];
+    },
+    async view(stored, status, thread) {
+      const { threadId } = thread.identity;
+      return {
+        threadId,
+        files: Object.values(await sampleFilesOf(SCOPE, stored, thread)),
+        grant,
+        runs: containerRuns(threadId, await thread.events()),
         turn: turnView(status),
       };
     },
@@ -278,6 +308,7 @@ export function scenarioRuntimes(scope: () => Scope, model: string): Record<stri
     [AGENTS]: assistantRuntime(scope, model),
     [DELEGATION]: delegationRuntime(scope),
     [SCRIPTS]: scriptsRuntime(model),
+    [CONTAINERS]: containersRuntime(model),
     [OBSERVABILITY]: observabilityRuntime(),
   };
 }

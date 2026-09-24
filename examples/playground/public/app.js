@@ -495,6 +495,30 @@ function dispatchCards({ dispatch, turn }) {
   ];
 }
 
+/** A list of media refs. `href` gives the download route of an item, or false when its bytes are gone. */
+function mediaList(items, href) {
+  return el(
+    "ul",
+    {},
+    ...items.map((item) => {
+      const route = href(item);
+      return el(
+        "li",
+        {},
+        item.name ?? item.id,
+        " ",
+        el("code", { textContent: `${item.mimeType}, ${item.bytes} bytes` }),
+        route &&
+          el("a", {
+            href: `${route}?token=${encodeURIComponent(token)}`,
+            download: item.name ?? item.id,
+            textContent: `Download ${item.name ?? item.id}`,
+          }),
+      );
+    }),
+  );
+}
+
 function forkCards({ original, fork, positions }, onChanged, isCurrent) {
   const threadCard = (id, title, thread) => {
     const media = thread.media ?? [];
@@ -504,24 +528,11 @@ function forkCards({ original, fork, positions }, onChanged, isCurrent) {
       el("h3", {}, title, badge(thread.deleted ? "deleted" : thread.status.state)),
       rows(["Thread key", el("code", { textContent: thread.threadKey })], ["Events", `${thread.events.length} events`]),
       media.length > 0
-        ? el(
-            "ul",
-            {},
-            ...media.map((item) =>
-              el(
-                "li",
-                {},
-                item.name ?? item.id,
-                " ",
-                el("code", { textContent: `${item.mimeType}, ${item.bytes} bytes` }),
-                !thread.deleted &&
-                  el("a", {
-                    href: `/api/scenarios/forks/threads/${encodeURIComponent(thread.threadKey)}/media/${encodeURIComponent(item.id)}?token=${encodeURIComponent(token)}`,
-                    download: item.name ?? item.id,
-                    textContent: `Download ${item.name ?? item.id}`,
-                  }),
-              ),
-            ),
+        ? mediaList(
+            media,
+            (item) =>
+              !thread.deleted &&
+              `/api/scenarios/forks/threads/${encodeURIComponent(thread.threadKey)}/media/${encodeURIComponent(item.id)}`,
           )
         : el("p", {
             className: "muted",
@@ -1384,6 +1395,97 @@ function scriptCards({ orders, grant, policy, runs }) {
   ];
 }
 
+const CONTAINER_STATES = {
+  running: "running",
+  job: "Job",
+  done: "done",
+  failed: "failed",
+  cancelled: "cancelled",
+  stopped: "stopped, the Turn ended",
+};
+
+/** The container Scripts scenario: the sample files, each Script with its output and artifacts, and the grant. */
+function containerCards({ files, grant, runs }) {
+  const download = (item) => `/api/scenarios/container-scripts/media/${encodeURIComponent(item.id)}`;
+  const output = (label, text, error = false) =>
+    text ? [el("h4", { textContent: label }), el("pre", { className: error ? "error" : "", textContent: text })] : [];
+  return [
+    el(
+      "div",
+      { className: "card titled", id: "container-runs" },
+      el("h3", {}, "Script runs", el("span", { className: "badge", textContent: String(runs.length) })),
+      runs.length > 0
+        ? el(
+            "ul",
+            {},
+            ...runs.map((run) =>
+              el(
+                "li",
+                {},
+                el(
+                  "p",
+                  {},
+                  el("strong", { textContent: `run_script, ${run.language} ` }),
+                  el("code", { textContent: run.callId }),
+                  " ",
+                  el("span", { className: `badge ${run.state}`, textContent: CONTAINER_STATES[run.state] }),
+                ),
+                el("p", {
+                  className: "fine",
+                  textContent: `Files in /in: ${run.files.length > 0 ? run.files.join(", ") : "none"}.`,
+                }),
+                ...output("Job progress", run.progress),
+                run.state === "done" && el("h4", { textContent: `Exit code ${run.exitCode}` }),
+                ...output("stdout", run.stdout),
+                ...output("stderr", run.stderr, true),
+                ...output("Error", run.error, true),
+                run.explanation && el("p", { className: "outcome", textContent: run.explanation }),
+                el("h4", { textContent: `Artifacts from /out (${run.artifacts.length})` }),
+                run.artifacts.length > 0
+                  ? mediaList(run.artifacts, download)
+                  : el("p", { className: "muted", textContent: "The Script wrote no file to /out." }),
+              ),
+            ),
+          )
+        : el("p", { className: "muted", textContent: "No Script ran yet. Run a suggested prompt." }),
+    ),
+    el(
+      "div",
+      { className: "card", id: "container-files" },
+      el("h3", { textContent: "Sample files" }),
+      mediaList(files, download),
+      el("p", {
+        className: "fine",
+        textContent:
+          "Each Thread gets its own copy as Thread media. The sample_files Fragment gives the model their refs, and run_script writes them to /in.",
+      }),
+    ),
+    el(
+      "div",
+      { className: "card", id: "container-network" },
+      el("h3", { textContent: "Network allow-list" }),
+      el("pre", { textContent: JSON.stringify(grant.egress.allow) }),
+      el("p", {
+        className: "fine",
+        textContent:
+          "A Script reaches only these hostnames. The Worker answers each other request with HTTP 520 and adds a line to stderr. Run Allowed host and Denied host to compare.",
+      }),
+    ),
+    el(
+      "details",
+      { className: "card", id: "container-grant" },
+      el("summary", { textContent: "Script grant (1)" }),
+      el("h4", { textContent: "capabilities.scripts" }),
+      el("pre", { textContent: JSON.stringify(grant, null, 2) }),
+      el("p", {
+        className: "fine",
+        textContent:
+          "A process that runs longer than wallMs becomes a Job. jobMaxWallMs stops it. The Workspace stops after idleMs without a Script. At most maxArtifacts files from /out become artifacts.",
+      }),
+    ),
+  ];
+}
+
 // What the operator typed in the ingest form. The side column renders again when its data changes.
 const ingestForm = { corpus: "handbook", id: "", title: "", text: "" };
 
@@ -1640,6 +1742,7 @@ const PANELS = {
   knowledge: knowledgeCards,
   observability: observabilityCards,
   scripts: scriptCards,
+  "container-scripts": containerCards,
 };
 
 /**
@@ -2145,7 +2248,8 @@ async function renderScenario(scenario) {
           break;
         }
         toolCard(event.id, event.name, event.input);
-        if (event.name === "run_script") scriptCard(event);
+        // A container Script has a language and no Tools, thus its card lists no nested Tool calls.
+        if (event.name === "run_script" && !event.input?.language) scriptCard(event);
         break;
       case "delegation.started":
         add(
@@ -2317,6 +2421,10 @@ async function renderScenario(scenario) {
             ". The tool Step waits for the outcome of the Job.",
           ),
         );
+        break;
+      case "job.progress":
+      case "job.cancelled":
+        refreshSoon();
         break;
       case "turn.completed":
       case "turn.failed":

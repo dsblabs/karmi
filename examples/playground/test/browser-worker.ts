@@ -4,6 +4,8 @@ import { env } from "cloudflare:workers";
 import { createPlayground } from "../src/app";
 import { catalogue } from "../src/catalogue";
 import { playgroundLogger } from "../src/observability";
+import { CONTAINER_IMAGE } from "../src/containers";
+import { fakeContainer } from "./container-driver";
 import { playgroundReplies } from "./script";
 import { setup, TOKEN } from "./worker-options";
 
@@ -14,6 +16,7 @@ const karmi = createKarmi({
   logger: playgroundLogger(),
   providers: { fake: fakeProvider(playgroundReplies) },
   defaults: { providers: { default: { adapter: "fake", models: ["*"] } } },
+  sandbox: { image: CONTAINER_IMAGE, driver: fakeContainer },
 });
 
 const playground = createPlayground({
@@ -24,6 +27,7 @@ const playground = createPlayground({
   data: env.PLAYGROUND_DATA,
   media: env.KARMI_MEDIA,
   hasLoader: env.KARMI_LOADER !== undefined,
+  containers: "docker",
 });
 
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;
