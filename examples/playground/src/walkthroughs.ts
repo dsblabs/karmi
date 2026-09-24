@@ -93,7 +93,7 @@ export const OPERATIONS_WALKTHROUGH: readonly WalkthroughStep[] = [
 
 karmi doctor found problems that will break a deploy.`,
     expected:
-      'The FAIL line names the class and the fix. The command exits with code 1. A deploy of this configuration fails, because Cloudflare cannot make the storage of KnowledgeDO. To fix it, add { "tag": "karmi-v3", "new_sqlite_classes": ["KnowledgeDO"] } to migrations.',
+      "The FAIL line names the class and the fix. The command exits with code 1. A deploy of this configuration fails, because Cloudflare cannot make the storage of KnowledgeDO. To fix it, add the migration karmi-v3 of wrangler.jsonc to the copy.",
   },
   {
     title: "Deploy, retry and remove",

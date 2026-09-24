@@ -810,7 +810,7 @@ export const COVERAGE: readonly CoverageRow[] = [
   transports(
     "Errors",
     "HTTP and media",
-    "The guided requests get 401 without the token, 400 for a Turn that is not valid, and 404 for an unknown Approval or for the Thread key through the other Scope. Each body is { error: { code, message } }.",
+    "The guided requests get 401, 400 and 404 answers. Each answer has an error code and a message.",
   ),
   transports(
     "Server-Sent Events",
@@ -902,12 +902,12 @@ export const COVERAGE: readonly CoverageRow[] = [
   operations(
     "Record and replay",
     "pnpm dev:record and pnpm record save the calls of the front desk Agent. pnpm test test/replay.test.ts replays them with no model call.",
-    "The replay test runs in each pnpm test. Worker tests cover the recording route.",
+    "The replay test runs in each pnpm test. Worker tests cover the recording route. By hand, pnpm dev:record and pnpm record saved the request of a real Turn, but the Provider refused the key. The sample answer was written by hand.",
   ),
   operations(
     "Doctor",
     "pnpm exec karmi doctor prints one line for each check of wrangler.jsonc and the Worker entry, and exits with code 0.",
-    "The walkthrough test runs the checks of the doctor and compares the lines with the walkthrough.",
+    "The walkthrough test runs the checks of the doctor and compares the lines with the walkthrough. The command itself, with its exit code, was checked by hand.",
   ),
   operations(
     "Diagnosis of a configuration failure",

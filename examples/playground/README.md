@@ -724,7 +724,7 @@ The recording step makes real model calls with the credential of `pnpm setup`.
 
 The recording keeps the Prompt, the messages and the answers of the model. It keeps no credential: a Provider profile holds only the name of the credential. The file replaces the sample recording of the repository. `git checkout test/recordings/front-desk.jsonl` restores the sample.
 
-The sample recording has a real request of the Harness for Anthropic `claude-sonnet-5`. Its answer is a scripted reply of the Test kit, because no valid Provider credential was available when the sample was made.
+The sample recording has a real request of the Harness for Anthropic `claude-sonnet-5`. Its answer and its token counts were written by hand with the `reply` helpers of the Test kit, because no valid Provider credential was available when the sample was made. No real model answer is in the repository.
 
 ### Check the configuration with karmi doctor
 

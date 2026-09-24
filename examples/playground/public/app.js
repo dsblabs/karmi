@@ -2753,7 +2753,7 @@ function providerCards({ profiles, agent, steps, calls, usage }, onChanged, isCu
   return [agentCard, stepsCard, callsCard, usageCard, profilesCard];
 }
 
-const TRANSPORTS = { sse: "Server-Sent Events", websocket: "WebSocket" };
+const TRANSPORT_LABELS = { sse: "Server-Sent Events", websocket: "WebSocket" };
 
 // The guided request that the operator selected, and the last answer. The side column renders again on each event.
 const requestForm = { index: 0, answer: undefined };
@@ -2779,7 +2779,7 @@ function transportCards({ threadKey, requests }, _onChanged, isCurrent, stream) 
   const transport = el(
     "select",
     { ariaLabel: "Transport of the event stream", onchange: () => stream.setTransport(transport.value) },
-    ...Object.entries(TRANSPORTS).map(([value, label]) => el("option", { value, textContent: label })),
+    ...Object.entries(TRANSPORT_LABELS).map(([value, label]) => el("option", { value, textContent: label })),
   );
   transport.value = stream.transport;
   const route =
@@ -2868,8 +2868,10 @@ function requestCard(threadKey, requests, isCurrent) {
     el("pre", { textContent: request.filter(Boolean).join("\n") }),
     el("p", {
       className: "fine",
-      textContent: `Expected: HTTP ${selected.status}${selected.code ? ` with the code ${selected.code}` : ""}. ${selected.shows}`,
+      textContent: `Expected: HTTP ${selected.status}. ${selected.shows}`,
     }),
+    selected.code &&
+      el("p", { className: "fine" }, "Expected error code: ", el("code", { textContent: selected.code })),
     answer,
   );
   return card;
@@ -2884,7 +2886,7 @@ function opened(socket) {
   });
 }
 
-// A terminal walkthrough: one card for each step, with the commands, the output and what it means.
+// Renders a terminal walkthrough with one card for each step. A card has the commands, the output and what it means.
 function walkthroughSteps(scenario) {
   return el(
     "ol",
@@ -3795,6 +3797,7 @@ async function renderScenario(scenario) {
       add(el("p", { className: "error", textContent: `The socket refused the frame: ${reply.error.message}` }));
     }
     showPanel();
+    sync();
   };
   const setAttached = (next) => {
     if (next && !attached) {

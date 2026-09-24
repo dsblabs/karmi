@@ -1,4 +1,4 @@
-// The recording step of the operations walkthrough: `pnpm record [origin]`. It reads the calls of the front desk
+// `pnpm record [origin]` is the recording step of the operations walkthrough. It reads the calls of the front desk
 // Agent from a Worker that `pnpm dev:record` started, and writes them to the recording that test/replay.test.ts
 // replays. The default origin is the address of `wrangler dev`.
 import { RECORDING_FILE } from "../src/walkthroughs.ts";
@@ -11,9 +11,15 @@ async function main(): Promise<void> {
   const token = vars.PLAYGROUND_TOKEN;
   if (!token) throw new Error("`.dev.vars` has no PLAYGROUND_TOKEN. Run `pnpm setup` first.");
   const response = await fetch(`${origin}/api/recording`, { headers: { authorization: `Bearer ${token}` } });
-  if (response.status === 404)
-    throw new Error("The Worker records no Provider calls. Start it with `pnpm dev:record`.");
-  if (!response.ok) throw new Error(`The Worker answered with HTTP ${String(response.status)}.`);
+  // The Worker tells in its error answer why it has no recording, for example that it runs without pnpm dev:record.
+  if (!response.ok) {
+    const answer: unknown = await response.json().catch(() => undefined);
+    const error = typeof answer === "object" && answer !== null && "error" in answer ? answer.error : undefined;
+    const message = typeof error === "object" && error !== null && "message" in error ? error.message : undefined;
+    throw new Error(
+      typeof message === "string" ? message : `The Worker answered with HTTP ${String(response.status)}.`,
+    );
+  }
   const jsonl = await response.text();
   const calls = jsonl.split("\n").filter((line) => line.trim() !== "").length;
   if (calls === 0)

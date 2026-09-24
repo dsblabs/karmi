@@ -290,6 +290,13 @@ test("a WebSocket carries the send frame of Run and its ack", async ({ page }) =
   await page.getByRole("button", { name: "Run" }).click();
   await expect(page.locator("#stream")).toContainText('"type": "ack"');
   await expect(page.locator("#steps .agent")).toContainText("The shop opens at 9:00 on Saturday.");
+  // A socket that connects again sends the stored events after the last seq of the page.
+  await page.getByRole("button", { name: "Drop the stream" }).click();
+  await page.getByLabel("Prompt").fill("Can you wrap a gift?");
+  await page.getByRole("button", { name: "Run" }).click();
+  await page.getByRole("button", { name: "Connect again" }).click();
+  await expect(page.locator("#steps .agent")).toHaveCount(2);
+  await expect(page.locator("#stream")).toContainText("Since the reconnect with after=");
 });
 
 test("a guided request shows its error answer, and the token stays", async ({ page }) => {
