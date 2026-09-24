@@ -253,7 +253,7 @@ export const SCENARIOS: readonly Scenario[] = [
     group: "Providers and MCP",
     title: "Remote MCP Tools and OAuth Connections",
     summary:
-      "Register a real remote MCP server in a disposable Scope, with no credential, with a static header or with a user-level OAuth Connection. The Agent gets the Tools of the server, and the Permission Policy decides each call. A call without a Connection asks for one in the conversation and continues after OAuth.",
+      "Register a real remote MCP server in a disposable Scope, with no credential, with a static header or with a user-level OAuth Connection. The Agent gets the Tools of the server, and the Permission Policy decides each call. When the Turn has a tool list but no grant, a call asks for the Connection in the conversation and continues after OAuth.",
     built: true,
     prerequisites: [
       "A remote MCP server with a public https URL. karmi refuses a private address, and the Worker reaches public hosts only.",
@@ -673,7 +673,7 @@ export const COVERAGE: readonly CoverageRow[] = [
   mcp(
     "OAuth Connections",
     "Connect opens the consent page. The callback stores the grant as the Connection mcp:remote of the User and sends the browser back. Disconnect removes it.",
-    "Not verified with a real authorization server yet.",
+    "Not verified with a real authorization server yet. pnpm deploy sets PLAYGROUND_ORIGIN with a second deploy, which did not run in a Cloudflare account yet.",
   ),
   mcp(
     "Connection Approvals",

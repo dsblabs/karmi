@@ -10,6 +10,10 @@ export const MCP_DESK = "mcp-desk";
 export const SERVER = "remote";
 /** The name of the Scope credential that holds the static header value of the server. */
 export const STATIC_CREDENTIAL = "mcp-remote";
+/** The reference to the static credential that the Scope config names. */
+export const STATIC_REFERENCE = `scope:${STATIC_CREDENTIAL}`;
+/** The name of the OAuth grant of the server as a Connection of the User. */
+export const CONNECTION = `mcp:${SERVER}`;
 /** The name that the consent screen of an authorization server shows for the Playground. */
 export const CLIENT_NAME = "karmi Playground";
 
@@ -52,20 +56,6 @@ export const mcpDeskAgent = (model: string) =>
  */
 export const mcpDeskSpec = (model: string): AgentSpec => ({ ...mcpDeskAgent(model).spec, tools: [`mcp:${SERVER}`] });
 
-/** How the Playground calls the server: with no credential, with one static header or with a user-level OAuth grant. */
-export type McpAuth = "none" | "static" | "oauth";
-
-/** The server that the operator registers from the page. */
-export interface Registration {
-  url: string;
-  auth: McpAuth;
-  /** The name of the static header, for example `Authorization`. */
-  header?: string;
-  /** The value of the static header. The route stores it as a Scope credential and never returns it. */
-  value?: string;
-  trustAnnotations: boolean;
-}
-
 /** The longest header value that the route accepts. A token is much shorter. */
 const MAX_VALUE = 4096;
 
@@ -78,9 +68,17 @@ const registrationSchema = z.discriminatedUnion("auth", [
     trustAnnotations: z.boolean().default(false),
     // A header name is a token of RFC 9110.
     header: z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/),
-    value: z.string().trim().min(1).max(MAX_VALUE),
+    /** The header value. The route stores it as a Scope credential and never returns it. */
+    // The route stores the value as typed. A value of spaces only is not a credential.
+    value: z.string().max(MAX_VALUE).regex(/\S/),
   }),
 ]);
+
+/**
+ * The server that the operator registers from the page: with no credential, with one static header or with a
+ * user-level OAuth grant.
+ */
+export type Registration = z.infer<typeof registrationSchema>;
 
 /**
  * Decodes the body of the registration route. Returns undefined when the body is not a registration. The Scope
@@ -96,14 +94,14 @@ export function decodeRegistration(body: unknown): Registration | undefined {
  * the Scope credential, never the value.
  */
 export function mcpConfig(registration: Registration): ScopeConfigDocument {
-  const { url, auth, header, trustAnnotations } = registration;
+  const { url, trustAnnotations } = registration;
   const server: McpServerConfig = {
     url,
     trustAnnotations,
     auth:
-      auth === "static" && header !== undefined
-        ? { type: "static", headers: { [header]: `scope:${STATIC_CREDENTIAL}` } }
-        : auth === "oauth"
+      registration.auth === "static"
+        ? { type: "static", headers: { [registration.header]: STATIC_REFERENCE } }
+        : registration.auth === "oauth"
           ? { type: "oauth", level: "user" }
           : { type: "none" },
   };
@@ -128,12 +126,11 @@ export function oauthSetup(value: string | undefined): OAuthSetup {
   return { origin: url.origin };
 }
 
-/** The result of the last tool list refresh from the page, without the error details that the page does not show. */
-const discoverySchema = z.object({
-  ok: z.boolean(),
-  at: z.number(),
-  error: z.optional(z.object({ code: z.string(), message: z.string() })),
-});
+/** The result of the last tool list refresh from the page: a success, or the code and the message of the error. */
+const discoverySchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), at: z.number() }),
+  z.object({ ok: z.literal(false), at: z.number(), error: z.object({ code: z.string(), message: z.string() }) }),
+]);
 
 /** The stored sample data of the scenario. */
 const mcpDataSchema = z.object({ discovery: z.optional(discoverySchema) });

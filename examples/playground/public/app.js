@@ -424,9 +424,15 @@ function connectAsk(card, event, ask) {
     el(
       "div",
       { className: "ask" },
-      el("strong", {
-        textContent: `The server ${event.serverId} needs a ${event.level}-level Connection. The Turn is parked until OAuth completes.`,
-      }),
+      el(
+        "strong",
+        {},
+        "The server ",
+        el("code", { textContent: event.serverId }),
+        " needs a Connection of the level ",
+        el("code", { textContent: event.level }),
+        ". The Turn is parked until OAuth completes.",
+      ),
       rows(["Authorization server", el("code", { textContent: new URL(event.authUrl).origin })]),
       el(
         "div",
@@ -2070,7 +2076,20 @@ const MCP_AUTH = {
  * credential or the Connection of the User, and the Permission Policy of the Agent.
  */
 function mcpCards(
-  { scopeId, oauth, server, missing, unavailable, catalog, credential, connection, discovery, policy },
+  {
+    scopeId,
+    oauth,
+    server,
+    missing,
+    unavailable,
+    catalog,
+    credential,
+    user,
+    connectionName,
+    connection,
+    discovery,
+    policy,
+  },
   onChanged,
   isCurrent,
 ) {
@@ -2079,7 +2098,7 @@ function mcpCards(
   const time = (at) => (at === undefined ? "never" : new Date(at).toLocaleTimeString());
   const auth = server?.config.auth.type;
   // The badge function makes a class of each word, thus a label of more than one word uses a plain badge.
-  const label = (text) => el("span", { className: "badge", textContent: text });
+  const plainBadge = (text) => el("span", { className: "badge", textContent: text });
 
   const serverResult = el("p", { className: "fine" });
   let serverCard;
@@ -2124,7 +2143,7 @@ function mcpCards(
     serverCard = el(
       "div",
       { className: "card titled", id: "mcp-server" },
-      el("h3", {}, "Remote MCP server", label("not registered")),
+      el("h3", {}, "Remote MCP server", plainBadge("not registered")),
       el("p", {
         className: "muted",
         textContent: "Register a real MCP server. The Playground has no sample server.",
@@ -2168,7 +2187,7 @@ function mcpCards(
         ["Server id", el("code", { textContent: server.id })],
         ["URL", el("code", { textContent: server.config.url })],
         ["Credential", MCP_AUTH[auth]],
-        ["Permitted hosts", server.hosts.join(", ")],
+        ["Permitted hosts", el("code", { textContent: server.hosts.join(", ") })],
         ["Annotations", server.config.trustAnnotations ? "trusted" : "not trusted: each Tool is destructive"],
       ),
       el("h4", { textContent: "Scope config of the server" }),
@@ -2186,12 +2205,15 @@ function mcpCards(
   const toolsCard = el(
     "div",
     { className: "card titled", id: "mcp-tools" },
-    el("h3", {}, "Tools of the server", label(catalog ? `${catalog.tools.length} Tools` : "no tool list")),
+    el("h3", {}, "Tools of the server", plainBadge(catalog ? `${catalog.tools.length} Tools` : "no tool list")),
     missing &&
-      el("p", {
-        className: "error",
-        textContent: `The credential ${missing} is missing. The server is not usable until the credential resolves.`,
-      }),
+      el(
+        "p",
+        { className: "error" },
+        "The credential ",
+        el("code", { textContent: missing }),
+        " is missing. The server is not usable until the credential resolves.",
+      ),
     unavailable && el("pre", { className: "error", textContent: `${unavailable.code}: ${unavailable.message}` }),
     failed && el("h4", { textContent: `The last tool list failed at ${time(discovery.at)}` }),
     failed && el("pre", { className: "error", textContent: `${failed.code}: ${failed.message}` }),
@@ -2202,8 +2224,8 @@ function mcpCards(
           rows(
             ["Tool list version", el("code", { textContent: catalog.version })],
             ["Fetched at", time(catalog.fetchedAt)],
-            ["Cache scope", catalog.cacheScope],
-            ["Protocol era", catalog.era],
+            ["Cache scope", el("code", { textContent: catalog.cacheScope })],
+            ["Protocol era", el("code", { textContent: catalog.era })],
           ),
           el(
             "ul",
@@ -2258,7 +2280,7 @@ function mcpCards(
         "h3",
         {},
         "Static credential",
-        label(!credential ? "none" : credential.revokedAt ? "revoked" : `version ${credential.version}`),
+        plainBadge(!credential ? "none" : credential.revokedAt ? "revoked" : `version ${credential.version}`),
       ),
       credential &&
         rows(
@@ -2293,10 +2315,10 @@ function mcpCards(
     accessCard = el(
       "div",
       { className: "card titled", id: "mcp-connection" },
-      el("h3", {}, "Connection of the User", label(connection ? "connected" : "no Connection")),
+      el("h3", {}, "Connection of the User", plainBadge(connection ? "connected" : "no Connection")),
       rows(
-        ["User", el("code", { textContent: "operator" })],
-        ["Connection", el("code", { textContent: "mcp:remote" })],
+        ["User", el("code", { textContent: user })],
+        ["Connection", el("code", { textContent: connectionName })],
         ["Stored at", connection ? time(connection.updatedAt) : "never"],
       ),
       returned &&
@@ -2322,7 +2344,9 @@ function mcpCards(
           cardAction(
             "Disconnect",
             () => api("POST", `${path}/disconnect`),
-            changed("The Scope dropped the grant and the private tool list of the User."),
+            changed(
+              "The Scope dropped the grant of the User. A private tool list goes with it. A public one stays, thus the next call asks for the Connection.",
+            ),
             accessResult,
           ),
           { disabled: !connection },
@@ -3020,14 +3044,20 @@ async function renderScenario(scenario) {
         card.state.textContent =
           event.decision === "allow" ? (connect ? "connected, running" : "allowed, running") : "denied";
         card.querySelector(".ask").replaceWith(
-          el("p", {
-            className: "outcome",
-            textContent: !connect
-              ? `Approval outcome: ${event.decision} (${event.source})`
-              : event.decision === "allow"
-                ? "OAuth is complete. The call runs again, one time, with the grant of the User."
-                : `The Connection was not granted (${event.reason ?? event.source}). The call gets an error result.`,
-          }),
+          !connect
+            ? el("p", { className: "outcome", textContent: `Approval outcome: ${event.decision} (${event.source})` })
+            : event.decision === "allow"
+              ? el("p", {
+                  className: "outcome",
+                  textContent: "OAuth is complete. The call runs again, one time, with the grant of the User.",
+                })
+              : el(
+                  "p",
+                  { className: "outcome" },
+                  "The Connection was not granted: ",
+                  el("code", { textContent: event.reason ?? event.source }),
+                  ". The call gets an error result.",
+                ),
         );
         refreshSoon();
         break;

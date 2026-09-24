@@ -258,6 +258,14 @@ describe("an OAuth Connection", () => {
     expect(resultText(await run(connected))).toBe("The vault holds 3 files.");
   });
 
+  it("sends the browser back with the refusal when the operator denies the consent from the page", async () => {
+    await register(vault.url, { auth: "oauth" });
+    const back = await consent(vault, await connectUrl(), false);
+    expect(back.status).toBe(303);
+    expect(back.headers.get("location")).toBe(`${ORIGIN}/?mcp=remote&connected=false#${MCP}`);
+    expect((await state()).connection).toBeNull();
+  });
+
   it("asks for the missing Connection in the conversation and continues the call after OAuth", async () => {
     const now = await register(vault.url, { auth: "oauth", trustAnnotations: true });
     await consent(vault, await connectUrl());

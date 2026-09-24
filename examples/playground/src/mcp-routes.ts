@@ -8,8 +8,10 @@ import {
   mcpDeskAgent,
   mcpDeskSpec,
   mcpScope,
+  CONNECTION,
   SERVER,
   STATIC_CREDENTIAL,
+  STATIC_REFERENCE,
   type McpData,
   type OAuthSetup,
 } from "./remote-mcp";
@@ -98,8 +100,10 @@ async function scenarioState(options: McpRouteOptions): Promise<Response> {
     oauth: "origin" in options.oauth ? { available: true } : { available: false, reason: options.oauth.reason },
     server: server && { id: SERVER, config: server, hosts: config.document.egress?.mcpHosts ?? [] },
     ...serverView(snapshot),
-    credential: credential ? { reference: `scope:${STATIC_CREDENTIAL}`, ...credential } : null,
-    connection: connections.find((entry) => entry.name === `mcp:${SERVER}`) ?? null,
+    credential: credential ? { reference: STATIC_REFERENCE, ...credential } : null,
+    user: options.user,
+    connectionName: CONNECTION,
+    connection: connections.find((entry) => entry.name === CONNECTION) ?? null,
     discovery: data.discovery ?? null,
     policy: mcpDeskAgent(options.model).spec.policy,
     turn: { state: turn.state, paused: turn.paused },
@@ -138,12 +142,9 @@ async function register(options: McpRouteOptions, now: Current, body: unknown): 
   // the scenario registers one server for each disposable Scope, and a reset gives a new Scope.
   if ((await now.scope.config.get()).revision > 0)
     return routeError(409, "playground.serverRegistered", "A server is registered. Reset the scenario to change it.");
-  if (registration.value !== undefined) await now.scope.credentials.put(STATIC_CREDENTIAL, registration.value);
-  const refused = await now.scope.config
-    .set(mcpConfig(registration), { ifRevision: 0 })
-    .then(() => undefined)
-    .catch((caught: unknown) => conflictOf(caught, "config."));
-  if (refused) return refused;
+  if (registration.auth === "static") await now.scope.credentials.put(STATIC_CREDENTIAL, registration.value);
+  // The Scope config refuses a private address with config.invalid, which `handle` answers with a 409.
+  await now.scope.config.set(mcpConfig(registration), { ifRevision: 0 });
   // The next Turn runs the new version of the Agent, which has the Tools of the server.
   await now.scope.agents.put(mcpDeskSpec(options.model));
   // An OAuth server lists its Tools only for a User with a grant, thus the first list waits for the Connection.
