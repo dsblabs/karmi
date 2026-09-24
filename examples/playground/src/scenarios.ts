@@ -14,6 +14,7 @@ import { REMINDER_PROMPTS, SCHEDULES } from "./reminders";
 import { MCP, MCP_PROMPTS } from "./remote-mcp";
 import { SCRIPT_LIMITS, SCRIPT_PROMPTS, SCRIPTS } from "./scripts";
 import { STOCKROOM, STOCKROOM_PROMPTS } from "./stockroom";
+import { VECTOR_BINDINGS, VECTOR_PROMPTS, VECTORS, type VectorIndex } from "./vectors";
 
 const CODE = "https://github.com/dsblabs/karmi/blob/main/examples/playground";
 
@@ -53,6 +54,8 @@ export interface Scenario {
   needsLoader?: boolean;
   /** True when the scenario needs a container runtime: Docker in local development, or Cloudflare Containers. */
   needsContainers?: boolean;
+  /** True when the scenario needs Workers AI and a Vectorize index. */
+  needsVectors?: boolean;
   /** What the operator must know before a run, other than a limit of the model. */
   notes?: string[];
 }
@@ -192,6 +195,27 @@ export const SCENARIOS: readonly Scenario[] = [
     code: `${CODE}/src/librarian.ts`,
   },
   {
+    id: VECTORS,
+    group: "Memory and Knowledge",
+    title: "Vector retrieval and index rebuild",
+    summary:
+      "A shop guide Agent searches a guides corpus with a vector Retriever in hybrid mode. Workers AI embeds each chunk, and a Vectorize index keeps a copy of each vector. Compare keyword, vector and hybrid Passages. Remove the vectors from the index, then rebuild it from the Knowledge of the Framework.",
+    built: true,
+    prerequisites: [
+      "A Cloudflare deployment that selected vector retrieval. pnpm deploy then creates a Vectorize index with 1024 dimensions, the cosine metric and two metadata indexes, and binds Workers AI. Local development has no Workers AI or Vectorize.",
+    ],
+    needs: ["toolCalls"],
+    prompts: VECTOR_PROMPTS,
+    code: `${CODE}/src/vectors.ts`,
+    needsVectors: true,
+    notes: [
+      "The Knowledge scenario uses the default Retriever, fts5, which finds a Passage only when a word of the query is in it. This Retriever also finds a Passage with the same meaning and different words.",
+      "The Knowledge Durable Object keeps each vector. The Vectorize index is a copy that a rebuild writes again without a call to the embedding model.",
+      "Vectorize applies writes asynchronously. The index card can show old ids for some seconds after a change. Read the index again.",
+      "Each ingest calls Workers AI, and each search calls Workers AI and Vectorize. Cloudflare bills the use above the free allocation of your plan.",
+    ],
+  },
+  {
     id: SCRIPTS,
     group: "Scripts",
     title: "Isolate Scripts",
@@ -308,13 +332,15 @@ export interface Services {
   hasLoader: boolean;
   /** Where container Scripts run, when the Worker has a container runtime. */
   containers?: ContainerRuntime | undefined;
+  /** The external vector index, when the Worker has Workers AI and a Vectorize index. */
+  vectors?: VectorIndex | undefined;
 }
 
 /** Adds the state for the current setup and services to a scenario. It makes no network call. */
 export function viewScenario(
   scenario: Scenario,
   setup: ProviderSetup | undefined,
-  { hasLoader, containers }: Services,
+  { hasLoader, containers, vectors }: Services,
 ): ScenarioView {
   if (!scenario.built)
     return { ...scenario, status: "incomplete", reason: "This scenario is not built yet.", modelNotes: [] };
@@ -332,6 +358,13 @@ export function viewScenario(
       status: "unavailable",
       reason:
         "The Worker has no container runtime. For local development, stop the server and run pnpm dev:containers, which needs Docker. For Cloudflare, deploy with a new deployment name and select container Scripts.",
+      modelNotes: [],
+    };
+  if (scenario.needsVectors && !vectors)
+    return {
+      ...scenario,
+      status: "unavailable",
+      reason: `The Worker has no ${VECTOR_BINDINGS.ai} binding for Workers AI or no ${VECTOR_BINDINGS.index} binding for Vectorize. Local development has neither. Run pnpm deploy and select vector retrieval.`,
       modelNotes: [],
     };
   if (!setup)
@@ -398,6 +431,15 @@ const mcp = (feature: string, observable: string, verification: string): Coverag
   scenario: MCP,
   observable,
   verification: `Worker tests with the scripted Provider and the fake MCP servers of the Test kit. ${verification}`,
+});
+// The tests use a deterministic Embedder and an index in memory, thus each row tells what a live check covered.
+const vectors = (feature: string, observable: string): CoverageRow => ({
+  group: "Memory and Knowledge",
+  feature,
+  scenario: VECTORS,
+  observable,
+  verification:
+    "Worker tests and browser checks with the scripted Provider, a deterministic Embedder and an index in memory. Not verified with Workers AI and Vectorize yet.",
 });
 // The tests run container Scripts on a fake container runtime, thus the rows say that no real container ran yet.
 const containers = (feature: string, group: string, observable: string): CoverageRow => ({
@@ -606,11 +648,22 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Memory and Knowledge",
     "Delete a document, and a search no longer finds it. Destroy a corpus, and it leaves the list of the Scope. Reset destroys each corpus and ingests the starting documents again.",
   ),
-  {
-    group: "Memory and Knowledge",
-    feature: "Vector and hybrid retrieval",
-    observable: "Not shown. It needs Workers AI or a Vectorize index, which local development does not have.",
-  },
+  vectors(
+    "Vector and hybrid retrieval",
+    "Search the guides with no shared word. The keyword search finds nothing. The vector and the hybrid searches find the document, and each Passage names its source. The search_guides Tool uses the hybrid settings of the Agent Spec.",
+  ),
+  vectors(
+    "Vector index rebuild",
+    "Remove the vectors from the index. A vector search finds nothing, and a keyword search still works. Rebuild writes the same opaque ids to the index again, and the vector search works again.",
+  ),
+  vectors(
+    "Vector Scope isolation",
+    "The second sample Scope has a guide with the same id. Each Scope finds only its own text, because the index keeps each Scope in its own namespace.",
+  ),
+  vectors(
+    "Vector cleanup",
+    "Reset destroys the guides of each Scope, which deletes their vectors from the index. pnpm run remove deletes the index that pnpm deploy created and keeps an index that you supplied.",
+  ),
   lifecycle(
     "Scope suspension and resumption",
     "Scopes and credentials",

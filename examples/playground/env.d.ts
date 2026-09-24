@@ -16,6 +16,10 @@ declare namespace Cloudflare {
      * them. Without it, the Worker offers no container Scripts.
      */
     PLAYGROUND_CONTAINERS?: string;
+    /** Workers AI, which embeds the guides of the vector retrieval scenario. `pnpm deploy` adds it with the index. */
+    KARMI_AI?: Ai;
+    /** The Vectorize index of the vector retrieval scenario. `pnpm deploy` adds it when you select vector retrieval. */
+    KNOWLEDGE_VECTORS?: Vectorize;
     PLAYGROUND_DATA: DurableObjectNamespace<import("./src/sample-data").SampleDataDO>;
     /** The key ring that encrypts each stored credential. */
     KARMI_KEYRING?: string;

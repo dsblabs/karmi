@@ -3,6 +3,8 @@ import { fakeProvider, routeFetch } from "@karmi/core/testing";
 import { env } from "cloudflare:workers";
 import { createPlayground } from "../src/app";
 import { catalogue } from "../src/catalogue";
+import { semanticRetriever } from "../src/vectors";
+import { memoryIndex, topicEmbedder } from "./vector-index";
 import { playgroundLogger } from "../src/observability";
 import { CONTAINER_IMAGE } from "../src/containers";
 import { fakeContainer } from "./container-driver";
@@ -15,7 +17,7 @@ import { setup, TOKEN } from "./worker-options";
 // The Worker of the browser checks. `wrangler dev` runs it, where `createTestKarmi` cannot run, so it registers
 // the scripted Provider itself.
 const karmi = createKarmi({
-  catalogue: catalogue("fake/model"),
+  catalogue: catalogue("fake/model", semanticRetriever(memoryIndex, topicEmbedder)),
   logger: playgroundLogger(),
   providers: { fake: fakeProvider(playgroundReplies) },
   defaults: { providers: { default: { adapter: "fake", models: ["*"] } } },
@@ -35,6 +37,7 @@ const playground = createPlayground({
   keyring: keyringView(env.KARMI_KEYRING),
   hasLoader: env.KARMI_LOADER !== undefined,
   containers: "docker",
+  vectors: memoryIndex,
   oauth: oauthSetup(undefined),
 });
 

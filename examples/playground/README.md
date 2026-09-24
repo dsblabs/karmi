@@ -330,11 +330,46 @@ Inline and search differ in what the model sees and in their limits:
 - With `inline`, the model sees the full corpus in each Turn and needs no Tool call. The corpus must stay under 32,000 Unicode code points, the exported constant `KNOWLEDGE_INLINE_LIMIT`. Over it, the Turn fails before the model call.
 - With `search`, the model sees only the Passages that its query matches. The corpus has no size limit, and a Tool call and its Step come with each search.
 
-Vector and hybrid retrieval are not in the scenario. They need Workers AI through the `KARMI_AI` binding, or a Vectorize index, which local development does not have. The **Feature coverage** page lists them without a scenario.
+Vector and hybrid retrieval are in the next scenario. They need a Cloudflare deployment.
 
 The state stays until you select **Reset scenario**. A reset destroys each corpus, cancels and deletes the Thread and ingests the starting documents again. The Framework refuses a destroy while an ingest Job is pending. Thus a reset during a bulk ingest gets a `409` answer with the code `knowledge.busy`, and it changes nothing. Wait for the Job, then reset again. A reset does not change another scenario or a Provider credential.
 
 The scenario needs a model that supports Tool calls. A small model can answer from its own guess in place of a search. Check the event log for the `search_handbook` call. The Agent and the sample documents are in [`src/librarian.ts`](./src/librarian.ts). The routes are in [`src/knowledge-routes.ts`](./src/knowledge-routes.ts).
+
+## The vector retrieval scenario
+
+**Vector retrieval and index rebuild** is optional. It needs a Cloudflare deployment that selected vector retrieval, because local development has no Workers AI and no Vectorize. Without them, the scenario stays in the list and tells why it cannot run. [Deploy to Cloudflare](#deploy-to-cloudflare) tells how to select it.
+
+The scenario has a shop guide Agent. Its Agent Spec names the corpus `guides` with the Catalogue Retriever `semantic` and hybrid settings:
+
+```json
+{ "name": "guides", "mode": "search", "retriever": "semantic", "settings": { "mode": "hybrid", "topK": 3 } }
+```
+
+The Knowledge scenario names no Retriever, thus it gets the default `fts5`. The two Retrievers differ in these ways:
+
+| | Knowledge scenario | Vector retrieval scenario |
+| --- | --- | --- |
+| Retriever | `fts5`: SQLite full-text search with BM25 | `semantic`: `defineVectorRetriever` with the default mode `hybrid` |
+| A match | A word of the query is in the Passage | Also a Passage with the same meaning and different words |
+| Ingest | No external call | Workers AI `@cf/baai/bge-m3` embeds each chunk |
+| Where the vectors are | No vectors | The Knowledge Durable Object, and a copy in the Vectorize index |
+
+The first state read ingests five guides into the Scope `sample-a` and one guide into `sample-b`. The guide of `sample-b` has the id `returns`, the same as a guide of `sample-a`, and a different text. Do these steps:
+
+1. In the **Passages of a search** card, select the mode **Keyword (fts5)** and select **Search both Scopes**. The query `get my money back` has no word of a guide, thus no Passage matches.
+2. Select **Vector** and search again. The first Passage is `returns`, with `"source": "vector"`. The second Scope finds only its own `returns` text, because the index keeps each Scope in its own namespace.
+3. Select **Run** with a suggested prompt. The Agent calls `search_guides`, which uses the hybrid settings of the Agent Spec. Each Passage in the Tool result has `"source": "hybrid"`.
+4. In the **Vectorize index** card, select **Remove the vectors from the index**. The route deletes the vectors of `sample-a` from the index around the Framework. A vector search now finds nothing, and a keyword search still works, because it reads the chunks of the Framework.
+5. Select **Rebuild the index**. `scope.knowledge("guides").rebuild()` writes the saved vectors to the index again, with no embedding call. **Opaque vector ids** shows the same ids as before: the index keeps the ids of the Framework unchanged.
+
+Vectorize applies writes asynchronously. After a remove or a rebuild, the count of the index can be old for some seconds. Select **Read the index again**. The count reads at most 100 vectors for each Scope.
+
+The Framework is the durable source of truth: the Knowledge Durable Object keeps each chunk and each vector. The Vectorize index is a copy that a rebuild can make again.
+
+A reset destroys the corpus `guides` in each Scope. The destroy deletes each vector of the corpus from the index. The reset then cancels and deletes the Thread, and the next state read ingests the guides again. A reset does not change another scenario or a Provider credential.
+
+Each ingest calls Workers AI, and each search calls Workers AI and Vectorize. Cloudflare bills the use above the free allocation of your plan. The scenario needs a model that supports Tool calls. The Agent, the Retriever and the guides are in [`src/vectors.ts`](./src/vectors.ts). The routes are in [`src/vector-routes.ts`](./src/vector-routes.ts).
 
 ## The Usage and logging scenario
 
@@ -560,7 +595,7 @@ The Agent and the config are in [`src/remote-mcp.ts`](./src/remote-mcp.ts). The 
 
 ## Model limits
 
-These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Knowledge, Usage and logging, isolate Scripts, container Scripts and remote MCP.
+These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Knowledge, vector retrieval, Usage and logging, isolate Scripts, container Scripts and remote MCP.
 
 The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
@@ -599,6 +634,8 @@ A yes creates one container application with the name `<deployment name>-sandbox
 
 A deployment without container Scripts can add them later. When you run the command again with its deployment name, it asks the question again. A yes adds the container application to the manifest. The command cannot remove container Scripts from a deployment.
 
+The command then asks whether to enable vector retrieval. Before you answer, it tells what vector retrieval needs: Workers AI, which embeds the text, and a Vectorize index. Both are on the Workers Free and Paid plans, and Cloudflare bills the use above the free allocation. A yes creates the index `<deployment name>-vectors` with 1024 dimensions, the cosine metric and a string metadata index on `knowledge` and on `doc`. The Framework filters on them, thus the command makes them before the first vector. The Worker gets the Workers AI binding `KARMI_AI` and the Vectorize binding `KNOWLEDGE_VECTORS`. The base `wrangler.jsonc` has neither binding, because `wrangler dev` needs a Cloudflare login for them. Before it creates the index, the command checks that no index has that name, and it records the index in the manifest. A deployment without vector retrieval can add it later, as for container Scripts.
+
 The command stores the Provider credential, access token and key ring as Worker secrets. It writes non-secret Provider settings as Worker variables.
 
 The command records ownership in `.deployments/<name>/manifest.json` before it creates resources. Git ignores this directory. Keep the manifest until removal finishes.
@@ -617,6 +654,8 @@ You can supply existing resources. The manifest marks them as external, and remo
 pnpm deploy karmi-playground-a1b2c3d4 --bucket existing-media --queue existing-queue --dead-letter-queue existing-dlq
 ```
 
+`--vector-index existing-vectors` supplies a Vectorize index and selects vector retrieval. The index must have 1024 dimensions, the cosine metric and the two metadata indexes. The command checks only that the index exists.
+
 The base deployment does not create optional services. Future optional integrations can add owned or external resources to the same manifest.
 
 ## Remove a Cloudflare deployment
@@ -627,7 +666,9 @@ Give the exact deployment name to the removal command:
 pnpm run remove karmi-playground-a1b2c3d4
 ```
 
-The command removes the owned Worker, Queues and R2 bucket. It deletes all objects in the owned R2 bucket before it deletes the bucket. After the Worker, it deletes the owned container application and each image in the Cloudflare registry with the name of the application. Worker deletion removes its Durable Object storage and its Worker Loader binding. The command preserves each external resource in the manifest.
+The command removes the owned Worker, Queues and R2 bucket. It deletes all objects in the owned R2 bucket before it deletes the bucket. After the Worker, it deletes the owned container application and each image in the Cloudflare registry with the name of the application. It then deletes the owned Vectorize index with its vectors. Worker deletion removes its Durable Object storage and its Worker Loader binding. The command preserves each external resource in the manifest.
+
+A supplied Vectorize index keeps the vectors that the Playground wrote. The command cannot reach the Knowledge Durable Objects, which list them. To delete them, reset the vector retrieval scenario before you remove the deployment.
 
 If cleanup fails, the command lists each remaining resource and keeps its ownership record. Fix the reported problem. Then run the command again. A repeated removal skips resources that a prior attempt removed.
 
@@ -638,6 +679,7 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 - Local development does not run a cron trigger on its own. Call the `scheduled` handler as the Schedules scenario describes.
 - Local workerd does not enforce the `cpuMs` limit of a Script. Only a deployed Worker shows it.
 - `pnpm dev` has no container runtime. Container Scripts need `pnpm dev:containers` and Docker.
+- `pnpm dev` has no Workers AI and no Vectorize, thus the vector retrieval scenario needs a deployment.
 - OAuth Connections need a public `https` origin. The `http` address of `pnpm dev` cannot take part in OAuth.
 
 ## Tests
@@ -652,6 +694,8 @@ The Worker tests use the in-memory credential store of the Test kit, which encry
 The tests of the MCP scenario use the fake MCP servers of the Test kit in [`test/mcp-servers.ts`](./test/mcp-servers.ts), with a fake authorization server for OAuth. The browser cannot reach the consent page of a fake, thus only the Worker tests cover OAuth. No check with a real authorization server ran yet.
 
 The tests run container Scripts on a fake container runtime through the `sandbox.driver` option of `createKarmi`, in [`test/container-driver.ts`](./test/container-driver.ts). The Harness, the Workspace, the Jobs and the artifacts are real. The fake runs no code and enforces no network rule, thus only a deployment shows the network rules.
+
+The tests of the vector retrieval scenario use a deterministic Embedder and an index in the memory of the Worker, in [`test/vector-index.ts`](./test/vector-index.ts). The Retriever, the Knowledge Durable Object, the rebuild and the destroy are real.
 
 Before the first browser check, run `pnpm exec playwright install chromium`. No test needs a credential.
 
