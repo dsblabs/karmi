@@ -151,6 +151,11 @@ th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; colo
 tr.group td { font-weight: 600; background: var(--panel); }
 tr:last-child td { border-bottom: 0; }
 
+.walkthrough { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.9rem; max-width: 60rem; counter-reset: step; }
+.walkthrough > li { counter-increment: step; }
+.walkthrough h3::before { content: counter(step) ". "; color: var(--muted); }
+.walkthrough p { margin: 0.3rem 0 0; }
+
 #menu { display: none; padding: 0.2rem 0.55rem; font-size: 1.1rem; color: inherit; }
 @media (max-width: 1100px) {
   #menu { display: block; }

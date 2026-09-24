@@ -33,6 +33,8 @@ declare namespace Cloudflare {
      * The OAuth Connections of the MCP scenario need it. `pnpm deploy` sets it.
      */
     PLAYGROUND_ORIGIN?: string;
+    /** Any value makes the Worker record each Provider call for `pnpm record`. `pnpm dev:record` sets it. */
+    PLAYGROUND_RECORD?: string;
     /** The Provider credential. No route returns it. */
     PROVIDER_API_KEY?: string;
     /** The id of the optional second Provider of the Provider scenario. `pnpm setup` asks for it. */

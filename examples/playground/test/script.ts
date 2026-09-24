@@ -289,6 +289,7 @@ export const providerDeskReplies: ReplyScript = ({ request }) => {
 export const playgroundReplies: ReplyScript = (ctx) => {
   const system = ctx.request.system ?? "";
   if (system.includes("refund desk")) return refundReplies(ctx);
+  if (system.includes("front desk")) return "The shop opens at 9:00 on Saturday.";
   if (system.includes("stock system")) return restockReplies(ctx);
   if (system.includes("dispatch desk")) return dispatchReplies(ctx);
   if (system.includes("reminder desk")) return reminderReplies(ctx);

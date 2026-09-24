@@ -26,7 +26,7 @@ const scripted: Provider = {
 
 // The test Worker runs the same routes, Tools and Agent as src/worker.ts against a scripted Provider, so no
 // test needs a credential or a network.
-export const { karmi, provider, clock } = createTestKarmi(
+export const { karmi, provider, clock, scope } = createTestKarmi(
   catalogue("fake/model", semanticRetriever(memoryIndex, topicEmbedder)),
   {
     logger: playgroundLogger(),

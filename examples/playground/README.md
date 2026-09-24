@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has seventeen browser scenarios:
+This version has eighteen browser scenarios and one terminal walkthrough:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -21,6 +21,8 @@ This version has seventeen browser scenarios:
 - **Remote MCP Tools and OAuth Connections**
 - **Vector retrieval and index rebuild**
 - **Provider switching, Provider Tools and AI Gateway**
+- **REST, SSE and WebSocket**
+- **Test kit, doctor, deployment and removal**, a terminal walkthrough
 
 It also has Cloudflare deployment and removal commands.
 
@@ -642,6 +644,130 @@ A reset cancels and deletes the Thread and stores the starting Spec again: the p
 
 The Agent is in [`src/provider-desk.ts`](./src/provider-desk.ts). The profiles are in [`src/providers.ts`](./src/providers.ts). The routes are in [`src/provider-routes.ts`](./src/provider-routes.ts).
 
+## The REST, SSE and WebSocket scenario
+
+**REST, SSE and WebSocket** has a front desk Agent with no Tools, thus each model can run it. The page uses only the routes of `@karmi/http`, which the [HTTP guide](../../docs/guide/06-http.md) describes. The access token goes in the `Authorization` header of a REST request and in the `token` query parameter of a stream, because a browser cannot set a header on an `EventSource` or a `WebSocket`.
+
+### Streams and reconnects
+
+The **Event stream of this page** card selects the transport. Server-Sent Events use `GET /threads/:key/events` with `Accept: text/event-stream`. The WebSocket uses `GET /threads/:key` with `Upgrade: websocket`. The Durable Object of the Thread owns the socket, as [ADR 0003](../../docs/adr/0003-client-sockets-in-the-thread-do.md) tells. The page does not use a second transport of its own.
+
+Do these steps:
+
+1. Select **Run**. The answer of the Agent appears while the model writes it. **Last seq of the page** shows the `seq` of the newest event.
+2. Select **Drop the stream**. The page closes the stream, and the badge shows `dropped`.
+3. Write a new prompt and select **Run**. The page sends the Turn with `POST /threads/:key/turns`. The Turn runs, and the Thread stores each event, but the conversation does not change. The status line tells that the page has no stream.
+4. Select **Connect again**. The page opens the stream with `after=<last seq>`. The stream first sends each stored event after that `seq`, then the live events. The conversation shows the Turn of step 3, and the card shows the `seq` range that the stream sent since the reconnect.
+5. Select **WebSocket** and select **Run**. The page sends a `send` frame on the socket. The card shows the `ack` frame with the Turn and the `seq` of the input, and the events arrive on the same socket.
+
+An `EventSource` also connects again on its own after a network failure. It sends the `seq` of the last record in `Last-Event-ID`. To see it, stop `pnpm dev` during a Turn and start it again. A reset deletes the Thread, and a socket of that Thread closes with the code `4004`. A client must not connect again after `4004`.
+
+### REST requests and errors
+
+The **REST requests** card sends one guided request at a time and shows the status and the JSON body of the answer. Each request tells the answer to expect:
+
+| Request | Answer |
+| --- | --- |
+| Read the Thread | `200` with the identity, the key and the status. `status.seq` is the last `seq` of the log. |
+| Read the events after seq 2 | `200` with the stored events after `seq` 2. |
+| List the Threads of the Agent | `200` with a summary of each Thread, the most recent first. |
+| Send no access token | `401` with `http.unauthorized`. |
+| Send a Turn that is not valid | `400` with `http.badRequest`. The message names the field. |
+| Answer an Approval that does not exist | `404` with `approval.notFound`. |
+| Open the Thread in the other Scope | `404` with `thread.notFound`. A key of one Scope does not open a Thread through another Scope. |
+
+The card sends the request without the `api` function of the page, thus the `401` answer does not open the token form. **Reset scenario** deletes the Thread and starts a new one.
+
+The Agent and the guided requests are in [`src/transports.ts`](./src/transports.ts). [`test/transports.test.ts`](./test/transports.test.ts) sends the same requests and frames from a test.
+
+## The development and operations walkthrough
+
+**Test kit, doctor, deployment and removal** is a terminal walkthrough. The browser shows each step with its commands and the expected result, and it has no Agent. Run the commands in `examples/playground`. The steps are in [`src/walkthroughs.ts`](./src/walkthroughs.ts), and [`test/walkthroughs.test.ts`](./test/walkthroughs.test.ts) checks that each command names a script of `package.json` and a file that exists.
+
+### Run the tests
+
+```sh
+pnpm test
+pnpm test test/transports.test.ts
+```
+
+The first command runs each Worker test. The second one runs the tests of one scenario, and vitest reports `Test Files  1 passed (1)`. The tests use the Test kit of `@karmi/core`: the scripted Provider, the event matchers and the Clock. No test needs a credential or a network. The [Testing guide](../../docs/guide/13-testing.md) describes the Test kit.
+
+### Record and replay a real Provider
+
+The recording step makes real model calls with the credential of `pnpm setup`.
+
+1. Start the Worker with a recording Provider:
+
+   ```sh
+   pnpm dev:record
+   ```
+
+   `recordingProvider` wraps the Provider of the `default` profile of setup and keeps each call in memory until the server stops.
+
+2. Open **REST, SSE and WebSocket** and run one or two prompts.
+3. In a second terminal, save the calls of the front desk Agent:
+
+   ```sh
+   pnpm record
+   ```
+
+   The command prints `Saved 1 call of the front desk Agent to test/recordings/front-desk.jsonl.`, with the number of Turns that you ran. It reads the calls from `GET /api/recording` with the access token of `.dev.vars`. The default address is `http://localhost:8787`. Give a different address as the first argument, for example `pnpm record http://localhost:8790`.
+
+4. Replay the recording:
+
+   ```sh
+   pnpm test test/replay.test.ts
+   ```
+
+   `fakeProvider.fromRecording` serves the recorded events in call order. The test sends each recorded prompt to the front desk Agent again and expects the recorded answer. No model call occurs.
+
+The recording keeps the Prompt, the messages and the answers of the model. It keeps no credential: a Provider profile holds only the name of the credential. The file replaces the sample recording of the repository. `git checkout test/recordings/front-desk.jsonl` restores the sample.
+
+The sample recording has a real request of the Harness for Anthropic `claude-sonnet-5`. Its answer is a scripted reply of the Test kit, because no valid Provider credential was available when the sample was made.
+
+### Check the configuration with karmi doctor
+
+```sh
+pnpm exec karmi doctor
+```
+
+The command reads `wrangler.jsonc` and the Worker entry and prints one line for each check:
+
+```text
+ok   compatibility: compatibility_date 2026-08-04 is at or above 2026-08-04.
+ok   bindings: Every karmi binding is declared under its fixed name.
+ok   durable-objects: Every bound Durable Object class is exported and migrated as SQLite.
+ok   capabilities: KARMI_LOADER is bound, so the isolate Script tier is available.
+ok   capabilities: KARMI_SANDBOX is bound to KarmiSandbox with image ./node_modules/@karmi/sandbox-container/Dockerfile. Export KarmiSandbox and ContainerProxy, and match sandbox.image to this image.
+--   vectorize: No KARMI_VECTORIZE binding, so no Vectorize index was inspected.
+--   gateway: The manifest carries no createKarmi defaults, so gateways and deferral were not compared.
+--   mcp: No manifest, so the MCP registration checklist was not built.
+--   specs: The manifest lists no Agent Spec documents.
+```
+
+The command exits with code 0. `--` is a check with no input. The [Doctor guide](../../docs/guide/15-doctor.md) describes each check.
+
+### Diagnose a configuration failure
+
+[`walkthroughs/missing-migration.wrangler.jsonc`](./walkthroughs/missing-migration.wrangler.jsonc) is a copy of `wrangler.jsonc` without the migration `karmi-v3`. Give it to the doctor:
+
+```sh
+pnpm exec karmi doctor --config walkthroughs/missing-migration.wrangler.jsonc
+```
+
+The `durable-objects` line changes to a failure, and the command exits with code 1:
+
+```text
+FAIL durable-objects: KnowledgeDO has no migration; add it to a migration's new_sqlite_classes.
+```
+
+The last line of the output is `karmi doctor found problems that will break a deploy.` A deploy of this configuration fails, because Cloudflare cannot make the storage of `KnowledgeDO`. To fix it, add `{ "tag": "karmi-v3", "new_sqlite_classes": ["KnowledgeDO"] }` to `migrations`. The command reads only the copy, thus `wrangler.jsonc` and `.dev.vars` do not change, and `pnpm dev` still starts.
+
+### Deploy, retry and remove
+
+The last step of the walkthrough is `pnpm deploy` and `pnpm run remove`. The sections [Deploy to Cloudflare](#deploy-to-cloudflare) and [Remove a Cloudflare deployment](#remove-a-cloudflare-deployment) tell each question, each option and each result.
+
 ## Model limits
 
 These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Knowledge, vector retrieval, Usage and logging, isolate Scripts, container Scripts, remote MCP and the Harness Tool prompt of the Provider scenario. The second profile of the Provider scenario can use a different Provider: check that its model supports Tool calls.
@@ -739,6 +865,8 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 | ------------------- | -------------------------------------------------------------------------------------------- |
 | `pnpm test`         | The public HTTP routes of the Worker in workerd, with the scripted Provider of the Test kit. |
 | `pnpm test:browser` | Each scenario, token access, reset and the layout at three screen sizes, in a browser.       |
+
+The Worker tests also check the walkthrough. `test/walkthroughs.test.ts` runs the checks of `karmi doctor` on `wrangler.jsonc` and on the broken copy and compares the lines with the walkthrough. `test/replay.test.ts` replays the recording.
 
 The Worker tests use the in-memory credential store of the Test kit, which encrypts nothing. The browser checks store the Scope credential in the envelope store with a fixed key ring of one key, thus their rewrap moves no credential. Only a check by hand with `wrangler dev` covered a rewrap after a rotation.
 

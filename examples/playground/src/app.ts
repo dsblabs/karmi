@@ -1,4 +1,5 @@
 import { KarmiError, type AgentSpec, type Karmi, type Scope, type Thread } from "@karmi/core";
+import type { RecordingProvider } from "@karmi/core/testing";
 import { createHttpHandler, type Principal } from "@karmi/http";
 import { AGENTS, ASSISTANT } from "./assistant";
 import { forkScenarioRoutes } from "./fork-routes";
@@ -23,6 +24,7 @@ import { mediaDownload } from "./media-download";
 import { MCP, type OAuthSetup } from "./remote-mcp";
 import { COVERAGE, SCENARIOS, viewScenario, type Services } from "./scenarios";
 import { scheduleScenarioRoutes, triggerSupplierDelivery } from "./schedule-routes";
+import { recordingAnswer } from "./transports";
 import { vectorScenarioRoutes } from "./vector-routes";
 import { VECTORS } from "./vectors";
 
@@ -53,6 +55,8 @@ export interface PlaygroundOptions extends Services {
    * available. The karmi must have the same origin in `createKarmi({ oauth })`.
    */
   oauth: OAuthSetup;
+  /** The recording Provider of `pnpm dev:record`, which `GET /api/recording` reads. Undefined in each other run. */
+  recording?: RecordingProvider | undefined;
 }
 
 /** The Playground as a Worker `fetch`. */
@@ -273,6 +277,7 @@ export function createPlayground(options: PlaygroundOptions): Playground {
 
   async function api(request: Request, path: string): Promise<Response> {
     if (path === "/api/playground" && request.method === "GET") return describePlayground(setup, options);
+    if (path === "/api/recording" && request.method === "GET") return recordingAnswer(options.recording);
     const answered = await ownRoutes(own, request, path);
     if (answered) return answered;
     const [, id, action, mediaId] =

@@ -71,14 +71,11 @@ describe("GET /api/playground", () => {
     expect(text).not.toContain(TOKEN);
   });
 
-  it("lists scenarios that are not built as incomplete, with their prerequisites", async () => {
-    const body: unknown = await (await api(TOKEN, "GET", "/api/playground")).json();
-    expect(body).toMatchObject({
-      scenarios: expect.arrayContaining([
-        expect.objectContaining({ id: "refund", status: "ready" }),
-        expect.objectContaining({ id: "http", status: "incomplete" }),
-      ]),
-    });
+  it("builds each scenario, and each coverage row names one", async () => {
+    const { SCENARIOS, COVERAGE } = await import("../src/scenarios");
+    expect(SCENARIOS.filter((scenario) => !scenario.built)).toEqual([]);
+    const ids = SCENARIOS.map((scenario) => scenario.id);
+    for (const row of COVERAGE) expect(ids, row.feature).toContain(row.scenario);
   });
 });
 
