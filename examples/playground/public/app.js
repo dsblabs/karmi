@@ -2589,8 +2589,10 @@ function mcpCards(
   return [serverCard, toolsCard, accessCard, policyCard].filter(Boolean);
 }
 
-// The settings that the operator selected in the Agent card and did not save yet. A save clears them.
-const providerForm = { draft: undefined };
+// The settings that the operator selected in the Agent card and did not save yet, and the last rejection of a save.
+// A Thread event can render the card again while a save waits, thus the card shows the rejection from here. A
+// successful save clears both.
+const providerForm = { draft: undefined, rejection: undefined };
 
 const PROVIDER_POLICIES = {
   none: "No rule: the grant allows it",
@@ -2610,6 +2612,7 @@ function providerCards({ profiles, agent, steps, calls, usage }, onChanged, isCu
   const profileOf = (name) => profiles.find((profile) => profile.name === name);
 
   const result = el("p", { id: "provider-result", className: "fine" });
+  if (providerForm.rejection) showRejection(result, providerForm.rejection);
   const profile = el(
     "select",
     { id: "provider-profile", ariaLabel: "Provider profile" },
@@ -2653,13 +2656,16 @@ function providerCards({ profiles, agent, steps, calls, usage }, onChanged, isCu
       const body = { profile: profile.value, webSearch: webSearch.checked, policy: policy.value };
       const next = await api("POST", "/api/scenarios/providers/agent", body);
       providerForm.draft = undefined;
+      providerForm.rejection = undefined;
       if (isCurrent())
         onChanged(
           next,
           `The Scope stored version ${next.agent.version}. The next Turn of this Thread runs on the profile ${body.profile}.`,
         );
     } catch (error) {
-      showRejection(result, error);
+      providerForm.rejection = error;
+      // The card that sent the save can be gone. The card on the page shows the rejection.
+      if (isCurrent()) showRejection($("provider-result") ?? result, error);
     } finally {
       save.disabled = false;
     }
@@ -3982,6 +3988,8 @@ async function renderScenario(scenario) {
     threadKey = state.threadKey;
     scopeId = state.scopeId;
     if (file) setFile();
+    // A reset stores the starting Agent of the Provider scenario, thus an unsaved setting or a rejection is old.
+    providerForm.draft = providerForm.rejection = undefined;
     syncTarget();
     showThread();
   };
