@@ -35,5 +35,19 @@ declare namespace Cloudflare {
     PLAYGROUND_ORIGIN?: string;
     /** The Provider credential. No route returns it. */
     PROVIDER_API_KEY?: string;
+    /** The id of the optional second Provider of the Provider scenario. `pnpm setup` asks for it. */
+    PLAYGROUND_SECOND_PROVIDER?: string;
+    /** The model of the second Provider. */
+    PLAYGROUND_SECOND_MODEL?: string;
+    /** The endpoint of the second Provider when it is a custom endpoint. */
+    PLAYGROUND_SECOND_BASE_URL?: string;
+    /** The credential of the second Provider. No route returns it. */
+    SECOND_PROVIDER_API_KEY?: string;
+    /** The Cloudflare account of the optional AI Gateway that the operator supplied. */
+    PLAYGROUND_GATEWAY_ACCOUNT?: string;
+    /** The id of the AI Gateway. */
+    PLAYGROUND_GATEWAY_ID?: string;
+    /** The token of an authenticated AI Gateway. No route returns it. */
+    GATEWAY_TOKEN?: string;
   }
 }

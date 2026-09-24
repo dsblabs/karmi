@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildDevVars, chooseOption, generate, parseDevVars } from "../setup/cli.ts";
 import { rotateDevVars } from "../setup/rotate-key.ts";
 import { decodeKeyring, keyringView } from "../src/keyring";
-import { PROVIDER_OPTIONS, readSetup } from "../src/provider-options";
+import { PROVIDER_OPTIONS, readGateway, readSetup } from "../src/provider-options";
 
 describe("setup", () => {
   it("offers the five Providers by number or id", () => {
@@ -27,6 +27,24 @@ describe("setup", () => {
     expect(vars.PROVIDER_API_KEY).toBe('k"ey\\#1');
     expect(vars.PLAYGROUND_TOKEN).toMatch(/^[\w-]{32}$/);
     expect(JSON.parse(vars.KARMI_KEYRING ?? "")).toMatchObject({ active: "v1" });
+  });
+
+  it("writes the optional second Provider and gateway, and a later run without them removes them", () => {
+    const [option, other] = [chooseOption("openai"), chooseOption("anthropic")];
+    if (!option || !other) throw new Error("An option is missing.");
+    const second = { option: other, model: "claude-sonnet-5", apiKey: "sk-2" };
+    const gateway = { accountId: "acct", gatewayId: "default", token: "gw" };
+    const vars = parseDevVars(
+      buildDevVars({ option, model: "gpt-5", apiKey: "sk-1", second, gateway }, {}, generate()),
+    );
+    expect(readSetup(vars, "second")).toEqual({ option: other, model: "claude-sonnet-5" });
+    expect(readGateway(vars)).toEqual({ accountId: "acct", gatewayId: "default" });
+    expect(vars).toMatchObject({ SECOND_PROVIDER_API_KEY: "sk-2", GATEWAY_TOKEN: "gw" });
+
+    const again = parseDevVars(buildDevVars({ option, model: "gpt-5", apiKey: "sk-1" }, vars, generate()));
+    expect(readSetup(again, "second")).toBeUndefined();
+    expect(readGateway(again)).toBeUndefined();
+    expect(again.SECOND_PROVIDER_API_KEY).toBeUndefined();
   });
 
   it("refuses a value that the file cannot hold", () => {

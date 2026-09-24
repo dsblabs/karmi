@@ -6,6 +6,7 @@ import {
   decodeAccounts,
   deploy,
   parseDeploymentArguments,
+  recordGateway,
   remove,
   selectAccount,
   selectBindings,
@@ -425,6 +426,25 @@ describe("Cloudflare deployment", () => {
       preserved: ["vectorIndex shared-vectors"],
     });
     expect(calls).toEqual([]);
+  });
+
+  it("records the AI Gateway of setup as supplied, and removal preserves it", async () => {
+    const manifest = recordGateway(createManifest("karmi-playground-test-gw", account), "default");
+    expect(manifest.gateway).toMatchObject({ name: "default", owned: false });
+    // A later setup without a gateway leaves no stale record.
+    expect(recordGateway(manifest, undefined).gateway).toBeUndefined();
+    const calls: string[] = [];
+    const runner = {
+      run(request: CommandRequest) {
+        calls.push(request.args.join(" "));
+        return Promise.resolve("");
+      },
+    };
+    expect(await remove(manifest, runner, { save: () => Promise.resolve() }, cleaner)).toEqual({
+      complete: true,
+      preserved: ["gateway default"],
+    });
+    expect(calls.some((call) => call.includes("gateway"))).toBe(false);
   });
 
   it("refuses to adopt a resource that existed before setup", async () => {

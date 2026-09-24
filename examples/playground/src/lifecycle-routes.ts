@@ -1,4 +1,11 @@
-import { KarmiError, type Scope, type ScopeState, type Thread, type ThreadEvent } from "@karmi/core";
+import {
+  KarmiError,
+  type ProviderConfig,
+  type Scope,
+  type ScopeState,
+  type Thread,
+  type ThreadEvent,
+} from "@karmi/core";
 import type { KeyringView } from "./keyring";
 import {
   CREDENTIAL,
@@ -22,10 +29,10 @@ interface LifecycleRouteOptions {
   otherScopes: () => Promise<readonly string[]>;
   user: string;
   data: DurableObjectNamespace<SampleDataDO>;
-  /** The model id of the Agents, in the form `provider/model`. Its prefix is the adapter of the Scope profile. */
+  /** The model id of the Agents, in the form `provider/model`. */
   model: string;
-  /** The endpoint of a custom Provider, from setup. */
-  baseUrl: string | undefined;
+  /** The Deployment profile of setup, which the Scope profile copies. Undefined without setup. */
+  profile: ProviderConfig | undefined;
   /** The ids of the `KARMI_KEYRING` keys, or undefined when the Worker has no key ring. */
   keyring: KeyringView | undefined;
 }
@@ -92,7 +99,7 @@ async function scenarioState(options: LifecycleRouteOptions): Promise<Response> 
   // reads at the same time write the config once, because the write is a compare-and-set.
   if (status.state === "active" && status.configRevision === 0) {
     await scope.config
-      .set(lifecycleConfig(options.model, options.baseUrl, true), { ifRevision: 0 })
+      .set(lifecycleConfig(options.profile, true), { ifRevision: 0 })
       .catch((caught: unknown) => conflictOf(caught, "config.conflict"));
     status = await scope.status();
   }
@@ -207,7 +214,7 @@ const ACTIONS: Record<string, Action> = {
   fallback: async (options, now, body) => {
     const on = decodeFallback(body);
     if (on === undefined) return routeError(400, "http.badRequest", 'The body must be {"on":true} or {"on":false}.');
-    await now.scope.config.set(lifecycleConfig(options.model, options.baseUrl, on));
+    await now.scope.config.set(lifecycleConfig(options.profile, on));
   },
   rewrap: (options, now) => rewrap(options, now),
 };

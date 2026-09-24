@@ -50,6 +50,11 @@ export interface DeploymentManifest {
    */
   vectorIndex?: DeploymentResource;
   /**
+   * The Cloudflare AI Gateway of the Provider scenario, when setup has one. The operator supplies it, thus it is never
+   * owned and removal preserves it.
+   */
+  gateway?: DeploymentResource;
+  /**
    * The `workers.dev` origin that the last deploy reported. The Worker gets it as `PLAYGROUND_ORIGIN`, which the OAuth
    * Connections of the MCP scenario need.
    */
@@ -147,6 +152,15 @@ function vectorIndexResource(name: string, supplied: string | undefined): Deploy
  */
 export function addVectorRetrieval(manifest: DeploymentManifest, supplied?: string): DeploymentManifest {
   return manifest.vectorIndex ? manifest : { ...manifest, vectorIndex: vectorIndexResource(manifest.name, supplied) };
+}
+
+/**
+ * Returns the manifest with the AI Gateway that setup names now, as a supplied resource. The deploy creates no gateway
+ * and removal preserves it. Without a gateway id, the manifest has no gateway, because setup no longer uses one.
+ */
+export function recordGateway(manifest: DeploymentManifest, gatewayId: string | undefined): DeploymentManifest {
+  const { gateway: _, ...rest } = manifest;
+  return gatewayId ? { ...rest, gateway: resource(gatewayId, false) } : rest;
 }
 
 /**
@@ -538,7 +552,7 @@ export async function remove(
   const consumerFailure = await removeQueueConsumer(manifest, runner);
   if (consumerFailure) failures.push(consumerFailure);
   const operations: Array<{
-    key: "worker" | "container" | "vectorIndex" | "queue" | "deadLetterQueue" | "bucket";
+    key: "worker" | "container" | "vectorIndex" | "gateway" | "queue" | "deadLetterQueue" | "bucket";
     args: string[];
   }> = [
     {
@@ -549,6 +563,8 @@ export async function remove(
     { key: "container", args: [] },
     // Deleting the index deletes its vectors. An index that the operator supplied keeps the vectors of the Playground.
     { key: "vectorIndex", args: ["vectorize", "delete", manifest.vectorIndex?.name ?? "", "--force"] },
+    // The operator supplies the AI Gateway, thus removal always preserves it.
+    { key: "gateway", args: [] },
     {
       key: "queue",
       args: ["queues", "delete", manifest.queue.name],

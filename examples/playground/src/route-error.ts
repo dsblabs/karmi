@@ -1,4 +1,4 @@
-import { KarmiError } from "@karmi/core";
+import { KarmiError, SpecInvalidError } from "@karmi/core";
 
 /** The error codes returned by Playground application routes. */
 export type RouteErrorCode =
@@ -13,6 +13,7 @@ export type RouteErrorCode =
   | "playground.noUsageBatch"
   | "playground.oauthUnavailable"
   | "playground.originalDeleted"
+  | "playground.profileUnknown"
   | "playground.serverRegistered"
   | "schedule.invalid"
   | "schedule.limit"
@@ -30,4 +31,14 @@ export function routeError(status: number, code: RouteErrorCode, message: string
 export function conflictOf(caught: unknown, prefix: string): Response {
   if (!(caught instanceof KarmiError) || !caught.code.startsWith(prefix)) throw caught;
   return Response.json({ error: { code: caught.code, message: caught.message } }, { status: 409 });
+}
+
+/**
+ * Returns an Agent Spec that did not pass validation as a 422 answer with each issue of the Framework, with its code
+ * and its path. Throws each other error again.
+ */
+export function specRejected(caught: unknown): Response {
+  if (!(caught instanceof SpecInvalidError)) throw caught;
+  const { code, message, result } = caught;
+  return Response.json({ error: { code, message, issues: result.issues } }, { status: 422 });
 }

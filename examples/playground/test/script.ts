@@ -238,6 +238,53 @@ export const mcpReplies: ReplyScript = ({ request }) => {
   return tool ? [reply.toolCall(tool.name, {})] : "The remote server gave me no Tools.";
 };
 
+/**
+ * The script of the Provider scenario. Each answer names the adapter and the model of the call, thus a switch of the
+ * profile shows in the text. When the request offers `web_search`, the reply has a Provider Tool call with its result,
+ * as a real adapter streams it. A gateway profile reports the log id of the gateway and no cost, as Cloudflare AI
+ * Gateway does.
+ */
+export const providerDeskReplies: ReplyScript = ({ request }) => {
+  const turn = request.messages.slice(request.messages.findLastIndex((message) => message.role === "user"));
+  const asked =
+    turn[0]?.role === "user" ? turn[0].content.map((block) => ("text" in block ? block.text : "")).join("") : "";
+  const result = turn.find((message) => message.role === "toolResult");
+  if (asked.includes("shop_hours") && !result) return [reply.toolCall("shop_hours", {})];
+  const answer = `${request.config.adapter} answered with ${request.model}.`;
+  const usage = {
+    input: 20,
+    output: 8,
+    cacheRead: 0,
+    cacheWrite: 0,
+    ...(request.config.gateway && {
+      gateway: { provider: "cloudflare" as const, id: `log-${String(request.messages.length)}` },
+    }),
+  };
+  if (!asked.includes("Search the web") || !request.providerTools?.tools.includes("web_search"))
+    return [reply.text(result ? `The shop opens at 09:00 on Saturday. ${answer}` : answer), reply.usage(usage)];
+  const id = `srvtoolu_${String(request.messages.length)}`;
+  const query = { query: "Cloudflare Wrangler CLI version" };
+  return [
+    { type: "message.start", model: request.model },
+    {
+      type: "part",
+      index: 0,
+      block: {
+        type: "server_tool",
+        id,
+        name: "web_search",
+        input: query,
+        result: {
+          raw: [{ url: "https://developers.cloudflare.com/workers/wrangler/" }],
+          summary: "1 result: developers.cloudflare.com/workers/wrangler",
+        },
+      },
+    },
+    { type: "part", index: 1, block: { type: "text", text: `Wrangler 4 is current. ${answer}` } },
+    { type: "message.end", stopReason: "end_turn", usage: { ...usage, serverToolCalls: 1 } },
+  ];
+};
+
 /** The script of the browser checks. It selects the replies from the Prompt, thus one Provider serves each scenario. */
 export const playgroundReplies: ReplyScript = (ctx) => {
   const system = ctx.request.system ?? "";
@@ -255,6 +302,7 @@ export const playgroundReplies: ReplyScript = (ctx) => {
   if (system.includes("run_script exactly")) return scriptReplies(ctx);
   if (system.includes("attached file")) return "I received the sample file.";
   if (system.includes("assistant of the karmi Playground")) return "Hello from the Scope desk.";
+  if (system.includes("Provider desk")) return providerDeskReplies(ctx);
   if (system.includes("remote tools desk")) return mcpReplies(ctx);
   const days = /for (\d+) days/.exec(system)?.[1];
   return system.includes("pirate") ? `Arr, ye have ${days} days.` : `You can return it for ${days} days.`;
