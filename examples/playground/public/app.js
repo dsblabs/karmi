@@ -1796,7 +1796,7 @@ const VECTOR_MODES = {
 const vectorCount = (count) => `${count} ${count === 1 ? "vector" : "vectors"}`;
 
 /** The vector retrieval scenario: the Passages of each Scope, the Vectorize index and the guides of each Scope. */
-function vectorCards({ missing, reference, scopes, search }, onChanged, isCurrent) {
+function vectorCards({ missing, reference, scopes, search, startingQuery }, onChanged, isCurrent) {
   if (missing) return [el("div", { className: "card" }, el("p", { className: "muted", textContent: missing }))];
   const path = "/api/scenarios/vector-retrieval";
   const changed = (note) => (next) => isCurrent() && onChanged(next, note);
@@ -1805,7 +1805,7 @@ function vectorCards({ missing, reference, scopes, search }, onChanged, isCurren
     id: "vector-query",
     type: "text",
     ariaLabel: "Search query",
-    value: search?.query ?? "get my money back",
+    value: search?.query ?? startingQuery,
     spellcheck: false,
   });
   const mode = el(
@@ -1888,7 +1888,7 @@ function vectorCards({ missing, reference, scopes, search }, onChanged, isCurren
       el("p", {
         className: "fine",
         textContent:
-          "The Knowledge Durable Object keeps each vector, and the index keeps a copy. The copy has the opaque ids of the Framework, and each Scope is a namespace. Vectorize applies writes asynchronously, thus a count can be old for some seconds.",
+          "The Knowledge Durable Object keeps each vector, and the index keeps a copy. The copy has the opaque ids of the Framework, and each Scope is a namespace. Vectorize applies writes asynchronously, often after one or two minutes. Wait until the count changes before the next step. A remove deletes only the vectors that the index shows.",
       }),
     ),
     el(

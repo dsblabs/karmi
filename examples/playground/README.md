@@ -363,7 +363,7 @@ The first state read ingests five guides into the Scope `sample-a` and one guide
 4. In the **Vectorize index** card, select **Remove the vectors from the index**. The route deletes the vectors of `sample-a` from the index around the Framework. A vector search now finds nothing, and a keyword search still works, because it reads the chunks of the Framework.
 5. Select **Rebuild the index**. `scope.knowledge("guides").rebuild()` writes the saved vectors to the index again, with no embedding call. **Opaque vector ids** shows the same ids as before: the index keeps the ids of the Framework unchanged.
 
-Vectorize applies writes asynchronously. After a remove or a rebuild, the count of the index can be old for some seconds. Select **Read the index again**. The count reads at most 100 vectors for each Scope.
+Vectorize applies writes asynchronously. In a live check, the vectors of the first ingest, a remove and a rebuild each took one to two minutes to show. Before the next step, select **Read the index again** until the count changes. A remove deletes only the vectors that the index already shows, and the count reads at most 100 vectors for each Scope.
 
 The Framework is the durable source of truth: the Knowledge Durable Object keeps each chunk and each vector. The Vectorize index is a copy that a rebuild can make again.
 
@@ -654,7 +654,7 @@ You can supply existing resources. The manifest marks them as external, and remo
 pnpm deploy karmi-playground-a1b2c3d4 --bucket existing-media --queue existing-queue --dead-letter-queue existing-dlq
 ```
 
-`--vector-index existing-vectors` supplies a Vectorize index and selects vector retrieval. The index must have 1024 dimensions, the cosine metric and the two metadata indexes. The command checks only that the index exists.
+`--vector-index existing-vectors` supplies a Vectorize index and selects vector retrieval. It also adds vector retrieval to a deployment that exists already. The command refuses an index without 1024 dimensions, the cosine metric and a string metadata index on `knowledge` and on `doc`. Do not give one index to two Playground deployments: each one writes to the namespaces `sample-a` and `sample-b`, and a remove in one deployment deletes the vectors of the other.
 
 The base deployment does not create optional services. Future optional integrations can add owned or external resources to the same manifest.
 

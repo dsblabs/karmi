@@ -94,6 +94,30 @@ async function askContainerScripts(terminal: ReturnType<typeof createInterface>)
   return isYes(await terminal.question("Enable container Scripts? [y/N]: "));
 }
 
+/**
+ * Tells what a recorded deployment has, and asks for each optional service that it does not have yet. A deployment
+ * can add them later, for example one made before the option existed. A supplied index adds vector retrieval.
+ */
+async function resumeManifest(
+  recorded: DeploymentManifest,
+  supplied: SuppliedResources,
+  terminal: ReturnType<typeof createInterface>,
+): Promise<DeploymentManifest> {
+  let manifest = recorded;
+  const options = [
+    manifest.isolateScripts && "isolate Scripts",
+    manifest.container && "container Scripts",
+    manifest.vectorIndex && "vector retrieval",
+  ];
+  const selected = options.filter(Boolean).join(" and ");
+  console.log(`Resume ${manifest.name} in ${manifest.account.name}${selected ? `, with ${selected}` : ""}.`);
+  if (!manifest.container && (await askContainerScripts(terminal))) manifest = addContainerScripts(manifest);
+  const { vectorIndex } = supplied;
+  if (!manifest.vectorIndex && (vectorIndex !== undefined || (await askVectorRetrieval(terminal))))
+    manifest = addVectorRetrieval(manifest, vectorIndex);
+  return manifest;
+}
+
 async function main(): Promise<void> {
   const terminal = createInterface({ input: process.stdin, output: process.stdout });
   const runner = new WranglerRunner();
@@ -110,17 +134,7 @@ async function main(): Promise<void> {
     const configFile = new URL("wrangler.json", directory);
     let manifest;
     try {
-      manifest = await readManifest(manifestFile);
-      const options = [
-        manifest.isolateScripts && "isolate Scripts",
-        manifest.container && "container Scripts",
-        manifest.vectorIndex && "vector retrieval",
-      ];
-      const selected = options.filter(Boolean).join(" and ");
-      console.log(`Resume ${name} in ${manifest.account.name}${selected ? `, with ${selected}` : ""}.`);
-      // A deployment can add container Scripts later, for example one made before the option existed.
-      if (!manifest.container && (await askContainerScripts(terminal))) manifest = addContainerScripts(manifest);
-      if (!manifest.vectorIndex && (await askVectorRetrieval(terminal))) manifest = addVectorRetrieval(manifest);
+      manifest = await resumeManifest(await readManifest(manifestFile), arguments_.supplied, terminal);
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("ENOENT")) throw error;
       manifest = await createNewManifest(name, arguments_.supplied, terminal, runner);

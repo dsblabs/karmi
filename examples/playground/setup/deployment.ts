@@ -1,3 +1,5 @@
+import { INDEX_METADATA, INDEX_SHAPE, VECTOR_BINDINGS } from "../src/vector-config.ts";
+
 /** A Cloudflare account available to the operator. */
 export interface CloudflareAccount {
   /** The Cloudflare account identifier. */
@@ -139,11 +141,12 @@ function vectorIndexResource(name: string, supplied: string | undefined): Deploy
 }
 
 /**
- * Returns the manifest with a Vectorize index for vector retrieval. A deployment that exists already can add it later,
- * and the next deploy creates the index. It never removes vector retrieval from a deployment.
+ * Returns the manifest with a Vectorize index for vector retrieval. A deployment that exists already can add it later.
+ * `supplied` names an existing index; without it, the next deploy creates one. It never removes vector retrieval from
+ * a deployment or changes its index.
  */
-export function addVectorRetrieval(manifest: DeploymentManifest): DeploymentManifest {
-  return manifest.vectorIndex ? manifest : { ...manifest, vectorIndex: vectorIndexResource(manifest.name, undefined) };
+export function addVectorRetrieval(manifest: DeploymentManifest, supplied?: string): DeploymentManifest {
+  return manifest.vectorIndex ? manifest : { ...manifest, vectorIndex: vectorIndexResource(manifest.name, supplied) };
 }
 
 /**
@@ -187,15 +190,6 @@ const namesSandbox = (entry: unknown) =>
     ("new_sqlite_classes" in entry &&
       Array.isArray(entry.new_sqlite_classes) &&
       entry.new_sqlite_classes.includes(SANDBOX_CLASS)));
-
-/** The Workers AI binding and the Vectorize binding of vector retrieval, as `src/vectors.ts` names them. */
-const VECTOR_BINDINGS = { ai: "KARMI_AI", index: "KNOWLEDGE_VECTORS" };
-
-/** The shape of the index: the dimensions and the metric of Workers AI `@cf/baai/bge-m3`, which the Worker uses. */
-const VECTOR_INDEX_SHAPE = { dimensions: 1024, metric: "cosine" };
-
-/** The metadata properties that the Framework filters on. The index needs a string metadata index for each one. */
-const VECTOR_METADATA = ["knowledge", "doc"];
 
 /**
  * Returns the base Wrangler configuration with the optional bindings that the deployment selected. Without isolate
@@ -323,13 +317,40 @@ async function verifySuppliedResources(manifest: DeploymentManifest, runner: Com
     { resource: manifest.bucket, args: ["r2", "bucket", "info", manifest.bucket.name] },
     { resource: manifest.deadLetterQueue, args: ["queues", "info", manifest.deadLetterQueue.name] },
     { resource: manifest.queue, args: ["queues", "info", manifest.queue.name] },
-    ...(manifest.vectorIndex
-      ? [{ resource: manifest.vectorIndex, args: ["vectorize", "get", manifest.vectorIndex.name] }]
-      : []),
   ];
   for (const entry of resources) {
     if (!entry.resource.owned) await runner.run(command(entry.args, manifest.account.id));
   }
+  if (manifest.vectorIndex && !manifest.vectorIndex.owned)
+    await checkSuppliedIndex(manifest, manifest.vectorIndex.name, runner);
+}
+
+/**
+ * Stops the deploy when a supplied Vectorize index does not fit the Worker: other dimensions or another metric, or no
+ * metadata index for a property that the Framework filters on. Such an index gives no error, only empty searches.
+ */
+async function checkSuppliedIndex(manifest: DeploymentManifest, name: string, runner: CommandRunner): Promise<void> {
+  const info: unknown = JSON.parse(
+    await runner.run(command(["vectorize", "get", name, "--json"], manifest.account.id)),
+  );
+  const config = typeof info === "object" && info !== null && "config" in info ? info.config : undefined;
+  const shape =
+    typeof config === "object" && config !== null && "dimensions" in config && "metric" in config
+      ? { dimensions: config.dimensions, metric: config.metric }
+      : undefined;
+  if (shape?.dimensions !== INDEX_SHAPE.dimensions || shape.metric !== INDEX_SHAPE.metric)
+    throw new Error(
+      `vector index ${name} must have ${String(INDEX_SHAPE.dimensions)} dimensions and the ${INDEX_SHAPE.metric} metric.`,
+    );
+  const output = await runner.run(command(["vectorize", "list-metadata-index", name, "--json"], manifest.account.id));
+  const indexed = requireList(JSON.parse(output)).flatMap((entry) =>
+    typeof entry === "object" && entry !== null && "propertyName" in entry && typeof entry.propertyName === "string"
+      ? [entry.propertyName]
+      : [],
+  );
+  const missing = INDEX_METADATA.filter((property) => !indexed.includes(property));
+  if (missing.length > 0)
+    throw new Error(`vector index ${name} needs a string metadata index on ${missing.join(" and ")}.`);
 }
 
 /**
@@ -380,11 +401,13 @@ export async function deploy(
 async function createVectorIndex(manifest: DeploymentManifest, runner: CommandRunner, store: ManifestStore) {
   const index = manifest.vectorIndex;
   if (!index?.owned || index.status === "created") return;
-  const run = async (args: string[]) => {
+  // A retry can create the index again. Vectorize refuses a second index with `vectorize.index.duplicate_name`, and it
+  // accepts a second metadata index for the same property.
+  const create = async (args: string[]) => {
     try {
       await runner.run(command(args, manifest.account.id));
     } catch (error) {
-      if (!errorMessage(error).toLowerCase().includes("already exists")) throw error;
+      if (!errorMessage(error).includes("duplicate_name")) throw error;
     }
   };
   if (index.status === "pending") {
@@ -397,10 +420,10 @@ async function createVectorIndex(manifest: DeploymentManifest, runner: CommandRu
     index.status = "creating";
     await store.save(manifest);
   }
-  const { dimensions, metric } = VECTOR_INDEX_SHAPE;
-  await run(["vectorize", "create", index.name, `--dimensions=${String(dimensions)}`, `--metric=${metric}`]);
-  for (const property of VECTOR_METADATA)
-    await run(["vectorize", "create-metadata-index", index.name, `--propertyName=${property}`, "--type=string"]);
+  const { dimensions, metric } = INDEX_SHAPE;
+  await create(["vectorize", "create", index.name, `--dimensions=${String(dimensions)}`, `--metric=${metric}`]);
+  for (const property of INDEX_METADATA)
+    await create(["vectorize", "create-metadata-index", index.name, `--propertyName=${property}`, "--type=string"]);
   index.status = "created";
   await store.save(manifest);
 }

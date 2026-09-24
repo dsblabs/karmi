@@ -302,6 +302,12 @@ describe("Cloudflare deployment", () => {
     expect(supplied.vectorIndex).toEqual({ name: "shared-vectors", owned: false, status: "created" });
     expect(addVectorRetrieval(supplied)).toBe(supplied);
     expect(addVectorRetrieval(createManifest("later", account)).vectorIndex?.name).toBe("later-vectors");
+    // A resumed deployment can name an existing index in place of a new one.
+    expect(addVectorRetrieval(createManifest("later", account), "shared-vectors").vectorIndex).toEqual({
+      name: "shared-vectors",
+      owned: false,
+      status: "created",
+    });
   });
 
   it("creates the Vectorize index with its metadata indexes and retries an interrupted creation", async () => {
@@ -327,7 +333,7 @@ describe("Cloudflare deployment", () => {
           return Promise.reject(new Error("not found"));
         if (interrupt && line.includes("--propertyName=doc")) return Promise.reject(new Error("interrupted"));
         if (!interrupt && line.startsWith("vectorize create "))
-          return Promise.reject(new Error(`A Vectorize index named ${name} already exists.`));
+          return Promise.reject(new Error(`vectorize.index.duplicate_name - Index name "${name}" [code: 3002]`));
         return Promise.resolve("");
       },
     };
@@ -360,15 +366,36 @@ describe("Cloudflare deployment", () => {
     );
     expect(manifest.vectorIndex?.status).toBe("pending");
 
-    const supplied = createManifest("karmi-playground-test-vec3", account, { vectorIndex: "missing-vectors" });
-    const missing = {
+    // A supplied index must exist and have the shape and the metadata indexes that the Worker needs.
+    const supplied = (name: string) => createManifest(name, account, { vectorIndex: "shared-vectors" });
+    const answers = (shape: object | undefined, metadata: string[]) => ({
       run(request: CommandRequest) {
-        return request.args[0] === "vectorize"
-          ? Promise.reject(new Error("vectorize.index.not_found"))
-          : found.run(request);
+        const line = request.args.join(" ");
+        if (line === "vectorize get shared-vectors --json")
+          return shape
+            ? Promise.resolve(JSON.stringify({ name: "shared-vectors", config: shape }))
+            : Promise.reject(new Error("vectorize.index.not_found"));
+        if (line === "vectorize list-metadata-index shared-vectors --json")
+          return Promise.resolve(
+            JSON.stringify(metadata.map((propertyName) => ({ propertyName, indexType: "String" }))),
+          );
+        return found.run(request);
       },
-    };
-    await expect(deploy(supplied, {}, "config.json", missing, store)).rejects.toThrow("not_found");
+    });
+    const good = { dimensions: 1024, metric: "cosine" };
+    await expect(deploy(supplied("vec-missing"), {}, "config.json", answers(undefined, []), store)).rejects.toThrow(
+      "not_found",
+    );
+    await expect(
+      deploy(supplied("vec-shape"), {}, "config.json", answers({ dimensions: 768, metric: "cosine" }, []), store),
+    ).rejects.toThrow("must have 1024 dimensions and the cosine metric");
+    await expect(deploy(supplied("vec-meta"), {}, "config.json", answers(good, ["knowledge"]), store)).rejects.toThrow(
+      "needs a string metadata index on doc",
+    );
+    const fits = supplied("vec-fits");
+    fits.worker.status = "created";
+    await deploy(fits, {}, "config.json", answers(good, ["knowledge", "doc"]), store);
+    expect(fits.vectorIndex).toEqual({ name: "shared-vectors", owned: false, status: "created" });
   });
 
   it("deletes the owned Vectorize index after the Worker and preserves a supplied one", async () => {

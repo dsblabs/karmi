@@ -7,6 +7,7 @@ import {
   type KnowledgeDocument,
   type VectorStore,
 } from "@karmi/core";
+import { INDEX_SHAPE, VECTOR_BINDINGS } from "./vector-config";
 
 /** The id of the vector retrieval scenario. It is also the id of its Agent. */
 export const VECTORS = "vector-retrieval";
@@ -29,15 +30,6 @@ export const SEARCH_TOP_K = 3;
 /** The search options that give one mode: a different Retriever for `keyword`, or the settings of the vector one. */
 export const searchOptions = (mode: SearchMode) =>
   mode === "keyword" ? { retriever: "fts5" } : { settings: { mode, topK: SEARCH_TOP_K } };
-
-/** The Workers AI binding and the Vectorize binding that the scenario needs. `pnpm deploy` adds both. */
-export const VECTOR_BINDINGS = { ai: "KARMI_AI", index: "KNOWLEDGE_VECTORS" } as const;
-
-/**
- * The dimensions and the metric of the default Workers AI embedding model, `@cf/baai/bge-m3`. The Vectorize index that
- * `pnpm deploy` creates has the same ones.
- */
-export const INDEX_SHAPE = { dimensions: 1024, metric: "cosine" } as const;
 
 /**
  * The external vector index of the scenario. The Retriever mirrors each vector to `store`. `ids` reads the index

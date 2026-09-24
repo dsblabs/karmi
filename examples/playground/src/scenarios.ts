@@ -14,7 +14,8 @@ import { REMINDER_PROMPTS, SCHEDULES } from "./reminders";
 import { MCP, MCP_PROMPTS } from "./remote-mcp";
 import { SCRIPT_LIMITS, SCRIPT_PROMPTS, SCRIPTS } from "./scripts";
 import { STOCKROOM, STOCKROOM_PROMPTS } from "./stockroom";
-import { VECTOR_BINDINGS, VECTOR_PROMPTS, VECTORS, type VectorIndex } from "./vectors";
+import { VECTOR_BINDINGS } from "./vector-config";
+import { VECTOR_PROMPTS, VECTORS, type VectorIndex } from "./vectors";
 
 const CODE = "https://github.com/dsblabs/karmi/blob/main/examples/playground";
 
@@ -211,7 +212,7 @@ export const SCENARIOS: readonly Scenario[] = [
     notes: [
       "The Knowledge scenario uses the default Retriever, fts5, which finds a Passage only when a word of the query is in it. This Retriever also finds a Passage with the same meaning and different words.",
       "The Knowledge Durable Object keeps each vector. The Vectorize index is a copy that a rebuild writes again without a call to the embedding model.",
-      "Vectorize applies writes asynchronously. The index card can show old ids for some seconds after a change. Read the index again.",
+      "Vectorize applies writes asynchronously. In a live check, a change took one to two minutes to show. Wait until the index card shows the new count, and select Read the index again. A remove deletes only the vectors that the index already shows.",
       "Each ingest calls Workers AI, and each search calls Workers AI and Vectorize. Cloudflare bills the use above the free allocation of your plan.",
     ],
   },
@@ -439,7 +440,7 @@ const vectors = (feature: string, observable: string): CoverageRow => ({
   scenario: VECTORS,
   observable,
   verification:
-    "Worker tests and browser checks with the scripted Provider, a deterministic Embedder and an index in memory. Not verified with Workers AI and Vectorize yet.",
+    "Worker tests and browser checks with the scripted Provider, a deterministic Embedder and an index in memory. Checked by hand with wrangler dev, remote Workers AI and a temporary Vectorize index: ingest, the three searches, remove, rebuild with the same ids and reset. No Agent Turn with a real model, and no pnpm deploy with vector retrieval, ran yet.",
 });
 // The tests run container Scripts on a fake container runtime, thus the rows say that no real container ran yet.
 const containers = (feature: string, group: string, observable: string): CoverageRow => ({

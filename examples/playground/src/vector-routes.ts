@@ -2,14 +2,15 @@ import type { Passage, Scope, Thread } from "@karmi/core";
 import { z } from "zod";
 import { conflictOf, routeError } from "./route-error";
 import { decodeSample, sampleData, type SampleDataDO } from "./sample-data";
+import { VECTOR_BINDINGS } from "./vector-config";
 import {
   GUIDES,
   OTHER_GUIDES,
   SEARCH_MODES,
   searchOptions,
   STARTING_GUIDES,
+  STARTING_QUERY,
   toGuide,
-  VECTOR_BINDINGS,
   VECTOR_RETRIEVER,
   vectorAgent,
   VECTORS,
@@ -121,6 +122,7 @@ async function scenarioState(options: VectorRouteOptions, loaded?: Loaded): Prom
       { id: options.other, documents: listed(OTHER_GUIDES), vectors: other },
     ],
     search: data.search ?? null,
+    startingQuery: STARTING_QUERY,
   });
 }
 
