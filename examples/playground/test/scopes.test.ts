@@ -65,6 +65,10 @@ async function send(now: State, text = "Say hello."): Promise<Response> {
   });
 }
 
+/** The current disposable Scope of the MCP scenario. The rewrap covers it too. */
+const mcpScope = async () =>
+  z.object({ scopeId: z.string() }).parse(await (await api("GET", "/api/scenarios/mcp")).json()).scopeId;
+
 const log = (now: State) => events(now.threadKey, now.scopeId);
 const ends = (entries: ThreadEvent[]) =>
   entries.filter((event) => event.type === "turn.completed" || event.type === "turn.failed").length;
@@ -256,13 +260,13 @@ describe("the key ring", () => {
     const now = await act("rewrap");
     // The in-memory store of the Test kit encrypts nothing, thus it rewraps nothing. The browser checks use the
     // envelope store, which counts the credential.
-    expect(now.rewrap).toEqual({ [now.scopeId]: 0, "sample-a": 0, "sample-b": 0 });
+    expect(now.rewrap).toEqual({ [now.scopeId]: 0, "sample-a": 0, "sample-b": 0, [await mcpScope()]: 0 });
     expect((await act("test")).test).toMatchObject({ ok: true, credential: { version: 1 } });
   });
 
   it("still rewraps the sample Scopes after the disposable Scope is destroyed", async () => {
     await act("destroy");
-    expect((await act("rewrap")).rewrap).toEqual({ "sample-a": 0, "sample-b": 0 });
+    expect((await act("rewrap")).rewrap).toEqual({ "sample-a": 0, "sample-b": 0, [await mcpScope()]: 0 });
   });
 });
 

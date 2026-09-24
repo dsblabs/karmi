@@ -79,6 +79,8 @@ async function start() {
     $("open").disabled = false;
   }
   localStorage.setItem(TOKEN_KEY, token);
+  // The OAuth callback of the MCP scenario adds its outcome to the query. The MCP cards show it one time.
+  if (location.search) history.replaceState(null, "", `${location.pathname}${location.hash}`);
   if (location.hash.includes("token=")) history.replaceState(null, "", location.pathname);
   $("loading").hidden = true;
   $("gate").hidden = true;
@@ -408,6 +410,38 @@ const COMPACTION_TRIGGERS = {
   manual: "You asked for a Compaction.",
   overflow: "The Provider refused the request, because the context was too large.",
 };
+
+/**
+ * Adds the request for a Connection to the card of the Tool call. Only OAuth can grant it: the operator opens the
+ * consent page, or denies the request here.
+ */
+function connectAsk(card, event, ask) {
+  card.id = `approval-${event.seq}`;
+  card.open = true;
+  card.classList.add("approval", "waiting");
+  card.state.textContent = "needs a Connection";
+  card.append(
+    el(
+      "div",
+      { className: "ask" },
+      el("strong", {
+        textContent: `The server ${event.serverId} needs a ${event.level}-level Connection. The Turn is parked until OAuth completes.`,
+      }),
+      rows(["Authorization server", el("code", { textContent: new URL(event.authUrl).origin })]),
+      el(
+        "div",
+        { className: "row" },
+        el("button", {
+          className: "primary",
+          textContent: "Open the consent page",
+          onclick: () => open(event.authUrl, "_blank", "noopener"),
+        }),
+        el("button", { textContent: "Deny", onclick: ask(event.seq, "deny") }),
+      ),
+    ),
+  );
+  return card;
+}
 
 /** The conversation card of a `continue` Approval. It shows what the Turn spent and takes the answer. */
 function continueCard(event, ask) {
@@ -2017,6 +2051,307 @@ function lifecycleCards(
   return [scopeCard, credentialCard, stepsCard, profileCard, keyCard];
 }
 
+// What the operator selected and typed in the registration form of the MCP scenario. It never holds the header value.
+const mcpForm = { url: "", auth: "none", header: "Authorization", trust: false };
+
+// The outcome of the OAuth callback, which sends the browser back with `connected=true` or `connected=false` in the
+// query. The Connection card shows it one time.
+let oauthReturn = new URLSearchParams(location.search).get("connected");
+
+// What the operator must know about each way to authenticate to the server.
+const MCP_AUTH = {
+  none: "No credential",
+  static: "Static header",
+  oauth: "OAuth, one Connection for each User",
+};
+
+/**
+ * The remote MCP scenario: the registration form or the registered server, the tool list of the server, the static
+ * credential or the Connection of the User, and the Permission Policy of the Agent.
+ */
+function mcpCards(
+  { scopeId, oauth, server, missing, unavailable, catalog, credential, connection, discovery, policy },
+  onChanged,
+  isCurrent,
+) {
+  const path = "/api/scenarios/mcp";
+  const changed = (note) => (next) => isCurrent() && onChanged(next, note);
+  const time = (at) => (at === undefined ? "never" : new Date(at).toLocaleTimeString());
+  const auth = server?.config.auth.type;
+  // The badge function makes a class of each word, thus a label of more than one word uses a plain badge.
+  const label = (text) => el("span", { className: "badge", textContent: text });
+
+  const serverResult = el("p", { className: "fine" });
+  let serverCard;
+  if (!server) {
+    const url = el("input", {
+      id: "mcp-url",
+      type: "url",
+      ariaLabel: "Server URL",
+      placeholder: "https://mcp.example.com/mcp",
+      spellcheck: false,
+    });
+    const select = el(
+      "select",
+      { id: "mcp-auth", ariaLabel: "Credential of the server" },
+      ...Object.entries(MCP_AUTH).map(([value, label]) =>
+        el("option", { value, textContent: label, disabled: value === "oauth" && !oauth.available }),
+      ),
+    );
+    const header = el("input", { id: "mcp-header", type: "text", ariaLabel: "Header name", spellcheck: false });
+    const value = el("input", {
+      id: "mcp-value",
+      type: "password",
+      autocomplete: "off",
+      ariaLabel: "Header value",
+      placeholder: "Bearer …",
+    });
+    const trust = el("input", { id: "mcp-trust", type: "checkbox" });
+    const staticRow = el("div", { className: "row" }, header, value);
+    url.value = mcpForm.url;
+    select.value = mcpForm.auth === "oauth" && !oauth.available ? "none" : mcpForm.auth;
+    header.value = mcpForm.header;
+    trust.checked = mcpForm.trust;
+    const showStatic = () => (staticRow.hidden = select.value !== "static");
+    showStatic();
+    url.oninput = () => (mcpForm.url = url.value);
+    header.oninput = () => (mcpForm.header = header.value);
+    trust.onchange = () => (mcpForm.trust = trust.checked);
+    select.onchange = () => {
+      mcpForm.auth = select.value;
+      showStatic();
+    };
+    serverCard = el(
+      "div",
+      { className: "card titled", id: "mcp-server" },
+      el("h3", {}, "Remote MCP server", label("not registered")),
+      el("p", {
+        className: "muted",
+        textContent: "Register a real MCP server. The Playground has no sample server.",
+      }),
+      el("div", { className: "row" }, url),
+      el("div", { className: "row" }, select),
+      staticRow,
+      el("div", { className: "row" }, el("label", {}, trust, " Trust the annotations of the server")),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          "Register the server",
+          () =>
+            api("POST", `${path}/register`, {
+              url: url.value.trim(),
+              auth: select.value,
+              trustAnnotations: trust.checked,
+              ...(select.value === "static" && { header: header.value.trim(), value: value.value }),
+            }),
+          changed("The Scope config has the server. Its host is the only permitted MCP host."),
+          serverResult,
+          true,
+        ),
+      ),
+      serverResult,
+      !oauth.available && el("p", { className: "fine", textContent: oauth.reason }),
+      el("p", {
+        className: "fine",
+        textContent:
+          "The route stores a static header value with scope.credentials.put and clears the field. The config names the credential scope:mcp-remote, never the value.",
+      }),
+    );
+  } else {
+    serverCard = el(
+      "div",
+      { className: "card titled", id: "mcp-server" },
+      el("h3", {}, "Remote MCP server", badge("registered")),
+      rows(
+        ["Scope", el("code", { textContent: scopeId })],
+        ["Server id", el("code", { textContent: server.id })],
+        ["URL", el("code", { textContent: server.config.url })],
+        ["Credential", MCP_AUTH[auth]],
+        ["Permitted hosts", server.hosts.join(", ")],
+        ["Annotations", server.config.trustAnnotations ? "trusted" : "not trusted: each Tool is destructive"],
+      ),
+      el("h4", { textContent: "Scope config of the server" }),
+      el("pre", { textContent: JSON.stringify(server.config, null, 2) }),
+      el("p", {
+        className: "fine",
+        textContent:
+          "To register a different server, select Reset scenario. The reset destroys this Scope with the registration, and the next Scope has a new id.",
+      }),
+    );
+  }
+
+  const toolsResult = el("p", { className: "fine" });
+  const failed = discovery && !discovery.ok ? discovery.error : undefined;
+  const toolsCard = el(
+    "div",
+    { className: "card titled", id: "mcp-tools" },
+    el("h3", {}, "Tools of the server", label(catalog ? `${catalog.tools.length} Tools` : "no tool list")),
+    missing &&
+      el("p", {
+        className: "error",
+        textContent: `The credential ${missing} is missing. The server is not usable until the credential resolves.`,
+      }),
+    unavailable && el("pre", { className: "error", textContent: `${unavailable.code}: ${unavailable.message}` }),
+    failed && el("h4", { textContent: `The last tool list failed at ${time(discovery.at)}` }),
+    failed && el("pre", { className: "error", textContent: `${failed.code}: ${failed.message}` }),
+    catalog
+      ? el(
+          "div",
+          {},
+          rows(
+            ["Tool list version", el("code", { textContent: catalog.version })],
+            ["Fetched at", time(catalog.fetchedAt)],
+            ["Cache scope", catalog.cacheScope],
+            ["Protocol era", catalog.era],
+          ),
+          el(
+            "ul",
+            {},
+            ...catalog.tools.map((tool) =>
+              el(
+                "li",
+                {},
+                el("code", { textContent: tool.name }),
+                tool.description && ` ${tool.description}`,
+                tool.annotations && el("pre", { textContent: JSON.stringify(tool.annotations) }),
+              ),
+            ),
+          ),
+        )
+      : el("p", {
+          className: "muted",
+          textContent: !server
+            ? "Register a server. Its Tools show here."
+            : auth === "oauth" && !connection
+              ? "Connect first. Most OAuth servers list their Tools only for a User with a grant."
+              : "List the Tools, or run a prompt. A Turn lists the Tools when it starts.",
+        }),
+    el(
+      "div",
+      { className: "row" },
+      Object.assign(
+        cardAction(
+          "List the Tools again",
+          () => api("POST", `${path}/discover`),
+          changed("The route called scope.mcp.refreshCatalog for the User."),
+          toolsResult,
+        ),
+        { disabled: !server },
+      ),
+    ),
+    toolsResult,
+    el("p", {
+      className: "fine",
+      textContent:
+        "The model sees each Tool as remote__<name>. A public tool list serves each User of the Scope. A private one serves only the User whose grant fetched it.",
+    }),
+  );
+
+  const accessResult = el("p", { className: "fine" });
+  let accessCard;
+  if (auth === "static")
+    accessCard = el(
+      "div",
+      { className: "card titled", id: "mcp-credential" },
+      el(
+        "h3",
+        {},
+        "Static credential",
+        label(!credential ? "none" : credential.revokedAt ? "revoked" : `version ${credential.version}`),
+      ),
+      credential &&
+        rows(
+          ["Reference", el("code", { textContent: credential.reference })],
+          ["Version", String(credential.version)],
+          ["Stored at", time(credential.updatedAt)],
+          ["Revoked at", time(credential.revokedAt)],
+        ),
+      el(
+        "div",
+        { className: "row" },
+        Object.assign(
+          cardAction(
+            "Revoke the credential",
+            () => api("POST", `${path}/revoke`),
+            changed("The credential is revoked. The next request to the server has no header."),
+            accessResult,
+          ),
+          { disabled: !credential || credential.revokedAt !== undefined },
+        ),
+      ),
+      accessResult,
+      el("p", {
+        className: "fine",
+        textContent:
+          "No route, event or log returns the value. The card shows the metadata of scope.credentials.describe.",
+      }),
+    );
+  if (auth === "oauth") {
+    const returned = oauthReturn;
+    oauthReturn = null;
+    accessCard = el(
+      "div",
+      { className: "card titled", id: "mcp-connection" },
+      el("h3", {}, "Connection of the User", label(connection ? "connected" : "no Connection")),
+      rows(
+        ["User", el("code", { textContent: "operator" })],
+        ["Connection", el("code", { textContent: "mcp:remote" })],
+        ["Stored at", connection ? time(connection.updatedAt) : "never"],
+      ),
+      returned &&
+        el("p", {
+          className: returned === "true" ? "outcome" : "error",
+          textContent:
+            returned === "true"
+              ? "The OAuth callback stored the grant of the User."
+              : "The authorization server did not grant the Connection.",
+        }),
+      el(
+        "div",
+        { className: "row" },
+        cardAction(
+          "Connect",
+          () => api("POST", `${path}/connect`),
+          // The consent page sends the browser back to this scenario.
+          ({ authUrl }) => location.assign(authUrl),
+          accessResult,
+          !connection,
+        ),
+        Object.assign(
+          cardAction(
+            "Disconnect",
+            () => api("POST", `${path}/disconnect`),
+            changed("The Scope dropped the grant and the private tool list of the User."),
+            accessResult,
+          ),
+          { disabled: !connection },
+        ),
+      ),
+      accessResult,
+      el("p", {
+        className: "fine",
+        textContent:
+          "Connect calls scope.mcp.authorize and opens the consent page. A call without a grant asks for the Connection in the conversation, when the Turn has a tool list. Disconnect keeps a public tool list, thus the next call asks. A server can also revoke the grant: karmi then drops it, and the next call asks.",
+      }),
+    );
+  }
+
+  const policyCard = el(
+    "details",
+    { className: "card" },
+    el("summary", { textContent: `Permission Policy of the Agent (${policy.length} rule)` }),
+    el("pre", { textContent: JSON.stringify(policy, null, 2) }),
+    el("p", {
+      className: "fine",
+      textContent:
+        "The rule allows a Tool with readOnlyHint. Each other call waits for your Approval. Without trusted annotations, no Tool of the server is read-only.",
+    }),
+  );
+
+  return [serverCard, toolsCard, accessCard, policyCard].filter(Boolean);
+}
+
 // The cards next to the conversation, by scenario id.
 const PANELS = {
   refund: (state) => [orderCard(state.order)],
@@ -2033,6 +2368,7 @@ const PANELS = {
   scripts: scriptCards,
   "container-scripts": containerCards,
   scopes: lifecycleCards,
+  mcp: mcpCards,
 };
 
 /**
@@ -2637,6 +2973,11 @@ async function renderScenario(scenario) {
           add(continueCard(event, ask));
           break;
         }
+        if (event.kind === "connect") {
+          waiting += 1;
+          connectAsk(toolCard(event.id, event.tool, undefined), event, ask).scrollIntoView({ block: "nearest" });
+          break;
+        }
         if (event.kind !== "tool") break;
         // A child has its own call ids, thus the card of a child Approval is keyed by the child too.
         const card = toolCard(event.child ? `${event.child.threadId}:${event.id}` : event.id, event.tool, event.input);
@@ -2675,12 +3016,20 @@ async function renderScenario(scenario) {
         if (!card) break;
         waiting -= 1;
         card.classList.remove("waiting");
-        card.state.textContent = event.decision === "allow" ? "allowed, running" : "denied";
-        card
-          .querySelector(".ask")
-          .replaceWith(
-            el("p", { className: "outcome", textContent: `Approval outcome: ${event.decision} (${event.source})` }),
-          );
+        const connect = event.kind === "connect";
+        card.state.textContent =
+          event.decision === "allow" ? (connect ? "connected, running" : "allowed, running") : "denied";
+        card.querySelector(".ask").replaceWith(
+          el("p", {
+            className: "outcome",
+            textContent: !connect
+              ? `Approval outcome: ${event.decision} (${event.source})`
+              : event.decision === "allow"
+                ? "OAuth is complete. The call runs again, one time, with the grant of the User."
+                : `The Connection was not granted (${event.reason ?? event.source}). The call gets an error result.`,
+          }),
+        );
+        refreshSoon();
         break;
       }
       case "turn.paused":

@@ -7,6 +7,11 @@ import { catalogue } from "../src/catalogue";
 import { playgroundLogger } from "../src/observability";
 import { CONTAINER_IMAGE } from "../src/containers";
 import { fakeContainer } from "./container-driver";
+import { MCP_SERVERS } from "./mcp-servers";
+import { CLIENT_NAME, oauthSetup } from "../src/remote-mcp";
+
+/** The public origin of the test Worker, which the OAuth Connections of the MCP scenario use. */
+export const ORIGIN = "https://playground.test";
 
 // The test Worker runs the same routes, Tools and Agent as src/worker.ts against a scripted Provider, so no
 // test needs a credential or a network.
@@ -14,6 +19,9 @@ export const { karmi, provider, clock } = createTestKarmi(catalogue("fake/model"
   logger: playgroundLogger(),
   // The container Scripts scenario runs on a fake container runtime. The Harness and the Workspace are real.
   sandbox: { image: CONTAINER_IMAGE, driver: fakeContainer },
+  // The MCP scenario reaches the fake servers of the Test kit through the Scoped fetch.
+  mcpServers: MCP_SERVERS,
+  oauth: { origin: ORIGIN, clientName: CLIENT_NAME },
 });
 
 /** Starts the script of the guided refund again. */
@@ -30,6 +38,7 @@ const playground = createPlayground({
   keyring: { active: "v2", keys: ["v1", "v2"] },
   hasLoader: env.KARMI_LOADER !== undefined,
   containers: "docker",
+  oauth: oauthSetup(ORIGIN),
 });
 /** The same routes before `pnpm setup` ran: no Provider and no access token. */
 export const bare = createPlayground({
@@ -41,6 +50,7 @@ export const bare = createPlayground({
   media: env.KARMI_MEDIA,
   keyring: undefined,
   hasLoader: env.KARMI_LOADER !== undefined,
+  oauth: oauthSetup(undefined),
 });
 
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;

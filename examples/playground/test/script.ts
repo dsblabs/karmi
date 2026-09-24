@@ -202,6 +202,21 @@ export const containerReplies: ReplyScript = ({ request }) => {
   return [reply.toolCall("run_script", { code, language, ...(files !== undefined && { files }) })];
 };
 
+/**
+ * The script of the remote MCP scenario. The Agent calls the first read-only Tool of the remote server, then tells
+ * the result or the error.
+ */
+export const mcpReplies: ReplyScript = ({ request }) => {
+  const turn = request.messages.slice(request.messages.findLastIndex((message) => message.role === "user"));
+  const result = turn.find((message) => message.role === "toolResult");
+  if (result) {
+    const text = result.content.map((block) => ("text" in block ? block.text : "")).join(" ");
+    return result.isError ? `The Tool call failed: ${text}` : `The Tool answered: ${text}`;
+  }
+  const tool = request.tools?.find((candidate) => candidate.name === "remote__read_notice");
+  return tool ? [reply.toolCall(tool.name, {})] : "The remote server gave me no Tools.";
+};
+
 /** The script of the browser checks. It selects the replies from the Prompt, thus one Provider serves each scenario. */
 export const playgroundReplies: ReplyScript = (ctx) => {
   const system = ctx.request.system ?? "";
@@ -218,6 +233,7 @@ export const playgroundReplies: ReplyScript = (ctx) => {
   if (system.includes("run_script exactly")) return scriptReplies(ctx);
   if (system.includes("attached file")) return "I received the sample file.";
   if (system.includes("assistant of the karmi Playground")) return "Hello from the Scope desk.";
+  if (system.includes("remote tools desk")) return mcpReplies(ctx);
   const days = /for (\d+) days/.exec(system)?.[1];
   return system.includes("pirate") ? `Arr, ye have ${days} days.` : `You can return it for ${days} days.`;
 };

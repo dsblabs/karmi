@@ -42,6 +42,11 @@ export interface DeploymentManifest {
    * the images that the deployment pushed to the Cloudflare registry. Removal deletes the application and each image.
    */
   container?: DeploymentResource;
+  /**
+   * The `workers.dev` origin that the last deploy reported. The Worker gets it as `PLAYGROUND_ORIGIN`, which the OAuth
+   * Connections of the MCP scenario need.
+   */
+  origin?: string;
 }
 
 /** The optional services that a deployment selects when it is created. */
@@ -282,7 +287,7 @@ async function verifySuppliedResources(manifest: DeploymentManifest, runner: Com
 
 /**
  * Creates missing owned resources, stores secrets and deploys the Worker. Returns the workers.dev address that
- * Wrangler reports, or `undefined` when it reports none.
+ * Wrangler reports, or `undefined` when it reports none. The manifest records the address as `origin`.
  */
 export async function deploy(
   manifest: DeploymentManifest,
@@ -310,11 +315,13 @@ export async function deploy(
   await runner.run(command(["secret", "bulk", "--config", configPath], manifest.account.id, JSON.stringify(secrets)));
   // Wrangler builds the image, pushes it and creates the container application in the same deploy.
   const output = await runner.run(command(["deploy", "--config", configPath], manifest.account.id));
+  // The image push can print other addresses, thus only a workers.dev address counts.
+  const address = /https:\/\/[\w.-]+\.workers\.dev\b/.exec(output)?.[0];
   manifest.worker.status = "created";
   if (manifest.container) manifest.container.status = "created";
+  if (address) manifest.origin = address;
   await store.save(manifest);
-  // The image push can print other addresses, thus only a workers.dev address counts.
-  return /https:\/\/[\w.-]+\.workers\.dev\b/.exec(output)?.[0];
+  return address;
 }
 
 /**

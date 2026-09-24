@@ -45,6 +45,18 @@ describe("setup", () => {
     expect(second.PROVIDER_API_KEY).toBe("k2");
   });
 
+  it("keeps the public origin that the operator added for OAuth", () => {
+    const option = chooseOption("openai");
+    if (!option) throw new Error("The openai option is missing.");
+    const origin = "https://playground.example.com";
+    const first = { ...parseDevVars(buildDevVars({ option, model: "a", apiKey: "k1" }, {}, generate())) };
+    expect(first.PLAYGROUND_ORIGIN).toBeUndefined();
+    const second = parseDevVars(
+      buildDevVars({ option, model: "a", apiKey: "k1" }, { ...first, PLAYGROUND_ORIGIN: origin }, generate()),
+    );
+    expect(second.PLAYGROUND_ORIGIN).toBe(origin);
+  });
+
   it("reports no selection when a custom endpoint has no base URL", () => {
     expect(readSetup({ PLAYGROUND_PROVIDER: "custom", PLAYGROUND_MODEL: "m" })).toBeUndefined();
     expect(readSetup({})).toBeUndefined();

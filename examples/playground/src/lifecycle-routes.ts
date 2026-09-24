@@ -18,8 +18,8 @@ interface LifecycleRouteOptions {
   scope: (id: string) => Scope;
   /** The Scope that holds the sample data of the scenario. It is not the disposable Scope. */
   home: string;
-  /** The sample Scopes of the other scenarios. A rewrap covers them too. */
-  sampleScopes: readonly string[];
+  /** Returns the Scopes of the other scenarios. A rewrap covers them too. */
+  otherScopes: () => Promise<readonly string[]>;
   user: string;
   data: DurableObjectNamespace<SampleDataDO>;
   /** The model id of the Agents, in the form `provider/model`. Its prefix is the adapter of the Scope profile. */
@@ -156,13 +156,13 @@ async function test(now: Current, model: string): Promise<void> {
 }
 
 /**
- * Rewraps the credentials of each Scope that the Playground uses: the disposable Scope and the sample Scopes. A
- * destroyed disposable Scope has no credential, thus the rewrap skips it and still covers the sample Scopes.
+ * Rewraps the credentials of each Scope that the Playground uses: the disposable Scope and the Scopes of the other
+ * scenarios. A destroyed disposable Scope has no credential, thus the rewrap skips it and still covers the others.
  */
 async function rewrap(options: LifecycleRouteOptions, now: Current): Promise<void> {
   const counts: Record<string, number> = {};
   const live = isLive((await now.scope.status()).state);
-  for (const id of [...(live ? [now.scopeId] : []), ...options.sampleScopes])
+  for (const id of [...(live ? [now.scopeId] : []), ...(await options.otherScopes())])
     counts[id] = (await options.scope(id).credentials.rewrap()).rewrapped;
   await remember(now, "rewrap", counts);
 }

@@ -1,5 +1,5 @@
 import { createKarmi } from "@karmi/core";
-import { fakeProvider } from "@karmi/core/testing";
+import { fakeProvider, routeFetch } from "@karmi/core/testing";
 import { env } from "cloudflare:workers";
 import { createPlayground } from "../src/app";
 import { catalogue } from "../src/catalogue";
@@ -8,6 +8,8 @@ import { CONTAINER_IMAGE } from "../src/containers";
 import { fakeContainer } from "./container-driver";
 import { keyringView } from "../src/keyring";
 import { playgroundReplies } from "./script";
+import { MCP_SERVERS } from "./mcp-servers";
+import { oauthSetup } from "../src/remote-mcp";
 import { setup, TOKEN } from "./worker-options";
 
 // The Worker of the browser checks. `wrangler dev` runs it, where `createTestKarmi` cannot run, so it registers
@@ -18,6 +20,9 @@ const karmi = createKarmi({
   providers: { fake: fakeProvider(playgroundReplies) },
   defaults: { providers: { default: { adapter: "fake", models: ["*"] } } },
   sandbox: { image: CONTAINER_IMAGE, driver: fakeContainer },
+  // The MCP scenario reaches the fake servers of the Test kit. The browser cannot reach their consent pages, thus
+  // the browser checks use the server with no credential, and the Worker tests cover OAuth.
+  fetch: routeFetch(MCP_SERVERS),
 });
 
 const playground = createPlayground({
@@ -30,6 +35,7 @@ const playground = createPlayground({
   keyring: keyringView(env.KARMI_KEYRING),
   hasLoader: env.KARMI_LOADER !== undefined,
   containers: "docker",
+  oauth: oauthSetup(undefined),
 });
 
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;

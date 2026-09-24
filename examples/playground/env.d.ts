@@ -24,6 +24,11 @@ declare namespace Cloudflare {
     PLAYGROUND_PROVIDER?: string;
     PLAYGROUND_MODEL?: string;
     PLAYGROUND_BASE_URL?: string;
+    /**
+     * The public https origin of the Playground, for example `https://karmi-playground-a1b2.example.workers.dev`.
+     * The OAuth Connections of the MCP scenario need it. `pnpm deploy` sets it.
+     */
+    PLAYGROUND_ORIGIN?: string;
     /** The Provider credential. No route returns it. */
     PROVIDER_API_KEY?: string;
   }

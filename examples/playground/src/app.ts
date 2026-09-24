@@ -12,10 +12,12 @@ import { KNOWLEDGE } from "./librarian";
 import type { KeyringView } from "./keyring";
 import { LIFECYCLE } from "./lifecycle";
 import { lifecycleScenarioRoutes } from "./lifecycle-routes";
+import { mcpScenarioRoutes } from "./mcp-routes";
 import { memoryScenarioRoutes } from "./memory-routes";
 import { OTHER_SCOPE, SAMPLE_SCOPES, scenarioRuntimes, SCOPE, USER, type Runtime } from "./runtimes";
 import { sampleData, type SampleDataDO } from "./sample-data";
 import { mediaDownload } from "./media-download";
+import { MCP, type OAuthSetup } from "./remote-mcp";
 import { COVERAGE, SCENARIOS, viewScenario, type Services } from "./scenarios";
 import { scheduleScenarioRoutes, triggerSupplierDelivery } from "./schedule-routes";
 
@@ -36,6 +38,11 @@ export interface PlaygroundOptions extends Services {
   media: R2Bucket | undefined;
   /** The ids of the `KARMI_KEYRING` keys, which the Scope lifecycle scenario shows. Undefined without a key ring. */
   keyring: KeyringView | undefined;
+  /**
+   * The public origin of the Worker, which the OAuth Connections of the MCP scenario need, or why they are not
+   * available. The karmi must have the same origin in `createKarmi({ oauth })`.
+   */
+  oauth: OAuthSetup;
 }
 
 /** The Playground as a Worker `fetch`. */
@@ -86,8 +93,8 @@ async function sameToken(given: string, expected: string): Promise<boolean> {
 
 /**
  * Maps a request to its Principal. The token opens the sample Scopes only: the two fixed ones, and the current
- * disposable Scope of the Scope lifecycle scenario, which `opens` checks. The `scope` query parameter selects one of
- * them for the Thread routes, and a request without it acts in the first one.
+ * disposable Scopes of the Scope lifecycle and MCP scenarios, which `opens` checks. The `scope` query parameter
+ * selects one of them for the Thread routes, and a request without it acts in the first one.
  */
 function authentication(token: string | undefined, opens: (scope: string) => Promise<boolean>) {
   return async (request: Request): Promise<Principal | null> => {
@@ -164,7 +171,8 @@ interface SampleOptions {
  */
 function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, options: PlaygroundOptions) {
   const { user, data } = sample;
-  const { media, model, setup, keyring } = options;
+  const { media, model, setup, keyring, oauth } = options;
+  const mcp = mcpScenarioRoutes({ scope: (id) => karmi.scope(id), home: SCOPE, user, data, model, oauth });
   return {
     [FORKS]: forkScenarioRoutes({ ...sample, media }),
     [SCHEDULES]: scheduleScenarioRoutes(sample),
@@ -173,13 +181,14 @@ function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, options: Playgro
     [LIFECYCLE]: lifecycleScenarioRoutes({
       scope: (id) => karmi.scope(id),
       home: SCOPE,
-      sampleScopes: SAMPLE_SCOPES,
+      otherScopes: async () => [...SAMPLE_SCOPES, await mcp.scopeId()],
       user,
       data,
       model,
       baseUrl: setup?.baseUrl,
       keyring,
     }),
+    [MCP]: mcp,
   } satisfies Record<string, ScenarioRoutes>;
 }
 
@@ -226,7 +235,10 @@ export function createPlayground(options: PlaygroundOptions): Playground {
   const own = ownScenarioRoutes(karmi, sample, options);
 
   // A browser cannot set headers on an EventSource, so the token can also be a query parameter.
-  const authenticate = authentication(token, own[LIFECYCLE].opens);
+  const authenticate = authentication(
+    token,
+    async (scopeId) => (await own[LIFECYCLE].opens(scopeId)) || own[MCP].opens(scopeId),
+  );
   const http = createHttpHandler({ karmi, authenticate });
 
   const threadOf = (runtime: Runtime, generation: number) =>
@@ -273,6 +285,10 @@ export function createPlayground(options: PlaygroundOptions): Playground {
     supplierDelivery: (at) => triggerSupplierDelivery(sample, "The scheduled handler of the Worker", at),
     async fetch(request, _env, ctx) {
       const path = new URL(request.url).pathname;
+      // The client document and the OAuth callback need no token: the authorization server and the browser of the
+      // operator call them, and the callback checks the state of its pending authorization.
+      const oauth = await karmi.oauth.handle(request);
+      if (oauth) return oauth;
       if (!path.startsWith("/api/")) return http.fetch(request, _env, ctx);
       if (!(await authenticate(request))) return routeError(401, "http.unauthorized", "Authentication required.");
       return api(request, path);
