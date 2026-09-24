@@ -19,6 +19,10 @@ async function main(): Promise<void> {
     console.log(
       `The supplied index ${manifest.vectorIndex.name} keeps each vector that a reset of the vector retrieval scenario did not delete.`,
     );
+  if (manifest.gateway)
+    console.log(
+      `The AI Gateway ${manifest.gateway.name} keeps its logs. The Playground did not create it and does not delete it.`,
+    );
   if (!result.complete) {
     console.error("Removal is incomplete. These owned resources remain:");
     for (const failure of result.failures) console.error(`- ${failure.resource}: ${failure.message}`);

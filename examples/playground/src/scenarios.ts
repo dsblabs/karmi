@@ -8,6 +8,7 @@ import { LIFECYCLE, LIFECYCLE_PROMPTS } from "./lifecycle";
 import { FORKS, FORKS_PROMPT } from "./media-forks";
 import { OBSERVABILITY, OBSERVABILITY_PROMPTS } from "./observability";
 import type { ProviderSetup } from "./provider-options";
+import { PROVIDER_PROMPTS, PROVIDERS, WEB_SEARCH_LIMITS } from "./provider-desk";
 import { DELEGATION, PURCHASE_PROMPTS } from "./purchases";
 import { REFUND, REFUND_PROMPT } from "./refund";
 import { REMINDER_PROMPTS, SCHEDULES } from "./reminders";
@@ -121,7 +122,6 @@ export const SCENARIOS: readonly Scenario[] = [
     code: `${CODE}/src/dispatch.ts`,
     controls: true,
   },
-  notBuilt("provider-tools", "Tools", "Provider Tools"),
   {
     id: COMPACTION,
     group: "Threads",
@@ -294,9 +294,27 @@ export const SCENARIOS: readonly Scenario[] = [
       "A Turn can offer the Tools of a server only from a tool list. Most servers list their Tools only for a User with a grant, thus the first Connection comes from Connect in the Connection card.",
     ],
   },
-  notBuilt("providers", "Providers and MCP", "Provider switching and AI Gateway", [
-    "AI Gateway needs a Cloudflare account.",
-  ]),
+  {
+    id: PROVIDERS,
+    group: "Providers and MCP",
+    title: "Provider switching, Provider Tools and AI Gateway",
+    summary:
+      "The Agent Spec of this Agent names a Provider profile. Switch to a different profile, and the next Turn of the same Thread runs on that Provider. Grant the Provider Tool web_search, which the Provider runs, next to a Tool that the Harness runs. Send the calls through Cloudflare AI Gateway and read the log id in the Usage record.",
+    built: true,
+    prerequisites: [
+      "For a switch: a second Provider profile. pnpm setup asks for an optional second Provider. It can be a second model of the same Provider.",
+      "For AI Gateway: a gateway in your Cloudflare account. pnpm setup asks for its account id, its id and a token for an authenticated gateway. The Playground does not create or delete a gateway.",
+    ],
+    // The Harness Tool prompt needs Tool calls. The Provider Tool needs a profile that the Profiles card names.
+    needs: ["toolCalls"],
+    prompts: PROVIDER_PROMPTS,
+    code: `${CODE}/src/provider-desk.ts`,
+    notes: [
+      "karmi offers web_search on the Anthropic Provider and on OpenAI models of the AI SDK Provider. The Profiles card shows the Provider Tools that the Framework accepts on each profile. A grant on a different profile gets capability.unavailable.",
+      `A Provider Tool runs at the Provider, inside the model call. A Permission Policy rule can allow or deny it, but not ask, because there is no call that can wait for you. The grant allows ${String(WEB_SEARCH_LIMITS.maxCallsPerTurn)} calls in a Turn and ${String(WEB_SEARCH_LIMITS.maxCallsPerThread)} in the Thread.`,
+      "Cloudflare AI Gateway reports no cost in the answer. The Usage record has the gateway log id. karmi never prices tokens, thus the page shows no cost for these calls.",
+    ],
+  },
   notBuilt("http", "HTTP and media", "WebSocket and reconnects"),
   {
     id: OBSERVABILITY,
@@ -432,6 +450,15 @@ const mcp = (feature: string, observable: string, verification: string): Coverag
   scenario: MCP,
   observable,
   verification: `Worker tests with the scripted Provider and the fake MCP servers of the Test kit. ${verification}`,
+});
+// No Provider, Provider Tool or gateway was checked live, thus each row says so.
+const providers = (feature: string, group: string, observable: string): CoverageRow => ({
+  group,
+  feature,
+  scenario: PROVIDERS,
+  observable,
+  verification:
+    "Worker tests and browser checks with the scripted Provider. Unit tests check the gateway URL and the cf-aig headers of the OpenAI and Anthropic clients. No check with a real Provider, Provider Tool or AI Gateway ran yet.",
 });
 // The tests use a deterministic Embedder and an index in memory, thus each row tells what a live check covered.
 const vectors = (feature: string, observable: string): CoverageRow => ({
@@ -787,6 +814,31 @@ export const COVERAGE: readonly CoverageRow[] = [
     "With the Subscriber attached, the inbox gets nothing. The detached page reads events without a stream.",
   ),
   shown("Provider selection", "Providers and MCP", "Setup selects one of five Providers. The header shows it."),
+  providers(
+    "Provider profiles and switching",
+    "Providers and MCP",
+    "Select a different profile and save. The same Thread runs its next Turn on the new Provider. Each model Step names its profile, adapter, model and Agent version.",
+  ),
+  providers(
+    "Model capabilities of a profile",
+    "Providers and MCP",
+    "The Profiles card lists the Provider Tools that the Framework accepts on each profile. A grant on a different profile gets capability.unavailable.",
+  ),
+  providers(
+    "Provider Tools",
+    "Tools",
+    "Grant web_search. Its call shows as server_tool events with the Provider, apart from the shop_hours call that the Harness runs.",
+  ),
+  providers(
+    "Provider Tools and the Permission Policy",
+    "Tools",
+    "A deny rule removes web_search from the request. An ask rule gets policy.ask-on-provider-tool, and the Scope keeps the stored version.",
+  ),
+  providers(
+    "AI Gateway",
+    "Providers and MCP",
+    "The gateway profile sends each call to the gateway. The Usage record has the gateway log id and no cost, because the gateway reports none.",
+  ),
   {
     group: "Development and operations",
     feature: "Deployment, recovery and removal",

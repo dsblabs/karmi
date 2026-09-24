@@ -172,6 +172,8 @@ export async function readManifest(file: URL): Promise<DeploymentManifest> {
     // A manifest without the field has no vector index.
     ...("vectorIndex" in value &&
       value.vectorIndex !== undefined && { vectorIndex: decodeResource(value.vectorIndex) }),
+    // A manifest without the field has no AI Gateway.
+    ...("gateway" in value && value.gateway !== undefined && { gateway: decodeResource(value.gateway) }),
   };
 }
 

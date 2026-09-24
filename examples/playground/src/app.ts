@@ -1,11 +1,14 @@
-import { KarmiError, SpecInvalidError, type AgentSpec, type Karmi, type Scope, type Thread } from "@karmi/core";
+import { KarmiError, type AgentSpec, type Karmi, type Scope, type Thread } from "@karmi/core";
 import { createHttpHandler, type Principal } from "@karmi/http";
 import { AGENTS, ASSISTANT } from "./assistant";
 import { forkScenarioRoutes } from "./fork-routes";
 import { FORKS } from "./media-forks";
 import type { ProviderSetup } from "./provider-options";
+import { PROVIDERS } from "./provider-desk";
+import { providerScenarioRoutes } from "./provider-routes";
+import type { ProfileChoice } from "./providers";
 import { SCHEDULES } from "./reminders";
-import { routeError } from "./route-error";
+import { routeError, specRejected } from "./route-error";
 import { CONCIERGE, MEMORY } from "./concierge";
 import { knowledgeScenarioRoutes } from "./knowledge-routes";
 import { KNOWLEDGE } from "./librarian";
@@ -32,6 +35,11 @@ export interface PlaygroundOptions extends Services {
   model: string;
   /** The Provider selection of setup, or undefined when setup did not run. */
   setup: ProviderSetup | undefined;
+  /**
+   * The Deployment Provider profiles of setup, which the karmi must have in `defaults.providers`. The first one is
+   * `default`, which each Agent of the other scenarios uses. Empty when setup did not run.
+   */
+  profiles: readonly ProfileChoice[];
   /** The operator access token. Without it, each request gets a 401 answer. */
   token: string | undefined;
   /** The namespace of the sample systems. */
@@ -129,9 +137,7 @@ async function putSpec(scope: Scope, request: Request): Promise<Response | undef
     await scope.agents.put(spec);
     return undefined;
   } catch (caught) {
-    if (!(caught instanceof SpecInvalidError)) throw caught;
-    const { code, message, result } = caught;
-    return Response.json({ error: { code, message, issues: result.issues } }, { status: 422 });
+    return specRejected(caught);
   }
 }
 
@@ -173,7 +179,7 @@ interface SampleOptions {
  */
 function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, options: PlaygroundOptions) {
   const { user, data } = sample;
-  const { media, model, setup, keyring, oauth, vectors } = options;
+  const { media, model, profiles, keyring, oauth, vectors } = options;
   const mcp = mcpScenarioRoutes({ scope: (id) => karmi.scope(id), home: SCOPE, user, data, model, oauth });
   return {
     [FORKS]: forkScenarioRoutes({ ...sample, media }),
@@ -196,10 +202,11 @@ function ownScenarioRoutes(karmi: Karmi, sample: SampleOptions, options: Playgro
       user,
       data,
       model,
-      baseUrl: setup?.baseUrl,
+      profile: profiles[0]?.config,
       keyring,
     }),
     [MCP]: mcp,
+    [PROVIDERS]: providerScenarioRoutes({ ...sample, profiles }),
   } satisfies Record<string, ScenarioRoutes>;
 }
 

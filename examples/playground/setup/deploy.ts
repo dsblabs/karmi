@@ -16,6 +16,7 @@ import {
   decodeAccounts,
   deploy,
   parseDeploymentArguments,
+  recordGateway,
   selectAccount,
   type DeploymentManifest,
   type SuppliedResources,
@@ -27,6 +28,18 @@ function requireDocker(): void {
   if (spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0) return;
   throw new Error("Container Scripts need Docker, which builds the image. Start Docker, then run pnpm deploy again.");
 }
+
+/** The variables of `.dev.vars` that hold the Provider selections of setup. None of them is a secret. */
+const PROVIDER_VARIABLES = [
+  "PLAYGROUND_PROVIDER",
+  "PLAYGROUND_MODEL",
+  "PLAYGROUND_BASE_URL",
+  "PLAYGROUND_SECOND_PROVIDER",
+  "PLAYGROUND_SECOND_MODEL",
+  "PLAYGROUND_SECOND_BASE_URL",
+  "PLAYGROUND_GATEWAY_ACCOUNT",
+  "PLAYGROUND_GATEWAY_ID",
+] as const;
 
 const isYes = (answer: string) => /^y(es)?$/i.test(answer.trim());
 
@@ -140,10 +153,14 @@ async function main(): Promise<void> {
       manifest = await createNewManifest(name, arguments_.supplied, terminal, runner);
     }
     if (manifest.container) requireDocker();
+    // The operator supplies the AI Gateway to setup. The manifest records it as external, thus removal keeps it.
+    manifest = recordGateway(manifest, local.PLAYGROUND_GATEWAY_ID);
+    // The Provider selections of setup. Each value that setup did not write stays out.
+    const setupVariables = Object.fromEntries(
+      PROVIDER_VARIABLES.flatMap((name) => (local[name] ? [[name, local[name]]] : [])),
+    );
     const variables = {
-      PLAYGROUND_PROVIDER: local.PLAYGROUND_PROVIDER ?? "",
-      PLAYGROUND_MODEL: local.PLAYGROUND_MODEL ?? "",
-      ...(local.PLAYGROUND_BASE_URL && { PLAYGROUND_BASE_URL: local.PLAYGROUND_BASE_URL }),
+      ...setupVariables,
       // The Worker offers container Scripts only when this variable names where the containers run.
       ...(manifest.container && { PLAYGROUND_CONTAINERS: "cloudflare" }),
       // The OAuth Connections of the MCP scenario need the public origin, which an earlier deploy recorded.
@@ -153,6 +170,8 @@ async function main(): Promise<void> {
     await writeCloudflareConfig(configFile, buildCloudflareConfig(base, manifest, variables));
     const secrets = {
       PROVIDER_API_KEY: local.PROVIDER_API_KEY ?? "",
+      ...(local.SECOND_PROVIDER_API_KEY && { SECOND_PROVIDER_API_KEY: local.SECOND_PROVIDER_API_KEY }),
+      ...(local.GATEWAY_TOKEN && { GATEWAY_TOKEN: local.GATEWAY_TOKEN }),
       PLAYGROUND_TOKEN: local.PLAYGROUND_TOKEN ?? "",
       KARMI_KEYRING: local.KARMI_KEYRING ?? "",
     };

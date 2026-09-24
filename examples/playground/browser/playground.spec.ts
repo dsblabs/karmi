@@ -70,9 +70,9 @@ test("reset cancels the pending Approval and restores the scenario", async ({ pa
 
 test("a scenario that is not built shows its status and prerequisites", async ({ page }) => {
   await open(page);
-  await page.getByRole("link", { name: /Provider switching/ }).click();
+  await page.getByRole("link", { name: /Test kit, doctor/ }).click();
   await expect(page.locator("main")).toContainText("incomplete");
-  await expect(page.locator("main")).toContainText("AI Gateway needs a Cloudflare account");
+  await expect(page.locator("main")).toContainText("Deployment needs a Cloudflare account");
   await page.getByRole("link", { name: "Feature coverage" }).click();
   await expect(page.locator("table")).toContainText("Approvals");
 });
@@ -789,6 +789,55 @@ test("a vector search finds a guide by meaning, and a rebuild restores a cleared
   await page.getByRole("button", { name: "Reset scenario" }).click();
   await expect(page.locator("#steps")).toBeEmpty();
   await expect(passages).toContainText("Search here, or run a suggested prompt.");
+});
+
+test("a switch of the profile moves the Thread to a second Provider, and a Provider Tool runs apart from a Harness Tool", async ({
+  page,
+}) => {
+  await openScenario(page, "providers");
+  const agent = page.locator("#provider-agent");
+  await expect(agent).toContainText("fake/model");
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps .agent").last()).toContainText("fake answered with model.");
+  await expect(page.locator("#provider-steps")).toContainText("default");
+
+  // The default profile accepts no Provider Tool. The Scope rejects the grant.
+  await page.getByLabel("Grant the Provider Tool web_search").check();
+  await page.getByRole("button", { name: "Save the Agent" }).click();
+  await expect(page.locator("#provider-result")).toContainText("capability.unavailable");
+
+  await page.getByLabel("Provider profile").selectOption("second");
+  await expect(agent).toContainText("accepts these Provider Tools: web_search");
+  await page.getByRole("button", { name: "Save the Agent" }).click();
+  await expect(page.locator("#saved")).toContainText("runs on the profile second");
+  await page.getByRole("button", { name: "Provider Tool", exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps")).toContainText("This model Step runs on the profile second");
+  await expect(page.locator("#steps .tool")).toContainText("Provider Tool call: web_search");
+  await expect(page.locator("#steps .agent").last()).toContainText("anthropic answered with claude-test.");
+  await expect(page.locator("#provider-calls")).toContainText("Provider Tool");
+
+  await page.getByRole("button", { name: "Harness Tool", exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#provider-calls")).toContainText("Harness Tool");
+
+  // A Provider Tool cannot wait for an Approval.
+  await page.getByLabel("Permission Policy rule for web_search").selectOption("ask");
+  await page.getByRole("button", { name: "Save the Agent" }).click();
+  await expect(page.locator("#provider-result")).toContainText("policy.ask-on-provider-tool");
+
+  await page.getByLabel("Provider profile").selectOption("gateway");
+  await page.getByLabel("Permission Policy rule for web_search").selectOption("none");
+  await page.getByRole("button", { name: "Save the Agent" }).click();
+  await expect(page.locator("#saved")).toContainText("runs on the profile gateway");
+  await page.getByRole("button", { name: "Which model", exact: true }).click();
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#provider-usage")).toContainText("log-");
+  await expect(page.locator("#provider-usage")).toContainText("Not reported");
+
+  await page.getByRole("button", { name: "Reset scenario" }).click();
+  await expect(page.locator("#steps")).toBeEmpty();
+  await expect(agent).toContainText("fake/model");
 });
 
 test("a container Script reads the sample files, and each artifact downloads", async ({ page }) => {

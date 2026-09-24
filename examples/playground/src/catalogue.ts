@@ -7,6 +7,7 @@ import { ledgerAgent, postEntry, readLedger } from "./ledger";
 import { librarianAgent } from "./librarian";
 import { scopeDeskAgent } from "./lifecycle";
 import { forksAgent } from "./media-forks";
+import { shopHours } from "./provider-desk";
 import { mcpDeskAgent } from "./remote-mcp";
 import { buyerAgent, listSuppliers, managerAgent, placeOrder } from "./purchases";
 import { getOrder, refundAgent, refundOrder } from "./refund";
@@ -41,6 +42,7 @@ export const catalogue = (model: string, retriever: Retriever): CatalogueInput =
     readOrder,
     packBox,
     cancelOrder,
+    shopHours,
   ],
   fragments: [shopPolicy, sampleFiles],
   skills: [restock],

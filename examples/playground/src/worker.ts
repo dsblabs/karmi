@@ -1,8 +1,7 @@
 import { createKarmi } from "@karmi/core";
 import { env } from "cloudflare:workers";
 import { createPlayground } from "./app";
-import { readSetup } from "./provider-options";
-import { ADAPTER, buildProvider } from "./providers";
+import { deploymentProviders, profilesOf } from "./providers";
 import { catalogue } from "./catalogue";
 import { playgroundLogger } from "./observability";
 import { CONTAINER_IMAGE, containerRuntime } from "./containers";
@@ -12,10 +11,12 @@ import { semanticRetriever, vectorizeIndex } from "./vectors";
 
 // `pnpm setup` writes the selection and the credential to `.dev.vars`. Without it, the Playground still starts
 // and tells the operator what is missing.
-const apiKey = env.PROVIDER_API_KEY;
-const setup = apiKey ? readSetup(env) : undefined;
+const deployment = deploymentProviders(env);
+const setup = deployment?.setup;
+const profiles = deployment?.choices ?? [];
 
-const model = `${ADAPTER}/${setup?.model ?? "none"}`;
+// Each Agent of the other scenarios uses the `default` profile, which is the first choice.
+const model = profiles[0]?.model ?? "none/none";
 
 // `pnpm dev:containers` and a deployment with container Scripts set this variable. Without it, the KARMI_SANDBOX
 // binding has no container behind it, thus the Worker offers no container Scripts.
@@ -34,27 +35,19 @@ const karmi = createKarmi({
   logger: playgroundLogger(),
   ...(containers && { sandbox: { image: CONTAINER_IMAGE } }),
   ...("origin" in oauth && { oauth: { origin: oauth.origin, clientName: CLIENT_NAME } }),
-  ...(setup &&
-    apiKey && {
-      providers: { [ADAPTER]: buildProvider(setup) },
-      // The credential is a name in the profile, never a value.
-      credentials: { provider: apiKey },
-      defaults: {
-        providers: {
-          default: {
-            adapter: ADAPTER,
-            credential: "deployment:provider",
-            ...(setup.baseUrl && { baseUrl: setup.baseUrl }),
-          },
-        },
-      },
-    }),
+  ...(deployment && {
+    providers: deployment.providers,
+    // A profile names each credential, never a value.
+    credentials: deployment.credentials,
+    defaults: { providers: profilesOf(profiles) },
+  }),
 });
 
 const playground = createPlayground({
   karmi,
   model,
   setup,
+  profiles,
   token: env.PLAYGROUND_TOKEN,
   data: env.PLAYGROUND_DATA,
   media: env.KARMI_MEDIA,

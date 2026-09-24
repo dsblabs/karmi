@@ -38,14 +38,14 @@ export const scopeDeskAgent = (model: string) =>
   });
 
 /**
- * The Scope config of the disposable Scope. Its profile uses the Provider of setup with the Scope credential.
- * With `fallback`, a Step without that credential runs under the Deployment profile of setup.
+ * The Scope config of the disposable Scope. Its profile is the Deployment profile of setup, `base`, with the Scope
+ * credential in place of the Deployment credential. With `fallback`, a Step without that credential runs under the
+ * Deployment profile. Without setup, `base` is undefined and the profile names no adapter that exists.
  */
-export function lifecycleConfig(model: string, baseUrl: string | undefined, fallback: boolean): ScopeConfigDocument {
+export function lifecycleConfig(base: ProviderConfig | undefined, fallback: boolean): ScopeConfigDocument {
   const profile: ProviderConfig = {
-    adapter: model.slice(0, model.indexOf("/")),
+    ...(base ?? { adapter: "none" }),
     credential: `scope:${CREDENTIAL}`,
-    ...(baseUrl && { baseUrl }),
     ...(fallback && { fallback: { profile: DEPLOYMENT_PROFILE, on: ["missing"] } }),
   };
   return { providers: { [PROFILE]: profile } };

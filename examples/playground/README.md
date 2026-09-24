@@ -2,7 +2,7 @@
 
 The Playground is the example webapp of karmi. It shows the Framework through guided scenarios that you run in a browser. Each scenario uses real model calls and real Framework behavior. The business systems are sample data.
 
-This version has fifteen browser scenarios:
+This version has seventeen browser scenarios:
 
 - **Approve or deny a refund**
 - **Change an Agent at runtime**
@@ -19,6 +19,8 @@ This version has fifteen browser scenarios:
 - **Container Scripts, files and artifacts**
 - **Scope lifecycle, credentials and key rotation**
 - **Remote MCP Tools and OAuth Connections**
+- **Vector retrieval and index rebuild**
+- **Provider switching, Provider Tools and AI Gateway**
 
 It also has Cloudflare deployment and removal commands.
 
@@ -42,11 +44,11 @@ pnpm setup
 pnpm dev
 ```
 
-1. `pnpm setup` asks for the Provider, the model and the credential. It prints your access token.
+1. `pnpm setup` asks for the Provider, the model and the credential. It then asks for an optional second Provider and an optional AI Gateway, which the [Provider scenario](#the-provider-scenario) uses. It prints your access token.
 2. `pnpm dev` starts the Worker with the local Cloudflare emulation of wrangler. It prints the URL.
 3. Open the URL and enter the access token.
 
-`pnpm setup` writes `.dev.vars`. Git ignores this file. The file holds the Provider credential, the access token and the key ring. Run `pnpm setup` again to change the Provider or the model. The command keeps the access token and the key ring.
+`pnpm setup` writes `.dev.vars`. Git ignores this file. The file holds the Provider credentials, the access token and the key ring. Run `pnpm setup` again to change the Provider or the model. The command keeps the access token and the key ring.
 
 The terminal shows the credential while you type it.
 
@@ -593,9 +595,56 @@ A Turn can offer a Tool only from a tool list. Thus step 4 needs a tool list wit
 
 The Agent and the config are in [`src/remote-mcp.ts`](./src/remote-mcp.ts). The routes are in [`src/mcp-routes.ts`](./src/mcp-routes.ts).
 
+## The Provider scenario
+
+**Provider switching, Provider Tools and AI Gateway** has an Agent `provider-desk` that the Worker stores in the sample Scope with `scope.agents.put`. Its Agent Spec names a Provider profile in `model.providerProfile`. The Agent has the Harness Tool `shop_hours` and can get the Provider Tool `web_search`.
+
+The profiles come from `pnpm setup`. Each one is in `defaults.providers` of `createKarmi`:
+
+| Profile | What it is | When it exists |
+| --- | --- | --- |
+| `default` | The Provider and the model of setup. Each other scenario uses it. | Always |
+| `second` | A second Provider and model. It can be a second model of the same Provider. | You gave a second Provider to `pnpm setup` |
+| `gateway` | The Provider of setup, with each call through your Cloudflare AI Gateway | You gave a gateway to `pnpm setup`. A custom endpoint cannot use one. |
+
+A model id starts with the Provider id, for example `openai/gpt-5`. The Worker registers each Provider under the adapter name that karmi expects for Provider Tools: `anthropic` for the Anthropic Provider, and `ai-sdk` for OpenAI through the AI SDK Provider. karmi offers `web_search` only on these two adapter names.
+
+### Switch the Provider
+
+1. Select **Run** with the **Which model** prompt. The conversation shows the profile and the model of the model Step. The **Model Steps** card reads the `step.started` events.
+2. In the **Agent Spec** card, select the profile `second` and select **Save the Agent**. The Scope stores a new version. The Thread stays.
+3. Select **Run** again. The next Turn of the same Thread runs on the second Provider with the earlier conversation. The **Model Steps** card shows each Turn with its profile, its model and its Spec version.
+
+### Provider Tools
+
+A Provider Tool runs at the Provider, inside the model call. A Harness Tool runs in the Worker, after the Permission Policy allows the call.
+
+1. Read the sentence below the profile select. It tells the Provider Tools that karmi accepts on the profile. The page asks the Scope with `scope.agents.validate`, thus it shows the rule of the Framework.
+2. Select **Grant the Provider Tool web_search** and **Save the Agent**. On a profile without Provider Tools, the Scope rejects the Spec with `capability.unavailable`.
+3. Select **Run** with the **Provider Tool** prompt. The conversation shows a **Provider Tool call** card. The event log has `server_tool.called` and `server_tool.result`.
+4. Select **Run** with the **Harness Tool** prompt. The model calls `shop_hours`, and the event log has `tool.call` and `tool.result`. The **Tool calls** card shows each call with where it ran.
+5. Select `deny` as the rule for `web_search` and save. The Harness removes `web_search` from the next request, and the model cannot search.
+6. Select `ask` and save. The Scope rejects the Spec with `policy.ask-on-provider-tool` and keeps the stored version. The Provider runs the Tool inside the model call, thus no call can wait for an Approval.
+
+The grant permits 2 calls in a Turn and 6 in the Thread. At the limit, the Harness removes the Tool from the next request. No `before-tool` Hook runs for a Provider Tool.
+
+### AI Gateway
+
+The Playground does not create a gateway. Create one in the Cloudflare dashboard and give its account id, its id and a token with AI Gateway Run to `pnpm setup`. Cloudflare also makes a gateway with the id `default` at the first authenticated request. An unauthenticated gateway needs no token.
+
+1. Select the profile `gateway`, then **Save the Agent** and **Run**.
+2. Read the **Usage records** card. The record of the call has the gateway log id, from the `cf-aig-log-id` header. Find the same id in the logs of the gateway in the Cloudflare dashboard.
+3. The cost says **Not reported**. Cloudflare AI Gateway reports no cost in its answer, and karmi never prices tokens.
+
+The Anthropic Provider sends each call to the Anthropic path of the gateway. For OpenAI, Google Gemini and OpenRouter, the AI SDK client gets the path of the Provider below the gateway as its base URL. Each call has the gateway token in `cf-aig-authorization` and the Scope, Agent, Thread and Turn in `cf-aig-metadata`. The Scoped fetch of a gateway profile reaches only the gateway host.
+
+A reset cancels and deletes the Thread and stores the starting Spec again: the profile `default` without `web_search`. It does not change `.dev.vars` or another scenario.
+
+The Agent is in [`src/provider-desk.ts`](./src/provider-desk.ts). The profiles are in [`src/providers.ts`](./src/providers.ts). The routes are in [`src/provider-routes.ts`](./src/provider-routes.ts).
+
 ## Model limits
 
-These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Knowledge, vector retrieval, Usage and logging, isolate Scripts, container Scripts and remote MCP.
+These scenarios need a model that supports Tool calls: refund, Tools, Turn control, Schedules, Compaction and recovery, Delegation, Memory, Knowledge, vector retrieval, Usage and logging, isolate Scripts, container Scripts, remote MCP and the Harness Tool prompt of the Provider scenario. The second profile of the Provider scenario can use a different Provider: check that its model supports Tool calls.
 
 The Playground cannot check this for OpenRouter or a custom endpoint. Each of these scenarios shows a note before you run it. A model without Tool calls answers in text only, and no Tool call appears.
 
@@ -636,7 +685,7 @@ A deployment without container Scripts can add them later. When you run the comm
 
 The command then asks whether to enable vector retrieval. Before you answer, it tells what vector retrieval needs: Workers AI, which embeds the text, and a Vectorize index. Both are on the Workers Free and Paid plans, and Cloudflare bills the use above the free allocation. A yes creates the index `<deployment name>-vectors` with 1024 dimensions, the cosine metric and a string metadata index on `knowledge` and on `doc`. The Framework filters on them, thus the command makes them before the first vector. The Worker gets the Workers AI binding `KARMI_AI` and the Vectorize binding `KNOWLEDGE_VECTORS`. The base `wrangler.jsonc` has neither binding, because `wrangler dev` needs a Cloudflare login for them. Before it creates the index, the command checks that no index has that name, and it records the index in the manifest. A deployment without vector retrieval can add it later, as for container Scripts.
 
-The command stores the Provider credential, access token and key ring as Worker secrets. It writes non-secret Provider settings as Worker variables.
+The command stores the Provider credentials, the gateway token, the access token and the key ring as Worker secrets. It writes the non-secret Provider and gateway settings as Worker variables. The manifest records the AI Gateway of setup as a supplied resource, and removal keeps it.
 
 The command records ownership in `.deployments/<name>/manifest.json` before it creates resources. Git ignores this directory. Keep the manifest until removal finishes.
 
@@ -656,7 +705,7 @@ pnpm deploy karmi-playground-a1b2c3d4 --bucket existing-media --queue existing-q
 
 `--vector-index existing-vectors` supplies a Vectorize index and selects vector retrieval. It also adds vector retrieval to a deployment that exists already. The command refuses an index without 1024 dimensions, the cosine metric and a string metadata index on `knowledge` and on `doc`. Do not give one index to two Playground deployments: each one writes to the namespaces `sample-a` and `sample-b`, and a remove in one deployment deletes the vectors of the other.
 
-The base deployment does not create optional services. Future optional integrations can add owned or external resources to the same manifest.
+The base deployment does not create optional services. The deployment never creates an AI Gateway.
 
 ## Remove a Cloudflare deployment
 
@@ -667,6 +716,8 @@ pnpm run remove karmi-playground-a1b2c3d4
 ```
 
 The command removes the owned Worker, Queues and R2 bucket. It deletes all objects in the owned R2 bucket before it deletes the bucket. After the Worker, it deletes the owned container application and each image in the Cloudflare registry with the name of the application. It then deletes the owned Vectorize index with its vectors. Worker deletion removes its Durable Object storage and its Worker Loader binding. The command preserves each external resource in the manifest.
+
+The command keeps the AI Gateway of setup and its logs, because the Playground did not create it.
 
 A supplied Vectorize index keeps the vectors that the Playground wrote. The command cannot reach the Knowledge Durable Objects, which list them. To delete them, reset the vector retrieval scenario before you remove the deployment.
 
@@ -696,6 +747,8 @@ The tests of the MCP scenario use the fake MCP servers of the Test kit in [`test
 The tests run container Scripts on a fake container runtime through the `sandbox.driver` option of `createKarmi`, in [`test/container-driver.ts`](./test/container-driver.ts). The Harness, the Workspace, the Jobs and the artifacts are real. The fake runs no code and enforces no network rule, thus only a deployment shows the network rules.
 
 The tests of the vector retrieval scenario use a deterministic Embedder and an index in the memory of the Worker, in [`test/vector-index.ts`](./test/vector-index.ts). The Retriever, the Knowledge Durable Object, the rebuild and the destroy are real.
+
+The tests of the Provider scenario register the scripted Provider under the adapter names `anthropic` and `ai-sdk`. The script streams a Provider Tool call and a gateway log id as a real adapter does. Unit tests check the gateway URL and the `cf-aig-*` headers of the OpenAI and the Anthropic clients against a recording `fetch`. No check with a real Provider, a real Provider Tool or a real AI Gateway ran yet.
 
 Before the first browser check, run `pnpm exec playwright install chromium`. No test needs a credential.
 

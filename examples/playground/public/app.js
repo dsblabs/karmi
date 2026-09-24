@@ -306,6 +306,21 @@ function stockCards({ stock, tools, policy }) {
   ];
 }
 
+/** Shows why a save failed. A Spec that did not pass validation lists each issue with its code and its path. */
+function showRejection(result, error) {
+  result.className = "error";
+  result.replaceChildren(
+    error.issues ? "The Scope rejected the Spec and keeps the stored version." : error.message,
+    el(
+      "ul",
+      {},
+      ...(error.issues ?? []).map((issue) =>
+        el("li", { textContent: `${issue.code} at ${issue.path}: ${issue.message}` }),
+      ),
+    ),
+  );
+}
+
 function specCards({ agent, prompt, presets, ceilings }, onSaved) {
   const editor = el("textarea", { id: "spec", className: "editor", ariaLabel: "Agent Spec", spellcheck: false });
   editor.value = JSON.stringify(agent.spec, null, 2);
@@ -326,17 +341,7 @@ function specCards({ agent, prompt, presets, ceilings }, onSaved) {
       const next = await api("PUT", "/api/scenarios/agents/spec", spec);
       onSaved(next, `The Scope stored version ${next.agent.version}. A new Thread uses it.`);
     } catch (error) {
-      result.className = "error";
-      result.replaceChildren(
-        error.issues ? "The Scope rejected the Spec and keeps the stored version." : error.message,
-        el(
-          "ul",
-          {},
-          ...(error.issues ?? []).map((issue) =>
-            el("li", { textContent: `${issue.code} at ${issue.path}: ${issue.message}` }),
-          ),
-        ),
-      );
+      showRejection(result, error);
     } finally {
       save.disabled = false;
     }
@@ -2520,6 +2525,229 @@ function mcpCards(
   return [serverCard, toolsCard, accessCard, policyCard].filter(Boolean);
 }
 
+// The settings that the operator selected in the Agent card and did not save yet. A save clears them.
+const providerForm = { draft: undefined };
+
+const PROVIDER_POLICIES = {
+  none: "No rule: the grant allows it",
+  allow: "allow",
+  deny: "deny",
+  ask: "ask (not valid)",
+};
+
+/**
+ * The Provider scenario: the settings of the stored Agent Spec, the Provider profiles of setup, the profile of each
+ * model Step, each Tool call with where it ran, and the Usage records with the gateway log id.
+ */
+function providerCards({ profiles, agent, steps, calls, usage }, onChanged, isCurrent) {
+  if (!agent) return [el("p", { className: "card muted", textContent: "No Provider is set up. Run pnpm setup." })];
+  const settings = providerForm.draft ?? agent.settings;
+  const edit = (change) => (providerForm.draft = { ...settings, ...providerForm.draft, ...change });
+  const profileOf = (name) => profiles.find((profile) => profile.name === name);
+
+  const result = el("p", { id: "provider-result", className: "fine" });
+  const profile = el(
+    "select",
+    { id: "provider-profile", ariaLabel: "Provider profile" },
+    ...profiles.map((entry) => el("option", { value: entry.name, textContent: `${entry.name}: ${entry.model}` })),
+  );
+  profile.value = settings.profile;
+  const webSearch = el("input", { id: "provider-web-search", type: "checkbox", checked: settings.webSearch });
+  const policy = el(
+    "select",
+    { id: "provider-policy", ariaLabel: "Permission Policy rule for web_search" },
+    ...Object.entries(PROVIDER_POLICIES).map(([value, label]) => el("option", { value, textContent: label })),
+  );
+  policy.value = settings.policy;
+  const support = el("p", { className: "fine" });
+  const showSupport = () => {
+    const tools = profileOf(profile.value)?.providerTools ?? [];
+    const code = (text) => el("code", { textContent: text });
+    support.replaceChildren(
+      ...(tools.length
+        ? ["The profile ", code(profile.value), " accepts these Provider Tools: ", ...tools.map(code), "."]
+        : [
+            "The profile ",
+            code(profile.value),
+            " accepts no Provider Tool. A grant gets ",
+            code("capability.unavailable"),
+            ".",
+          ]),
+    );
+  };
+  showSupport();
+  profile.onchange = () => {
+    edit({ profile: profile.value });
+    showSupport();
+  };
+  webSearch.onchange = () => edit({ webSearch: webSearch.checked });
+  policy.onchange = () => edit({ policy: policy.value });
+  const save = el("button", { id: "save-provider", className: "primary", textContent: "Save the Agent" });
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      const body = { profile: profile.value, webSearch: webSearch.checked, policy: policy.value };
+      const next = await api("POST", "/api/scenarios/providers/agent", body);
+      providerForm.draft = undefined;
+      if (isCurrent())
+        onChanged(
+          next,
+          `The Scope stored version ${next.agent.version}. The next Turn of this Thread runs on the profile ${body.profile}.`,
+        );
+    } catch (error) {
+      showRejection(result, error);
+    } finally {
+      save.disabled = false;
+    }
+  };
+  const agentCard = el(
+    "div",
+    { className: "card titled", id: "provider-agent" },
+    el("h3", {}, "Agent Spec", el("span", { className: "badge", textContent: `version ${agent.version}` })),
+    rows(
+      ["Profile", el("code", { textContent: agent.settings.profile })],
+      ["Model", el("code", { textContent: agent.spec.model.id })],
+      [
+        "web_search",
+        agent.settings.webSearch
+          ? el("span", {}, "granted, Policy rule: ", el("code", { textContent: agent.settings.policy }))
+          : "not granted",
+      ],
+    ),
+    el("h4", { textContent: "Change the Agent" }),
+    el("div", { className: "row" }, profile),
+    support,
+    el("div", { className: "row" }, el("label", {}, webSearch, " Grant the Provider Tool web_search")),
+    el("div", { className: "row" }, policy),
+    el("div", { className: "row" }, save),
+    result,
+    el(
+      "p",
+      { className: "fine" },
+      "A save stores a new version of the Agent Spec and keeps the Thread. A Provider Tool can only be allowed or denied: an ask rule gets ",
+      el("code", { textContent: "policy.ask-on-provider-tool" }),
+      ".",
+    ),
+  );
+
+  const stepsCard = el(
+    "div",
+    { className: "card", id: "provider-steps" },
+    el("h3", { textContent: "Model Steps" }),
+    steps.length
+      ? el(
+          "ul",
+          {},
+          ...steps.map((step) =>
+            el(
+              "li",
+              {},
+              `Turn ${step.turn}: `,
+              el("code", { textContent: step.profile }),
+              " ",
+              el("code", { textContent: step.model }),
+              `, Spec version ${step.agentVersion}`,
+            ),
+          ),
+        )
+      : el("p", { className: "muted", textContent: "Run a prompt. Each model Step shows its profile and model here." }),
+  );
+
+  const callsCard = el(
+    "div",
+    { className: "card", id: "provider-calls" },
+    el("h3", { textContent: "Tool calls" }),
+    calls.length
+      ? el(
+          "div",
+          {},
+          ...calls.flatMap((call) => [
+            el(
+              "h4",
+              {},
+              el("code", { textContent: call.name }),
+              " ",
+              el("span", {
+                className: "badge",
+                textContent: call.runsAt === "provider" ? "Provider Tool" : "Harness Tool",
+              }),
+            ),
+            el("pre", { textContent: call.result ?? "No result yet." }),
+          ]),
+        )
+      : el("p", {
+          className: "muted",
+          textContent: "Run the Harness Tool or the Provider Tool prompt. Each call shows here with where it ran.",
+        }),
+    el("p", {
+      className: "fine",
+      textContent:
+        "The Harness runs shop_hours in the Worker after the Permission Policy allows it. The Provider runs web_search inside the model call, thus no before-tool Hook and no Approval can stop it.",
+    }),
+  );
+
+  const usageCard = el(
+    "div",
+    { className: "card", id: "provider-usage" },
+    el("h3", { textContent: "Usage records" }),
+    usage.length
+      ? el(
+          "ul",
+          {},
+          ...usage.map((record) =>
+            el(
+              "li",
+              {},
+              `seq ${record.seq} on `,
+              el("code", { textContent: record.profile }),
+              `: ${tokenLine(record)}. Cost: `,
+              record.cost
+                ? el("code", { textContent: `${record.cost.amount} ${record.cost.currency}` })
+                : "Not reported",
+              ". Gateway log: ",
+              record.gateway ? el("code", { textContent: record.gateway.id }) : "none",
+            ),
+          ),
+        )
+      : el("p", { className: "muted", textContent: "Run a prompt. Each model call writes a Usage record." }),
+    el("p", {
+      className: "fine",
+      textContent:
+        "Cloudflare AI Gateway reports no cost in its answer. Find the gateway log id in the logs of the gateway in the Cloudflare dashboard.",
+    }),
+  );
+
+  const profilesCard = el(
+    "details",
+    { className: "card", id: "provider-profiles" },
+    el("summary", {}, `Provider profiles of setup (${profiles.length})`),
+    ...profiles.flatMap((entry) => [
+      el("h4", {}, el("code", { textContent: entry.name }), ` ${entry.label}`),
+      rows(
+        ["Model", el("code", { textContent: entry.model })],
+        [
+          "Provider Tools",
+          entry.providerTools.length ? el("code", { textContent: entry.providerTools.join(", ") }) : "none",
+        ],
+        [
+          "AI Gateway",
+          entry.config.gateway
+            ? el("code", { textContent: `${entry.config.gateway.accountId}/${entry.config.gateway.gatewayId}` })
+            : "none",
+        ],
+      ),
+      el("pre", { textContent: JSON.stringify(entry.config, null, 2) }),
+    ]),
+    el("p", {
+      className: "fine",
+      textContent:
+        "A profile names each credential, never a value. pnpm setup adds the second and the gateway profile.",
+    }),
+  );
+
+  return [agentCard, stepsCard, callsCard, usageCard, profilesCard];
+}
+
 // The cards next to the conversation, by scenario id.
 const PANELS = {
   refund: (state) => [orderCard(state.order)],
@@ -2538,6 +2766,7 @@ const PANELS = {
   "container-scripts": containerCards,
   scopes: lifecycleCards,
   mcp: mcpCards,
+  providers: providerCards,
 };
 
 /**
@@ -2760,7 +2989,8 @@ async function renderScenario(scenario) {
     if (follow) steps.scrollTop = steps.scrollHeight;
     return node;
   };
-  const toolCard = (id, name, input) => {
+  // `kind` names who runs the call: the Harness for a Tool call, or the Provider for a Provider Tool call.
+  const toolCard = (id, name, input, kind = "Tool call") => {
     let card = tools.get(id);
     if (card) return card;
     const label = el("span", { className: "state", textContent: "running" });
@@ -2768,7 +2998,7 @@ async function renderScenario(scenario) {
       el(
         "details",
         { className: "tool" },
-        el("summary", {}, el("span", {}, "Tool call: ", el("code", { textContent: name })), label),
+        el("summary", {}, el("span", {}, `${kind}: `, el("code", { textContent: name })), label),
         el("h4", { textContent: "Input" }),
         el("pre", { textContent: json(input) }),
       ),
@@ -2927,6 +3157,8 @@ async function renderScenario(scenario) {
 
   // True from the start of a compact Step until its thread.compacted event. A Step without one dropped nothing.
   let compacting = false;
+  // The profile of the last model Step that the conversation of the Provider scenario named.
+  let shownProfile;
   const onEvent = (event) => {
     // A stream that connects again after a restart of the dev server can repeat an event.
     if (Number.isInteger(event.seq)) {
@@ -2962,7 +3194,41 @@ async function renderScenario(scenario) {
         );
         refreshSoon();
         break;
+      case "server_tool.called": {
+        const card = toolCard(event.id, event.name, event.input, "Provider Tool call");
+        card.append(
+          el("p", {
+            className: "outcome",
+            textContent:
+              "The Provider runs this Tool inside the model call. The Harness does not run it, and no Approval can stop it.",
+          }),
+        );
+        break;
+      }
+      case "server_tool.result": {
+        const card = toolCard(event.id, event.name, undefined);
+        card.classList.add("done");
+        card.state.textContent = "done";
+        card.append(el("h4", { textContent: "Result summary" }), el("pre", { textContent: event.summary }));
+        tools.delete(event.id);
+        refreshSoon();
+        break;
+      }
       case "step.started":
+        if (scenario.id === "providers" && event.kind === "model" && event.profile !== shownProfile) {
+          shownProfile = event.profile;
+          add(
+            el(
+              "p",
+              { className: "outcome" },
+              "This model Step runs on the profile ",
+              el("code", { textContent: event.profile }),
+              " with ",
+              el("code", { textContent: event.model }),
+              ".",
+            ),
+          );
+        }
         if (event.kind === "compact") {
           compacting = true;
           add(
