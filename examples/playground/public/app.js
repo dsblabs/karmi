@@ -121,6 +121,10 @@ function render() {
 }
 
 function intro(scenario, ...actions) {
+  // The notes stay closed, thus the conversation gets the height of the view. Only the reason why a scenario cannot
+  // run stays open, because the operator cannot use the scenario without it.
+  const notes = [...scenario.modelNotes, ...(scenario.notes ?? [])];
+  const { prerequisites } = scenario;
   return el(
     "section",
     { className: "intro" },
@@ -132,21 +136,32 @@ function intro(scenario, ...actions) {
       el("div", { className: "actions" }, ...actions),
     ),
     el("p", { textContent: scenario.summary }),
-    el(
-      "div",
-      { className: "notes" },
-      scenario.reason && el("p", { className: "note", textContent: scenario.reason }),
-      ...scenario.modelNotes.map((note) => el("p", { className: "note", textContent: note })),
-      ...(scenario.notes ?? []).map((note) => el("p", { className: "note", textContent: note })),
-      scenario.prerequisites.length > 0 &&
+    scenario.reason && el("p", { className: "note", textContent: scenario.reason }),
+    notes.length + prerequisites.length > 0 &&
+      el(
+        "details",
+        { className: "notes" },
+        el("summary", {}, notesLabel(notes.length, prerequisites.length)),
         el(
           "div",
-          { className: "card" },
-          el("h3", { textContent: "Prerequisites" }),
-          el("ul", {}, ...scenario.prerequisites.map((text) => el("li", { textContent: text }))),
+          {},
+          ...notes.map((note) => el("p", { className: "note", textContent: note })),
+          prerequisites.length > 0 &&
+            el(
+              "div",
+              { className: "card" },
+              el("h3", { textContent: "Prerequisites" }),
+              el("ul", {}, ...prerequisites.map((text) => el("li", { textContent: text }))),
+            ),
         ),
-    ),
+      ),
   );
+}
+
+// The summary of the closed notes of a scenario, with the number of each kind of item.
+function notesLabel(notes, prerequisites) {
+  const count = (number, word) => (number === 0 ? [] : [`${String(number)} ${word}${number === 1 ? "" : "s"}`]);
+  return `Notes and prerequisites (${[...count(notes, "note"), ...count(prerequisites, "prerequisite")].join(", ")})`;
 }
 
 function renderCoverage() {
@@ -1837,8 +1852,7 @@ async function renderScenario(scenario) {
               className: "fine",
               textContent: "The file goes with the next message only. A message without a file sends only text.",
             }),
-          el("div", { className: "row" }, run, target, status),
-          controls.length > 0 && el("div", { className: "row" }, ...controls),
+          el("div", { className: "row" }, run, target, ...controls, status),
         ),
       ),
       el(
