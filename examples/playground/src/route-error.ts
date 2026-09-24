@@ -11,6 +11,7 @@ export type RouteErrorCode =
   | "playground.forkPosition"
   | "playground.noJob"
   | "playground.noUsageBatch"
+  | "playground.notRecording"
   | "playground.oauthUnavailable"
   | "playground.originalDeleted"
   | "playground.profileUnknown"

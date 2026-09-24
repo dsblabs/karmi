@@ -21,6 +21,7 @@ import { sampleData, type SampleDataDO } from "./sample-data";
 import { scriptRuns } from "./script-runs";
 import { decodeScriptOrders, SCRIPT_LIMITS, scriptsAgent, SCRIPTS } from "./scripts";
 import { adjustStock, checkStock, decodeStock, deleteProduct, STOCKROOM, stockroomAgent } from "./stockroom";
+import { FRONT_DESK, TRANSPORT_REQUESTS, TRANSPORTS } from "./transports";
 
 /** The sample Scope that the scenarios run in. */
 export const SCOPE = "sample-a";
@@ -310,5 +311,6 @@ export function scenarioRuntimes(scope: () => Scope, model: string): Record<stri
     [SCRIPTS]: scriptsRuntime(model),
     [CONTAINERS]: containersRuntime(model),
     [OBSERVABILITY]: observabilityRuntime(),
+    [TRANSPORTS]: { agent: FRONT_DESK, view: () => ({ requests: TRANSPORT_REQUESTS }) },
   };
 }

@@ -118,6 +118,11 @@ function render() {
   $("main").scrollTop = 0;
   scrollTo(0, 0);
   if (current === "coverage") renderCoverage();
+  else if (scenario?.walkthrough)
+    $("main").replaceChildren(
+      intro(scenario, el("a", { href: scenario.code, target: "_blank", textContent: "Example code" })),
+      walkthroughSteps(scenario),
+    );
   else if (scenario?.built) void renderScenario(scenario);
   else if (scenario) $("main").replaceChildren(intro(scenario));
 }
@@ -2748,6 +2753,161 @@ function providerCards({ profiles, agent, steps, calls, usage }, onChanged, isCu
   return [agentCard, stepsCard, callsCard, usageCard, profilesCard];
 }
 
+const TRANSPORT_LABELS = { sse: "Server-Sent Events", websocket: "WebSocket" };
+
+// The guided request that the operator selected, and the last answer. The side column renders again on each event.
+const requestForm = { index: 0, answer: undefined };
+
+/**
+ * Sends one guided request to a Thread route as it is. It does not use the `api` function, because a request
+ * without the token must show its 401 answer, not the token form.
+ */
+async function sendGuided(request, threadKey) {
+  const response = await fetch(request.path.replace("{key}", threadKey), {
+    method: request.method,
+    headers: {
+      ...(request.token && { authorization: `Bearer ${token}` }),
+      ...(request.body !== undefined && { "content-type": "application/json" }),
+    },
+    ...(request.body !== undefined && { body: JSON.stringify(request.body) }),
+  });
+  const body = await response.json().catch(() => null);
+  return { status: response.status, body };
+}
+
+function transportCards({ threadKey, requests }, _onChanged, isCurrent, stream) {
+  const transport = el(
+    "select",
+    { ariaLabel: "Transport of the event stream", onchange: () => stream.setTransport(transport.value) },
+    ...Object.entries(TRANSPORT_LABELS).map(([value, label]) => el("option", { value, textContent: label })),
+  );
+  transport.value = stream.transport;
+  const route =
+    stream.transport === "sse"
+      ? `GET /threads/${threadKey}/events?after=<last seq>\nAccept: text/event-stream`
+      : `GET /threads/${threadKey}?after=<last seq>\nUpgrade: websocket`;
+  const streamCard = el(
+    "div",
+    { className: "card titled", id: "stream" },
+    el("h3", {}, "Event stream of this page", badge(stream.attached ? "connected" : "dropped")),
+    el("p", {
+      className: "fine",
+      textContent: !stream.attached
+        ? "The page holds no stream. A Turn still runs, and the Thread stores each event. Connect again: the stream first sends each stored event after the last seq of the page."
+        : stream.transport === "sse"
+          ? "An EventSource reads the events. The id of each record is the seq of the event."
+          : "The Durable Object of the Thread owns the socket. Run sends a send frame on it, and the events arrive on the same socket.",
+    }),
+    el(
+      "div",
+      { className: "row" },
+      transport,
+      el("button", {
+        className: stream.attached ? "" : "primary",
+        textContent: stream.attached ? "Drop the stream" : "Connect again",
+        onclick: stream.toggle,
+      }),
+    ),
+    el("h4", { textContent: "Route" }),
+    el("pre", { textContent: route }),
+    rows(["Last seq of the page", stream.seq]),
+    stream.replay,
+    stream.reply && el("h4", { textContent: "Answer to the last frame" }),
+    stream.reply && el("pre", { textContent: JSON.stringify(stream.reply, null, 2) }),
+  );
+
+  return [streamCard, requestCard(threadKey, requests, isCurrent)];
+}
+
+// The card of the guided REST requests. A new selection renders the card again with the selected request.
+function requestCard(threadKey, requests, isCurrent) {
+  const selected = requests[requestForm.index] ?? requests[0];
+  const answer = el("pre", {
+    textContent: requestForm.answer ?? "Send the request. Its status and its JSON body show here.",
+  });
+  const picker = el(
+    "select",
+    {
+      ariaLabel: "Guided request",
+      onchange: () => {
+        requestForm.index = Number(picker.value);
+        requestForm.answer = undefined;
+        card.replaceWith(requestCard(threadKey, requests, isCurrent));
+      },
+    },
+    ...requests.map((request, index) => el("option", { value: String(index), textContent: request.label })),
+  );
+  picker.value = String(requests.indexOf(selected));
+  const send = el("button", {
+    className: "primary",
+    textContent: "Send the request",
+    onclick: async () => {
+      send.disabled = true;
+      answer.textContent = "Sending…";
+      try {
+        const { status, body } = await sendGuided(selected, threadKey);
+        requestForm.answer = `HTTP ${status}\n${JSON.stringify(body, null, 2)}`;
+      } catch (error) {
+        requestForm.answer = `The request failed: ${error.message}`;
+      } finally {
+        send.disabled = false;
+      }
+      if (isCurrent()) answer.textContent = requestForm.answer;
+    },
+  });
+  const request = [
+    `${selected.method} ${selected.path.replace("{key}", threadKey)}`,
+    !selected.token && "(no access token)",
+    selected.body !== undefined && `\n${JSON.stringify(selected.body)}`,
+  ];
+  const card = el(
+    "div",
+    { className: "card", id: "requests" },
+    el("h3", { textContent: "REST requests" }),
+    el("div", { className: "row" }, picker, send),
+    el("pre", { textContent: request.filter(Boolean).join("\n") }),
+    el("p", {
+      className: "fine",
+      textContent: `Expected: HTTP ${selected.status}. ${selected.shows}`,
+    }),
+    selected.code &&
+      el("p", { className: "fine" }, "Expected error code: ", el("code", { textContent: selected.code })),
+    answer,
+  );
+  return card;
+}
+
+// Resolves with the socket when it is open, or with undefined when it closes before it opens.
+function opened(socket) {
+  if (socket.readyState !== WebSocket.CONNECTING) return socket.readyState === WebSocket.OPEN ? socket : undefined;
+  return new Promise((resolve) => {
+    socket.addEventListener("open", () => resolve(socket), { once: true });
+    socket.addEventListener("close", () => resolve(undefined), { once: true });
+  });
+}
+
+// Renders a terminal walkthrough with one card for each step. A card has the commands, the output and what it means.
+function walkthroughSteps(scenario) {
+  return el(
+    "ol",
+    { className: "walkthrough" },
+    ...scenario.walkthrough.map((step) =>
+      el(
+        "li",
+        { className: "card" },
+        el("h3", { textContent: step.title }),
+        el("p", { textContent: step.purpose }),
+        el("h4", { textContent: "Run in examples/playground" }),
+        el("pre", { textContent: step.commands }),
+        step.output && el("h4", { textContent: "Output" }),
+        step.output && el("pre", { textContent: step.output }),
+        el("h4", { textContent: "Expected result" }),
+        el("p", { textContent: step.expected }),
+      ),
+    ),
+  );
+}
+
 // The cards next to the conversation, by scenario id.
 const PANELS = {
   refund: (state) => [orderCard(state.order)],
@@ -2767,6 +2927,7 @@ const PANELS = {
   scopes: lifecycleCards,
   mcp: mcpCards,
   providers: providerCards,
+  transports: transportCards,
 };
 
 /**
@@ -2890,9 +3051,17 @@ async function renderScenario(scenario) {
   let attached = true;
   // The `seq` of the newest event that the page has, thus a new stream or a plain read starts after it.
   let lastSeq = 0;
+  // The transports scenario selects the transport of the stream. `replayFrom` is the seq after which the last
+  // reconnect started, and `frameReply` is the answer to the last WebSocket frame of the page.
+  let transport = "sse";
+  let replayFrom;
+  let frameReply;
+  let frameId = 0;
+  const seqLine = el("code", { textContent: "0" });
+  const replayLine = el("p", { className: "outcome", hidden: true });
   const showPanel = () => {
     // The key is part of the comparison, because a card can act on the Thread, and a reset starts a new one.
-    const next = JSON.stringify({ state, attached });
+    const next = JSON.stringify({ state, attached, transport, frameReply });
     if (next === shownPanel) return;
     // A panel action returns the whole scenario state. A saved Spec also starts a new Thread.
     const cards = PANELS[scenario.id](
@@ -2911,7 +3080,21 @@ async function renderScenario(scenario) {
         $("panel").append(el("p", { id: "saved", className: "outcome", textContent: note }));
       },
       () => mine === view,
-      { attached, toggle: () => setAttached(!attached) },
+      {
+        attached,
+        toggle: () => setAttached(!attached),
+        transport,
+        setTransport: (next) => {
+          transport = next;
+          replayFrom = undefined;
+          replayLine.hidden = true;
+          frameReply = undefined;
+          setAttached(true);
+        },
+        seq: seqLine,
+        replay: replayLine,
+        reply: frameReply,
+      },
     );
     if (shownPanel !== undefined) cards[0].classList.add("changed");
     shownPanel = next;
@@ -2972,11 +3155,13 @@ async function renderScenario(scenario) {
       ? "This scenario cannot run with the current setup."
       : waiting > 0
         ? "The Agent waits for your decision."
-        : parked
-          ? `The Turn is parked. It waits for ${waitsFor(parked, children.size > 0)}.`
-          : busy
-            ? "The Agent works…"
-            : "Ctrl + Enter runs the prompt.";
+        : busy && !attached && scenario.id === "transports"
+          ? "The page has no stream. The Turn runs, and Connect again shows its events."
+          : parked
+            ? `The Turn is parked. It waits for ${waitsFor(parked, children.size > 0)}.`
+            : busy
+              ? "The Agent works…"
+              : "Ctrl + Enter runs the prompt.";
     // A node that moves restarts its animation, so the line moves only when it is not the last one.
     if (!(busy && waiting === 0 && !parked && !live)) typing.remove();
     else if (steps.lastChild !== typing) steps.append(typing);
@@ -3164,6 +3349,9 @@ async function renderScenario(scenario) {
     if (Number.isInteger(event.seq)) {
       if (event.seq <= lastSeq) return;
       lastSeq = event.seq;
+      seqLine.textContent = String(lastSeq);
+      if (replayFrom !== undefined)
+        replayLine.textContent = `Since the reconnect with after=${replayFrom}, the stream sent seq ${replayFrom + 1} to ${lastSeq}.`;
     }
     logCount.textContent = String(Number(logCount.textContent) + 1);
     log.append(el("pre", { textContent: JSON.stringify(event) }));
@@ -3583,7 +3771,7 @@ async function renderScenario(scenario) {
     const query = [`after=${lastSeq}`, `token=${encodeURIComponent(token)}`];
     // The Schedules scenario detaches its Subscriber. The Thread learns of a closed WebSocket at once. It can learn of
     // a closed SSE stream much later, and offline delivery stays off until then.
-    if (scenario.id !== "schedules") stream = new EventSource(threadRoute("/events", ...query));
+    if (scenario.id !== "schedules" && transport === "sse") stream = new EventSource(threadRoute("/events", ...query));
     else {
       const socket = new WebSocket(`${location.origin.replace(/^http/, "ws")}${threadRoute("", ...query)}`);
       // A WebSocket does not connect again on its own. Close code 4004 tells that the Thread no longer exists. A
@@ -3595,9 +3783,28 @@ async function renderScenario(scenario) {
       };
       stream = socket;
     }
-    stream.onmessage = (message) => onEvent(JSON.parse(message.data));
+    // A socket also carries the ack and error frames that answer a frame of the page. Only an event has a seq.
+    stream.onmessage = (message) => {
+      const data = JSON.parse(message.data);
+      if (Number.isInteger(data.seq)) onEvent(data);
+      else showReply(data);
+    };
+  };
+  const showReply = (reply) => {
+    frameReply = reply;
+    if (reply.type === "error") {
+      busy = false;
+      add(el("p", { className: "error", textContent: `The socket refused the frame: ${reply.error.message}` }));
+    }
+    showPanel();
+    sync();
   };
   const setAttached = (next) => {
+    if (next && !attached) {
+      replayFrom = lastSeq;
+      replayLine.hidden = false;
+      replayLine.textContent = `Connected again with after=${lastSeq}. No event after it arrived yet.`;
+    }
     attached = next;
     showPanel();
     listen();
@@ -3635,7 +3842,18 @@ async function renderScenario(scenario) {
     busy = true;
     sync();
     try {
-      if (file?.files[0]) {
+      const socket = transport === "websocket" && stream instanceof WebSocket ? await opened(stream) : undefined;
+      if (socket) {
+        // The transports scenario sends the Turn on the socket of the Thread. The ack frame shows in the side column.
+        socket.send(
+          JSON.stringify({
+            id: ++frameId,
+            type: "send",
+            input: { kind: "message", parts: [{ type: "text", text }] },
+            steer: joins,
+          }),
+        );
+      } else if (file?.files[0]) {
         const form = new FormData();
         form.append("text", text);
         form.append("file", file.files[0]);
@@ -3717,6 +3935,10 @@ async function renderScenario(scenario) {
     scripts.clear();
     logCount.textContent = "0";
     lastSeq = 0;
+    seqLine.textContent = "0";
+    replayFrom = undefined;
+    replayLine.hidden = true;
+    frameReply = undefined;
     live = undefined;
     busy = false;
     waiting = 0;

@@ -15,6 +15,7 @@ import { remindersAgent, sampleInbox, sendReminder } from "./reminders";
 import { lookupTicket, observabilityAgent, sampleUsageHandler } from "./observability";
 import { cancelOrder, findOrders, packBox, readOrder, scriptsAgent } from "./scripts";
 import { adjustStock, checkStock, deleteProduct, restock, stockAudit, stockroomAgent } from "./stockroom";
+import { frontDeskAgent } from "./transports";
 import { vectorAgent } from "./vectors";
 
 /**
@@ -66,6 +67,7 @@ export const catalogue = (model: string, retriever: Retriever): CatalogueInput =
     scopeDeskAgent(model),
     mcpDeskAgent(model),
     vectorAgent(model),
+    frontDeskAgent(model),
   ],
   usageHandler: sampleUsageHandler,
 });

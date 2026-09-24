@@ -15,8 +15,10 @@ import { REMINDER_PROMPTS, SCHEDULES } from "./reminders";
 import { MCP, MCP_PROMPTS } from "./remote-mcp";
 import { SCRIPT_LIMITS, SCRIPT_PROMPTS, SCRIPTS } from "./scripts";
 import { STOCKROOM, STOCKROOM_PROMPTS } from "./stockroom";
+import { TRANSPORT_PROMPTS, TRANSPORTS } from "./transports";
 import { VECTOR_BINDINGS } from "./vector-config";
 import { VECTOR_PROMPTS, VECTORS, type VectorIndex } from "./vectors";
+import { OPERATIONS, OPERATIONS_WALKTHROUGH, type WalkthroughStep } from "./walkthroughs";
 
 const CODE = "https://github.com/dsblabs/karmi/blob/main/examples/playground";
 
@@ -60,17 +62,9 @@ export interface Scenario {
   needsVectors?: boolean;
   /** What the operator must know before a run, other than a limit of the model. */
   notes?: string[];
+  /** The steps of a terminal walkthrough. A scenario with a walkthrough has no Agent and needs no Provider. */
+  walkthrough?: readonly WalkthroughStep[];
 }
-
-const notBuilt = (id: string, group: string, title: string, prerequisites: string[] = []): Scenario => ({
-  id,
-  group,
-  title,
-  summary: "The Playground does not have this scenario yet.",
-  built: false,
-  prerequisites,
-  needs: [],
-});
 
 /** Each scenario of the Playground. A scenario that is not built stays in the list with its prerequisites. */
 export const SCENARIOS: readonly Scenario[] = [
@@ -315,7 +309,24 @@ export const SCENARIOS: readonly Scenario[] = [
       "Cloudflare AI Gateway reports no cost in the answer. The Usage record has the gateway log id. karmi never prices tokens, thus the page shows no cost for these calls.",
     ],
   },
-  notBuilt("http", "HTTP and media", "WebSocket and reconnects"),
+  {
+    id: TRANSPORTS,
+    group: "HTTP and media",
+    title: "REST, SSE and WebSocket",
+    summary:
+      "The page talks to a front desk Agent through the routes of @karmi/http only. Send guided REST requests and read each answer and error. Select SSE or a WebSocket for the event stream. Drop the stream, run a Turn and connect again: the stream first sends each stored event after the last seq of the page.",
+    built: true,
+    prerequisites: [],
+    needs: [],
+    prompts: TRANSPORT_PROMPTS,
+    code: `${CODE}/src/transports.ts`,
+    notes: [
+      "An EventSource connects again on its own after a network failure, and it sends the last seq in Last-Event-ID. To see it, stop pnpm dev during a Turn and start it again.",
+      "The Durable Object of the Thread owns the WebSocket. A reset deletes the Thread, and the socket closes with the code 4004. The page does not connect again after 4004.",
+      "The page sends the access token in the query of a stream, because a browser cannot set a header on an EventSource or a WebSocket.",
+      "test/transports.test.ts sends the same requests and frames from a test. It is an example of a client of each transport.",
+    ],
+  },
   {
     id: OBSERVABILITY,
     group: "Observability",
@@ -328,9 +339,20 @@ export const SCENARIOS: readonly Scenario[] = [
     prompts: OBSERVABILITY_PROMPTS,
     code: `${CODE}/src/observability.ts`,
   },
-  notBuilt("operations", "Development and operations", "Test kit, doctor, deployment and removal", [
-    "Deployment needs a Cloudflare account.",
-  ]),
+  {
+    id: OPERATIONS,
+    group: "Development and operations",
+    title: "Test kit, doctor, deployment and removal",
+    summary:
+      "A terminal walkthrough. Run the tests with the Test kit, record the calls of a real Provider and replay them, check the configuration with karmi doctor, and diagnose a configuration failure with no change to your setup.",
+    built: true,
+    prerequisites: [
+      "A terminal in examples/playground. The recording step needs pnpm setup. Deployment and removal need a Cloudflare account.",
+    ],
+    needs: [],
+    code: `${CODE}/src/walkthroughs.ts`,
+    walkthrough: OPERATIONS_WALKTHROUGH,
+  },
 ];
 
 /** The state of a scenario for the current setup. */
@@ -363,6 +385,7 @@ export function viewScenario(
 ): ScenarioView {
   if (!scenario.built)
     return { ...scenario, status: "incomplete", reason: "This scenario is not built yet.", modelNotes: [] };
+  if (scenario.walkthrough) return { ...scenario, status: "ready", modelNotes: [] };
   if (scenario.needsLoader && !hasLoader)
     return {
       ...scenario,
@@ -443,6 +466,15 @@ const observability = row(OBSERVABILITY);
 const scripts = row(SCRIPTS);
 const knowledge = row(KNOWLEDGE);
 const lifecycle = row(LIFECYCLE);
+const transports = row(TRANSPORTS);
+// A walkthrough runs in a terminal, thus each row tells what the tests check and what a run by hand covered.
+const operations = (feature: string, observable: string, verification: string): CoverageRow => ({
+  group: "Development and operations",
+  feature,
+  scenario: OPERATIONS,
+  observable,
+  verification,
+});
 // The tests use the fake MCP servers of the Test kit. Each row tells what a check by hand with a real server covered.
 const mcp = (feature: string, observable: string, verification: string): CoverageRow => ({
   group: "Providers and MCP",
@@ -770,8 +802,31 @@ export const COVERAGE: readonly CoverageRow[] = [
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),
   shown("Cancellation on reset", "Threads", "Reset cancels a Turn that waits for an Approval."),
   shown("Deletion", "Threads", "Reset deletes the Thread of the scenario."),
-  shown("REST operations and SSE", "HTTP and media", "The browser uses the routes of @karmi/http only."),
-  shown("Errors", "HTTP and media", "A request without the access token gets a 401 answer."),
+  transports(
+    "REST operations",
+    "HTTP and media",
+    "Send each guided request. The card shows the method, the route, the HTTP status and the JSON answer. The browser uses the routes of @karmi/http only.",
+  ),
+  transports(
+    "Errors",
+    "HTTP and media",
+    "The guided requests get 401, 400 and 404 answers. Each answer has an error code and a message.",
+  ),
+  transports(
+    "Server-Sent Events",
+    "HTTP and media",
+    "With SSE selected, the EventSource gets one record for each event, and the id of the record is the seq.",
+  ),
+  transports(
+    "WebSocket",
+    "HTTP and media",
+    "With WebSocket selected, Run sends a send frame on the socket of the Thread and gets an ack with the Turn and the seq. The events arrive on the same socket.",
+  ),
+  transports(
+    "Reconnects and replay",
+    "HTTP and media",
+    "Drop the stream, run a Turn and connect again. The stream first sends each stored event after the last seq of the page, then the live events. The card tells the seq range of the replay.",
+  ),
   forks(
     "Media uploads and downloads",
     "HTTP and media",
@@ -839,14 +894,32 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Providers and MCP",
     "The gateway profile sends each call to the gateway. The Usage record has the gateway log id and no cost, because the gateway reports none.",
   ),
-  {
-    group: "Development and operations",
-    feature: "Deployment, recovery and removal",
-    scenario: "operations",
-    observable: "Terminal commands deploy, retry and remove resources from one recorded Cloudflare account.",
-    verification: "Command-boundary tests cover interruption, retry, account selection and external resources.",
-  },
-  ...SCENARIOS.filter((scenario) => !scenario.built && scenario.id !== "operations").map((scenario): CoverageRow => ({
+  operations(
+    "Test kit",
+    "pnpm test runs the Worker of the Playground in workerd with the scripted Provider, the event matchers and the Clock of the Test kit.",
+    "The walkthrough test checks that each command names a script of package.json and a test file that exists.",
+  ),
+  operations(
+    "Record and replay",
+    "pnpm dev:record and pnpm record save the calls of the front desk Agent. pnpm test test/replay.test.ts replays them with no model call.",
+    "The replay test runs in each pnpm test. Worker tests cover the recording route. By hand, pnpm dev:record and pnpm record saved the request of a real Turn, but the Provider refused the key. The sample answer was written by hand.",
+  ),
+  operations(
+    "Doctor",
+    "pnpm exec karmi doctor prints one line for each check of wrangler.jsonc and the Worker entry, and exits with code 0.",
+    "The walkthrough test runs the checks of the doctor and compares the lines with the walkthrough. The command itself, with its exit code, was checked by hand.",
+  ),
+  operations(
+    "Diagnosis of a configuration failure",
+    "karmi doctor with a copy of wrangler.jsonc without a migration prints a FAIL line that names the class and the fix, and exits with code 1. wrangler.jsonc does not change.",
+    "The walkthrough test runs the checks on the copy and compares the lines. It also checks that the copy differs from wrangler.jsonc in the one migration only.",
+  ),
+  operations(
+    "Deployment, recovery and removal",
+    "Terminal commands deploy, retry and remove resources from one recorded Cloudflare account.",
+    "Command-boundary tests cover interruption, retry, account selection and external resources.",
+  ),
+  ...SCENARIOS.filter((scenario) => !scenario.built).map((scenario): CoverageRow => ({
     group: scenario.group,
     feature: scenario.title,
   })),

@@ -68,13 +68,12 @@ test("reset cancels the pending Approval and restores the scenario", async ({ pa
   await expect(page.getByRole("button", { name: "Run" })).toBeEnabled();
 });
 
-test("a scenario that is not built shows its status and prerequisites", async ({ page }) => {
+test("the Feature coverage page links each row to its scenario", async ({ page }) => {
   await open(page);
-  await page.getByRole("link", { name: /Test kit, doctor/ }).click();
-  await expect(page.locator("main")).toContainText("incomplete");
-  await expect(page.locator("main")).toContainText("Deployment needs a Cloudflare account");
   await page.getByRole("link", { name: "Feature coverage" }).click();
   await expect(page.locator("table")).toContainText("Approvals");
+  await expect(page.locator("table")).not.toContainText("Not built yet");
+  await expect(page.locator("#planned a")).toHaveCount(0);
 });
 
 async function openScenario(page: Page, id: string): Promise<void> {
@@ -239,7 +238,8 @@ for (const [name, [width, height]] of Object.entries(VIEWPORTS))
     for (const view of [...views, "#coverage"]) {
       await page.goto(`/${view}`);
       await expect(page.locator("main h1")).toBeVisible();
-      if (view !== "#coverage") {
+      // The coverage page and a terminal walkthrough have no conversation. The layout checks below still apply.
+      if (view !== "#coverage" && (await page.locator(".walkthrough").count()) === 0) {
         await page.getByRole("button", { name: "Reset scenario" }).click();
         await page.getByRole("button", { name: "Run" }).click();
         await expect(page.locator("#steps .agent, #steps .approval").first()).toBeVisible();
@@ -263,6 +263,64 @@ for (const [name, [width, height]] of Object.entries(VIEWPORTS))
           expect(height, `${view}: ${label}`).toBeGreaterThanOrEqual(40);
     }
   });
+
+test("a dropped stream gets the events of the Turn that ran without it when it connects again", async ({ page }) => {
+  await openScenario(page, "transports");
+  await expect(page.getByRole("link", { name: "Example code" })).toHaveAttribute("href", /src\/transports\.ts$/);
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#steps .agent")).toContainText("The shop opens at 9:00 on Saturday.");
+  await page.getByRole("button", { name: "Drop the stream" }).click();
+  await expect(page.locator("#stream")).toContainText("dropped");
+  await page.getByLabel("Prompt").fill("Can you wrap a gift?");
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator(".hint")).toContainText("The page has no stream");
+  await expect(page.locator("#steps")).not.toContainText("Can you wrap a gift?");
+  await page.getByRole("button", { name: "Connect again" }).click();
+  await expect(page.locator("#steps")).toContainText("Can you wrap a gift?");
+  await expect(page.locator("#steps .agent")).toHaveCount(2);
+  await expect(page.locator("#stream")).toContainText(
+    /Since the reconnect with after=\d+, the stream sent seq \d+ to \d+\./,
+  );
+});
+
+test("a WebSocket carries the send frame of Run and its ack", async ({ page }) => {
+  await openScenario(page, "transports");
+  await page.getByLabel("Transport of the event stream").selectOption("websocket");
+  await expect(page.locator("#stream")).toContainText("Upgrade: websocket");
+  await page.getByRole("button", { name: "Run" }).click();
+  await expect(page.locator("#stream")).toContainText('"type": "ack"');
+  await expect(page.locator("#steps .agent")).toContainText("The shop opens at 9:00 on Saturday.");
+  // A socket that connects again sends the stored events after the last seq of the page.
+  await page.getByRole("button", { name: "Drop the stream" }).click();
+  await page.getByLabel("Prompt").fill("Can you wrap a gift?");
+  await page.getByRole("button", { name: "Run" }).click();
+  await page.getByRole("button", { name: "Connect again" }).click();
+  await expect(page.locator("#steps .agent")).toHaveCount(2);
+  await expect(page.locator("#stream")).toContainText("Since the reconnect with after=");
+});
+
+test("a guided request shows its error answer, and the token stays", async ({ page }) => {
+  await openScenario(page, "transports");
+  await page.getByLabel("Guided request").selectOption({ label: "Send no access token" });
+  await expect(page.locator("#requests")).toContainText("Expected: HTTP 401");
+  await page.getByRole("button", { name: "Send the request" }).click();
+  await expect(page.locator("#requests")).toContainText("HTTP 401");
+  await expect(page.locator("#requests")).toContainText("http.unauthorized");
+  await expect(page.locator("#gate")).toBeHidden();
+  await page.getByLabel("Guided request").selectOption({ label: "Open the Thread in the other Scope" });
+  await page.getByRole("button", { name: "Send the request" }).click();
+  await expect(page.locator("#requests")).toContainText("thread.notFound");
+});
+
+test("the operations walkthrough shows each command and its expected result", async ({ page }) => {
+  await page.goto(`/#token=${TOKEN}`);
+  await expect(page.locator("#provider")).toContainText("OpenRouter");
+  await page.getByRole("link", { name: "Test kit, doctor, deployment and removal" }).click();
+  await expect(page.locator("main .badge").first()).toContainText("ready");
+  await expect(page.locator(".walkthrough")).toContainText("pnpm test test/replay.test.ts");
+  await expect(page.locator(".walkthrough")).toContainText("FAIL durable-objects: KnowledgeDO has no migration");
+  await expect(page.getByRole("button", { name: "Run" })).toHaveCount(0);
+});
 
 async function openSchedules(page: Page): Promise<void> {
   await openScenario(page, "schedules");

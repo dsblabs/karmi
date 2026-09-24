@@ -1,4 +1,5 @@
 import { createKarmi } from "@karmi/core";
+import { recordingProvider } from "@karmi/core/testing";
 import { env } from "cloudflare:workers";
 import { createPlayground } from "./app";
 import { deploymentProviders, profilesOf } from "./providers";
@@ -30,13 +31,21 @@ const oauth = oauthSetup(env.PLAYGROUND_ORIGIN);
 // because Cloudflare has no local simulation of them. The Retriever then fails with bindings.missing.
 const vectors = env.KARMI_AI && env.KNOWLEDGE_VECTORS ? vectorizeIndex(env.KNOWLEDGE_VECTORS) : undefined;
 
+// `pnpm dev:record` sets this variable. The recording Provider wraps the Provider of the `default` profile, which the
+// front desk Agent uses. It keeps each call in memory until the server stops, and `pnpm record` reads the calls of
+// the front desk Agent through `GET /api/recording`.
+const recordedAdapter = env.PLAYGROUND_RECORD ? profiles[0]?.config.adapter : undefined;
+const recorded = recordedAdapter === undefined ? undefined : deployment?.providers[recordedAdapter];
+const recording =
+  recordedAdapter && recorded ? { adapter: recordedAdapter, provider: recordingProvider(recorded) } : undefined;
+
 const karmi = createKarmi({
   catalogue: catalogue(model, semanticRetriever(vectors)),
   logger: playgroundLogger(),
   ...(containers && { sandbox: { image: CONTAINER_IMAGE } }),
   ...("origin" in oauth && { oauth: { origin: oauth.origin, clientName: CLIENT_NAME } }),
   ...(deployment && {
-    providers: deployment.providers,
+    providers: { ...deployment.providers, ...(recording && { [recording.adapter]: recording.provider }) },
     // A profile names each credential, never a value.
     credentials: deployment.credentials,
     defaults: { providers: profilesOf(profiles) },
@@ -56,6 +65,7 @@ const playground = createPlayground({
   containers,
   vectors,
   oauth,
+  recording: recording?.provider,
 });
 
 /** The Durable Object classes of karmi that wrangler.jsonc names. */
