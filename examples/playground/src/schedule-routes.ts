@@ -143,6 +143,7 @@ export function scheduleScenarioRoutes(options: ScheduleRouteOptions) {
   return {
     state: () => scenarioState(context),
     reset: () => resetScenario(context),
+    agents: [REMINDERS],
     handle: (request: Request, path: string) => handle(context, request, path),
   };
 }

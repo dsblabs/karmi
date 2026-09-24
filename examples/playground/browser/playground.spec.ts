@@ -71,9 +71,17 @@ test("reset cancels the pending Approval and restores the scenario", async ({ pa
 test("the Feature coverage page links each row to its scenario", async ({ page }) => {
   await open(page);
   await page.getByRole("link", { name: "Feature coverage" }).click();
-  await expect(page.locator("table")).toContainText("Approvals");
-  await expect(page.locator("table")).not.toContainText("Not built yet");
+  await expect(page.locator("#coverage-features table")).toContainText("Approvals");
+  await expect(page.locator("#coverage-features table")).not.toContainText("Not built yet");
   await expect(page.locator("#planned a")).toHaveCount(0);
+  // The Scenarios table tells whether each scenario is default or optional, and gives its starting data,
+  // prerequisites and local limits.
+  const refund = page.locator("#coverage-scenarios tr", { hasText: "Approve or deny a refund" });
+  await expect(refund).toContainText("Default scenario");
+  await expect(refund).toContainText("A-1042");
+  const vectors = page.locator("#coverage-scenarios tr", { hasText: "Vector retrieval and index rebuild" });
+  await expect(vectors).toContainText("Optional scenario");
+  await expect(vectors).toContainText("no Workers AI and no Vectorize");
 });
 
 async function openScenario(page: Page, id: string): Promise<void> {
@@ -252,14 +260,19 @@ for (const [name, [width, height]] of Object.entries(VIEWPORTS))
         return { scroll: root.scrollWidth - root.clientWidth, wide };
       });
       expect(overflow, `${view} at ${name}`).toEqual({ scroll: 0, wide: [] });
-      // A control that the operator presses on a phone is at least 40 CSS pixels high. One read measures each
-      // button, because a panel can render again between two reads and replace its buttons.
+      // A control that the operator presses on a phone is at least 40 CSS pixels high. One evaluation finds and
+      // measures each visible button, because a panel can render again between two reads and replace its buttons.
+      // A locator with evaluateAll finds the buttons in one read and measures them in a second one.
       if (name === "mobile")
-        for (const { label, height } of await page
-          .locator("main button:visible")
-          .evaluateAll((buttons) =>
-            buttons.map((button) => ({ label: button.textContent, height: button.getBoundingClientRect().height })),
-          ))
+        for (const { label, height } of await page.locator("html").evaluate((root) =>
+          [...root.querySelectorAll("main button")].flatMap((button) => {
+            const box = button.getBoundingClientRect();
+            const hidden = root.ownerDocument.defaultView?.getComputedStyle(button).visibility === "hidden";
+            return box.width > 0 && box.height > 0 && !hidden
+              ? [{ label: button.textContent, height: box.height }]
+              : [];
+          }),
+        ))
           expect(height, `${view}: ${label}`).toBeGreaterThanOrEqual(40);
     }
   });
@@ -693,7 +706,8 @@ async function runScript(page: Page, chip: string): Promise<void> {
 
 test("a Script calls sample Tools, and each nested call shows under its Script", async ({ page }) => {
   await openScenario(page, "scripts");
-  await expect(page.locator(".note", { hasText: "cpuMs" })).toContainText("does not enforce cpuMs");
+  await expect(page.locator(".note", { hasText: "Local workerd" })).toContainText("does not enforce cpuMs");
+  await expect(page.locator("details.notes summary")).toContainText("1 local limit");
   await expect(page.getByRole("link", { name: "Example code" })).toHaveAttribute("href", /src\/scripts\.ts$/);
   await runScript(page, "Tool calls");
   await expect(page.locator("#steps")).toContainText("The Script finished.");

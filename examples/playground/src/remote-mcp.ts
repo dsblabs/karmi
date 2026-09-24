@@ -119,7 +119,7 @@ export function oauthSetup(value: string | undefined): OAuthSetup {
   if (!value)
     return {
       reason:
-        "OAuth needs PLAYGROUND_ORIGIN, the public https origin of the Playground. pnpm deploy sets it. For local development, add it to .dev.vars.",
+        "OAuth needs PLAYGROUND_ORIGIN, the public https origin of the Playground. pnpm run deploy sets it. For local development, add it to .dev.vars.",
     };
   const url = URL.canParse(value) ? new URL(value) : undefined;
   if (url?.protocol !== "https:") return { reason: `OAuth needs an https origin. PLAYGROUND_ORIGIN is ${value}.` };

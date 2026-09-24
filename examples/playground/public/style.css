@@ -144,10 +144,11 @@ details.card > :not(summary):not(#log) { margin: 0 1rem 0.8rem; }
 #log pre:hover { background: var(--panel); }
 #log pre.open { white-space: pre-wrap; }
 
-.table { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+.table { flex-shrink: 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
 table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
 th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); background: var(--panel); }
+td ul { margin: 0; padding-left: 1.1rem; }
 tr.group td { font-weight: 600; background: var(--panel); }
 tr:last-child td { border-bottom: 0; }
 

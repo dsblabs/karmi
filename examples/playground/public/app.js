@@ -130,7 +130,9 @@ function render() {
 function intro(scenario, ...actions) {
   // The notes stay closed, thus the conversation gets the height of the view. Only the reason why a scenario cannot
   // run stays open, because the operator cannot use the scenario without it.
-  const notes = [...scenario.modelNotes, ...(scenario.notes ?? [])];
+  const localLimits = scenario.localLimits ?? [];
+  const otherNotes = [...scenario.modelNotes, ...(scenario.notes ?? [])];
+  const notes = [...otherNotes, ...localLimits];
   const { prerequisites } = scenario;
   return el(
     "section",
@@ -148,7 +150,7 @@ function intro(scenario, ...actions) {
       el(
         "details",
         { className: "notes" },
-        el("summary", {}, notesLabel(notes.length, prerequisites.length)),
+        el("summary", {}, notesLabel(otherNotes.length, localLimits.length, prerequisites.length)),
         el(
           "div",
           {},
@@ -166,9 +168,29 @@ function intro(scenario, ...actions) {
 }
 
 // The summary of the closed notes of a scenario, with the number of each kind of item.
-function notesLabel(notes, prerequisites) {
+function notesLabel(notes, localLimits, prerequisites) {
   const count = (number, word) => (number === 0 ? [] : [`${String(number)} ${word}${number === 1 ? "" : "s"}`]);
-  return `Notes and prerequisites (${[...count(notes, "note"), ...count(prerequisites, "prerequisite")].join(", ")})`;
+  const counts = [
+    ...count(notes, "note"),
+    ...count(localLimits, "local limit"),
+    ...count(prerequisites, "prerequisite"),
+  ];
+  return `Notes and prerequisites (${counts.join(", ")})`;
+}
+
+// The setup cell of a scenario. A default scenario runs after pnpm setup and pnpm dev.
+const setupLabel = (scenario) => (scenario.optional ? "Optional scenario" : "Default scenario");
+
+// A table cell with one line for each text, or a muted sentence when there is none. A phone shows no header row,
+// thus the sentence names the column.
+function linesCell(texts, empty) {
+  return el(
+    "td",
+    {},
+    texts.length > 0
+      ? el("ul", {}, ...texts.map((text) => el("li", { textContent: text })))
+      : el("span", { className: "muted", textContent: empty }),
+  );
 }
 
 function renderCoverage() {
@@ -181,16 +203,53 @@ function renderCoverage() {
       el("h1", { textContent: "Feature coverage" }),
       el("p", { textContent: "Each row is a documented feature. A row without a scenario is not shown yet." }),
     ),
+    el("h2", { textContent: "Scenarios" }),
+    el("p", {
+      className: "fine",
+      textContent:
+        "A default scenario runs after pnpm setup and pnpm dev. The main path of an optional scenario needs its prerequisites. A prerequisite of a default scenario is for one part of it only. In local development, the state is in .wrangler/ and not in a Cloudflare account.",
+    }),
     el(
       "div",
-      { className: "table" },
+      { className: "table", id: "coverage-scenarios" },
       el(
         "table",
         {},
         el(
           "tr",
           {},
-          ...["Feature", "Scenario", "What you see", "Verification"].map((text) => el("th", { textContent: text })),
+          ...["Scenario", "Setup", "Starting data", "Prerequisites", "Local limits"].map((text) =>
+            el("th", { textContent: text }),
+          ),
+        ),
+        ...playground.scenarios
+          .filter((scenario) => scenario.built)
+          .map((scenario) =>
+            el(
+              "tr",
+              {},
+              el("td", {}, el("a", { href: `#${scenario.id}`, textContent: scenario.title })),
+              el("td", { textContent: setupLabel(scenario) }),
+              el("td", { textContent: scenario.startingData }),
+              linesCell(scenario.prerequisites, "No prerequisite."),
+              linesCell(scenario.localLimits ?? [], "No local limit."),
+            ),
+          ),
+      ),
+    ),
+    el("h2", { textContent: "Features" }),
+    el(
+      "div",
+      { className: "table", id: "coverage-features" },
+      el(
+        "table",
+        {},
+        el(
+          "tr",
+          {},
+          ...["Feature", "Scenario", "What you do and see", "Verification"].map((text) =>
+            el("th", { textContent: text }),
+          ),
         ),
         ...[...groups].flatMap(([group, rows]) => [
           el("tr", { className: "group" }, el("td", { colSpan: 4, textContent: group })),
@@ -2530,8 +2589,10 @@ function mcpCards(
   return [serverCard, toolsCard, accessCard, policyCard].filter(Boolean);
 }
 
-// The settings that the operator selected in the Agent card and did not save yet. A save clears them.
-const providerForm = { draft: undefined };
+// The settings that the operator selected in the Agent card and did not save yet, and the last rejection of a save.
+// A Thread event can render the card again while a save waits, thus the card shows the rejection from here. A
+// successful save clears both.
+const providerForm = { draft: undefined, rejection: undefined };
 
 const PROVIDER_POLICIES = {
   none: "No rule: the grant allows it",
@@ -2551,6 +2612,7 @@ function providerCards({ profiles, agent, steps, calls, usage }, onChanged, isCu
   const profileOf = (name) => profiles.find((profile) => profile.name === name);
 
   const result = el("p", { id: "provider-result", className: "fine" });
+  if (providerForm.rejection) showRejection(result, providerForm.rejection);
   const profile = el(
     "select",
     { id: "provider-profile", ariaLabel: "Provider profile" },
@@ -2594,13 +2656,16 @@ function providerCards({ profiles, agent, steps, calls, usage }, onChanged, isCu
       const body = { profile: profile.value, webSearch: webSearch.checked, policy: policy.value };
       const next = await api("POST", "/api/scenarios/providers/agent", body);
       providerForm.draft = undefined;
+      providerForm.rejection = undefined;
       if (isCurrent())
         onChanged(
           next,
           `The Scope stored version ${next.agent.version}. The next Turn of this Thread runs on the profile ${body.profile}.`,
         );
     } catch (error) {
-      showRejection(result, error);
+      providerForm.rejection = error;
+      // The card that sent the save can be gone. The card on the page shows the rejection.
+      if (isCurrent()) showRejection($("provider-result") ?? result, error);
     } finally {
       save.disabled = false;
     }
@@ -3122,12 +3187,13 @@ async function renderScenario(scenario) {
     if (!state.handler?.waiting) return void (queueChecks = 0);
     if (queueChecks++ < 30) queueTimer = setTimeout(() => mine === view && refreshPanel(), 2000);
   };
-  // A bulk ingest Job of the Knowledge scenario and the Destroy walk of a Scope run without a Thread event, thus the
-  // page reads their progress on a timer. One timer runs at a time.
+  // A bulk ingest Job of the Knowledge scenario, the Destroy walk of a Scope and a Tool call that a held ledger keeps
+  // running change the state without a Thread event, thus the page reads the state on a timer. One timer runs at a time.
   let jobTimer;
   const watchProgress = () => {
     clearTimeout(jobTimer);
-    if (state.job?.state === "pending" || state.destroy?.state === "destroying")
+    const held = state.ledger?.held && state.turn?.state === "running";
+    if (state.job?.state === "pending" || state.destroy?.state === "destroying" || held)
       jobTimer = setTimeout(() => mine === view && refreshPanel(), 1000);
   };
   showPanel();
@@ -3922,6 +3988,8 @@ async function renderScenario(scenario) {
     threadKey = state.threadKey;
     scopeId = state.scopeId;
     if (file) setFile();
+    // A reset stores the starting Agent of the Provider scenario, thus an unsaved setting or a rejection is old.
+    providerForm.draft = providerForm.rejection = undefined;
     syncTarget();
     showThread();
   };

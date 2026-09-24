@@ -115,6 +115,7 @@ export function memoryScenarioRoutes(options: MemoryRouteOptions) {
   return {
     state: () => scenarioState(options),
     reset: () => resetScenario(options),
+    agents: [CONCIERGE],
     handle: (request: Request, path: string) => handle(options, request, path),
   };
 }

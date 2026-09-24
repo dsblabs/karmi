@@ -42,9 +42,12 @@ export const STARTING_DISPATCH: Dispatch = {
 
 /** The prompts that the scenario suggests. The operator can edit each one. */
 export const DISPATCH_PROMPTS = [
-  { label: "Budget", text: "Pack every parcel of today's dispatch. Pack one parcel in each call." },
+  {
+    label: "Budget",
+    text: "Pack every parcel of today's dispatch, one parcel in each call. Then list the parcels again to check that each one is packed.",
+  },
   { label: "Steering", text: "Change of plan: pack the mug parcel only, then stop." },
-  { label: "Job", text: "Pack the mug parcel, then book the courier for today." },
+  { label: "Job", text: "Pack parcel P-1, then book the courier for today." },
 ];
 
 /** Decodes the stored sample data. Data that is absent or not valid gives the starting dispatch. */
@@ -80,7 +83,7 @@ export const listParcels = defineTool({
   },
 });
 
-/** Packs one parcel. Each call is one Step of the budget, thus a full dispatch exhausts the window. */
+/** Packs one parcel. A batch of calls in one model answer is one Step of the budget. */
 export const packParcel = defineTool({
   name: "pack_parcel",
   description: "Pack one parcel of today's dispatch",
