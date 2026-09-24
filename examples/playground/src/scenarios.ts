@@ -60,6 +60,8 @@ export interface Scenario {
   needsContainers?: boolean;
   /** True when the scenario needs Workers AI and a Vectorize index. */
   needsVectors?: boolean;
+  /** True when the main path of the scenario needs more than pnpm setup and pnpm dev. */
+  optional?: boolean;
   /** The sample data that the scenario starts with and that a reset restores. */
   startingData: string;
   /** What local development cannot show. A deployment shows it. */
@@ -226,6 +228,7 @@ export const SCENARIOS: readonly Scenario[] = [
     code: `${CODE}/src/vectors.ts`,
     localLimits: ["Local development has no Workers AI and no Vectorize, thus the scenario needs a deployment."],
     needsVectors: true,
+    optional: true,
     notes: [
       "The Knowledge scenario uses the default Retriever, fts5, which finds a Passage only when a word of the query is in it. This Retriever also finds a Passage with the same meaning and different words.",
       "The Knowledge Durable Object keeps each vector. The Vectorize index is a copy that a rebuild writes again without a call to the embedding model.",
@@ -276,6 +279,7 @@ export const SCENARIOS: readonly Scenario[] = [
     ],
     controls: true,
     needsContainers: true,
+    optional: true,
     notes: [
       `The Workspace belongs to the Thread. Its files stay between the Scripts of one Turn. The Harness destroys it when the Turn ends, after ${String(CONTAINER_LIMITS.idleMs / 1000)} seconds without a Script, on a cancel and on a reset. Each call empties /in and /out first.`,
       `A Script reaches only ${EGRESS_ALLOW.join(", ")}. Cloudflare enforces this rule. The Playground does not claim that local Docker enforces it the same way.`,
@@ -318,6 +322,7 @@ export const SCENARIOS: readonly Scenario[] = [
     needs: ["toolCalls"],
     prompts: MCP_PROMPTS,
     code: `${CODE}/src/remote-mcp.ts`,
+    optional: true,
     localLimits: [
       "OAuth Connections need a public https origin. The http address of pnpm dev cannot take part in OAuth. A server with no credential or a static credential works locally.",
     ],
@@ -488,21 +493,21 @@ export interface CoverageRow {
   verification?: string;
 }
 
-// The live acceptance of the Playground: the model, and where each check ran.
+// The live acceptance of the Playground ran on this date with this model. A row names what it did not check.
+const LIVE_DATE = "2026-09-24";
 const LIVE_MODEL = "OpenRouter and z-ai/glm-5.3-flashx";
-const LOCAL = `Checked live on 2026-09-24 in pnpm dev without a Cloudflare login, with ${LIVE_MODEL}.`;
-const CLOUD = `Checked live on 2026-09-24 in a temporary deployment of pnpm run deploy, with ${LIVE_MODEL}.`;
-// The scenarios that a live check also ran in a Cloudflare deployment.
-const IN_CLOUD = new Set<string>([REFUND, SCHEDULES, OBSERVABILITY, SCRIPTS]);
+const LOCAL = `Checked live on ${LIVE_DATE} in pnpm dev without a Cloudflare login, with ${LIVE_MODEL}.`;
+const CLOUD = `Checked live on ${LIVE_DATE} in a temporary deployment of pnpm run deploy, with ${LIVE_MODEL}.`;
+const TESTS = "Worker tests with the scripted Provider, and browser checks.";
 
 const row =
   (scenario: string) =>
-  (feature: string, group: string, observable: string, live?: string): CoverageRow => ({
+  (feature: string, group: string, observable: string, live: string = LOCAL): CoverageRow => ({
     group,
     feature,
     scenario,
     observable,
-    verification: `Worker tests with the scripted Provider, and browser checks. ${live ?? (IN_CLOUD.has(scenario) ? `${LOCAL} ${CLOUD}` : LOCAL)}`,
+    verification: `${TESTS} ${live}`,
   });
 
 const shown = row(REFUND);
@@ -544,28 +549,38 @@ const providers = (feature: string, group: string, observable: string, live: str
   verification: `Worker tests and browser checks with the scripted Provider. Unit tests check the gateway URL and the cf-aig headers of the OpenAI and Anthropic clients. ${live}`,
 });
 const NO_PROVIDER_TOOL =
-  "Not verified live: no Anthropic or OpenAI credential was available, thus no real Provider Tool call ran. In pnpm dev, the Scope refused web_search on the two OpenRouter profiles with capability.unavailable, as the Profiles card tells.";
+  "It was not verified live, because no Anthropic or OpenAI credential was available. In pnpm dev, the Scope refused web_search on the two OpenRouter profiles with capability.unavailable, as the Profiles card tells.";
 // The tests use a deterministic Embedder and an index in memory, thus each row tells what a live check covered.
 const vectors = (feature: string, observable: string): CoverageRow => ({
   group: "Memory and Knowledge",
   feature,
   scenario: VECTORS,
   observable,
-  verification: `Worker tests and browser checks with the scripted Provider, a deterministic Embedder and an index in memory. ${CLOUD} The deployment selected vector retrieval. Checked: the keyword, vector and hybrid searches in both Scopes, three Turns that called search_guides, remove, rebuild, and pnpm run remove, which deleted the index.`,
+  verification: `Worker tests and browser checks with the scripted Provider, a deterministic Embedder and an index in memory. ${CLOUD} The deployment selected vector retrieval. The check covered the keyword, vector and hybrid searches in both Scopes, three Turns that called search_guides, remove, rebuild, and pnpm run remove, which deleted the index.`,
 });
 // The tests run container Scripts on a fake container runtime, thus the rows say that no real container ran yet.
 const containers = (feature: string, group: string, observable: string): CoverageRow => ({
   ...row(CONTAINERS)(feature, group, observable),
-  verification: `Worker tests and browser checks with the scripted Provider and a fake container runtime. ${CLOUD} Checked: the Python and shell Scripts, the three artifacts, and a Job with progress that a cancel stopped. pnpm dev:containers with local Docker was not checked.`,
+  verification: `Worker tests and browser checks with the scripted Provider and a fake container runtime. ${CLOUD} The check covered the Python and shell Scripts, the three artifacts, and a Job with progress that a cancel stopped. pnpm dev:containers with local Docker was not checked.`,
 });
 
 /** The delivered feature coverage. A row without a scenario is a feature that no scenario shows yet. */
 export const COVERAGE: readonly CoverageRow[] = [
-  shown("Instructions and model selection", "Agents", "The Agent runs on the model that setup selected."),
+  shown(
+    "Instructions and model selection",
+    "Agents",
+    "The Agent runs on the model that setup selected.",
+    `${LOCAL} ${CLOUD}`,
+  ),
   agents("Agent Specs stored at runtime", "Agents", "Save a changed Spec. The next Turn uses the new version."),
   agents("Prompts and Fragments", "Agents", "The page shows the text that each Prompt entry gives to the model."),
   agents("Capability ceilings", "Agents", "A grant in the Scope ceiling gets a version. A larger grant gets an issue."),
-  tools("Validated Tool inputs", "Tools", "A change of more than 100 units gets an error result. The stock stays."),
+  tools(
+    "Validated Tool inputs",
+    "Tools",
+    "A change of more than 100 units gets an error result. The stock stays.",
+    `${LOCAL} The model refused to send a change of 5000 units, thus the error result did not occur live.`,
+  ),
   tools("Structured results", "Tools", "The event log shows the structuredContent of each stock result."),
   tools("Permission Policy: deny", "Tools", "The model cannot see or run delete_product."),
   tools("Annotations in a Policy rule", "Tools", "A rule for readOnlyHint allows check_stock, which no rule names."),
@@ -574,7 +589,7 @@ export const COVERAGE: readonly CoverageRow[] = [
   tools("Deferred Tools", "Tools", "tool_search adds a tools.loaded event before adjust_stock can run."),
   shown("Tool inputs and results", "Tools", "The event log shows each Tool call and its result."),
   shown("Annotations and Permission Policy", "Tools", "The read-only lookup runs. The refund waits for an Approval."),
-  shown("Approvals", "Threads", "Allow changes the sample order. Deny leaves it unchanged."),
+  shown("Approvals", "Threads", "Allow changes the sample order. Deny leaves it unchanged.", `${LOCAL} ${CLOUD}`),
   turns("Inputs during a Turn", "Threads", "A steered input joins the Turn. A queued input starts the next Turn."),
   turns("Cancellation during a Turn", "Threads", "Cancel ends the Turn. The booking that a Tool made stays."),
   turns("Budgets", "Threads", "The Turn parks after its Steps. Allow gives a new budget. Deny ends the Turn."),
@@ -596,6 +611,7 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Interrupted Tool calls",
     "Development and operations",
     "A read-only call runs again. A call without idempotentHint gets an error result with interrupted.",
+    `${LOCAL} The held post_entry call got the interrupted error result. A read-only call that runs again was not checked live.`,
   ),
   delegation(
     "Delegation",
@@ -656,6 +672,7 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Usage records",
     "Observability",
     "The Usage records card lists each usage.recorded event with Scope, Agent, User, Thread and seq. A closed card shows the parent field of a Delegation child. This scenario does not start a child Thread.",
+    `${LOCAL} ${CLOUD}`,
   ),
   observability(
     "Reported costs",
@@ -666,6 +683,7 @@ export const COVERAGE: readonly CoverageRow[] = [
     "UsageHandler delivery",
     "Observability",
     "The Queue delivers each record to the sample UsageHandler. A failed batch retries. A second delivery of the same threadId:seq is a duplicate.",
+    `${LOCAL} ${CLOUD} A failed batch was not checked live.`,
   ),
   observability(
     "Logs and redaction",
@@ -676,6 +694,7 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Isolate Tools",
     "Scripts",
     "The Tool calls Script calls find_orders and read_order. Each nested call shows under its run_script call with the parentCallId of the Script.",
+    `${LOCAL} ${CLOUD}`,
   ),
   scripts(
     "Script results and logs",
@@ -687,7 +706,12 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Scripts",
     "The Script lists its Tools. cancel_order needs an Approval, thus it is not in tools, and the call throws.",
   ),
-  scripts("Network rules of an isolate", "Scripts", "A fetch from a Script fails. The isolate has no network access."),
+  scripts(
+    "Network rules of an isolate",
+    "Scripts",
+    "A fetch from a Script fails. The isolate has no network access.",
+    `${LOCAL} ${CLOUD}`,
+  ),
   scripts(
     "Script limits",
     "Scripts",
@@ -698,8 +722,7 @@ export const COVERAGE: readonly CoverageRow[] = [
     feature: "CPU limit of a Script",
     scenario: SCRIPTS,
     observable: "The CPU limit Script must fail with limit_exceeded: cpuMs on Cloudflare. Locally, it finishes.",
-    verification:
-      "Not verified. In a live check on 2026-09-24 in a temporary deployment, the Script finished on Cloudflare too. Issue 228 tracks it. No automatic check can run, because local workerd does not enforce cpuMs.",
+    verification: `Not verified. In a live check on ${LIVE_DATE} in a temporary deployment, the Script finished on Cloudflare too. Issue 228 tracks it. No automatic check can run, because local workerd does not enforce cpuMs.`,
   },
   scripts(
     "Script cancellation",
@@ -804,6 +827,7 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Credential revocation and fallback",
     "Scopes and credentials",
     "Revoke the credential. The next model Step runs under the Deployment profile, and step.started names the fallback. With the fallback off, the Turn fails.",
+    `${LOCAL} The Turn with the fallback off was not checked live.`,
   ),
   {
     group: "Scopes and credentials",
@@ -831,17 +855,17 @@ export const COVERAGE: readonly CoverageRow[] = [
   mcp(
     "Static MCP credentials",
     "The header value is the Scope credential scope:mcp-remote. No route returns it. A revoked credential makes the next tool list fail.",
-    "Not verified live: no server with a static credential was available.",
+    "It was not verified live, because no server with a static credential was available.",
   ),
   mcp(
     "OAuth Connections",
     "Connect opens the consent page. The callback stores the grant as the Connection mcp:remote of the User and sends the browser back. Disconnect removes it.",
-    "Not verified live: no real authorization server was available. In a live deployment on 2026-09-24, pnpm run deploy set PLAYGROUND_ORIGIN to the workers.dev address.",
+    `It was not verified live, because no real authorization server was available. In a live deployment on ${LIVE_DATE}, pnpm run deploy set PLAYGROUND_ORIGIN to the workers.dev address.`,
   ),
   mcp(
     "Connection Approvals",
     "A call without a grant parks the Turn on a connect Approval with the consent URL. OAuth completes it, and the call runs. A deny gives an error result.",
-    "Not verified live: no real authorization server was available.",
+    "It was not verified live, because no real authorization server was available.",
   ),
   mcp(
     "Failed and denied connections",
@@ -850,7 +874,12 @@ export const COVERAGE: readonly CoverageRow[] = [
   ),
   turns("Capability grants", "Agents", `The longRunning grant gives the Turn ${String(MAX_STEPS)} Steps.`),
   shown("Streaming", "Threads", "The answer of the model appears while the model writes it."),
-  shown("Cancellation on reset", "Threads", "Reset cancels a Turn that waits for an Approval."),
+  shown(
+    "Cancellation on reset",
+    "Threads",
+    "Reset cancels a Turn that waits for an Approval.",
+    "A reset during a pending Approval was not checked live.",
+  ),
   shown("Deletion", "Threads", "Reset deletes the Thread of the scenario."),
   transports(
     "REST operations",
@@ -882,11 +911,17 @@ export const COVERAGE: readonly CoverageRow[] = [
     "HTTP and media",
     "Upload a file with multipart HTTP and download its stored bytes.",
   ),
-  forks("Thread and Scope media access", "HTTP and media", "A media route refuses a Thread outside this scenario."),
+  forks(
+    "Thread and Scope media access",
+    "HTTP and media",
+    "A media route refuses a Thread outside this scenario.",
+    "It was not checked live.",
+  ),
   schedules(
     "Delayed, timed and recurring Schedules",
     "Schedules and delivery",
     "Create a Schedule with each timing. The card lists it with the time of its next firing.",
+    `${LOCAL} The delayed and the recurring Schedules were checked. The timed Schedule was not checked live.`,
   ),
   schedules(
     "Schedules of an Agent",
@@ -897,6 +932,7 @@ export const COVERAGE: readonly CoverageRow[] = [
     "Schedule firing",
     "Schedules and delivery",
     "A schedule.fired event starts a Turn with the Event of the Schedule. A recurring Schedule stays in the list.",
+    `${LOCAL} ${CLOUD}`,
   ),
   schedules(
     "Schedule cancellation",
@@ -907,6 +943,7 @@ export const COVERAGE: readonly CoverageRow[] = [
     "External triggers",
     "Schedules and delivery",
     "The trigger route and the scheduled handler of the Worker send the same Event to the Thread.",
+    `${LOCAL} Only the trigger route was checked live, not the scheduled handler.`,
   ),
   schedules(
     "Offline delivery",
@@ -952,7 +989,7 @@ export const COVERAGE: readonly CoverageRow[] = [
     "AI Gateway",
     "Providers and MCP",
     "The gateway profile sends each call to the gateway. The Usage record has the gateway log id and no cost, because the gateway reports none.",
-    "Not verified live: the AI Gateway of setup requires authentication, and setup had no gateway token. The Turn failed with auth (HTTP 401), as the gateway answers without a token.",
+    "It was not verified live, because the AI Gateway of setup requires authentication and setup had no gateway token. The Turn failed with auth (HTTP 401), as the gateway answers without a token.",
   ),
   operations(
     "Test kit",
@@ -977,7 +1014,7 @@ export const COVERAGE: readonly CoverageRow[] = [
   operations(
     "Deployment, recovery and removal",
     "Terminal commands deploy, retry and remove resources from one recorded Cloudflare account.",
-    "Command-boundary tests cover interruption, retry, account selection and external resources. Checked live on 2026-09-24: pnpm run deploy with isolate Scripts, container Scripts, vector retrieval and a supplied bucket. An interruption after the dead-letter Queue, then a retry that stopped on a Cloudflare API error 500, then a retry that finished. pnpm run remove deleted each owned resource with its data, and kept the supplied bucket and the AI Gateway.",
+    `Command-boundary tests cover interruption, retry, account selection and external resources. On ${LIVE_DATE}, a live check ran pnpm run deploy with isolate Scripts, container Scripts, vector retrieval and a supplied bucket. An interruption after the dead-letter Queue, then a retry that stopped on a Cloudflare API error 500, then a retry that finished. pnpm run remove deleted each owned resource with its data, and kept the supplied bucket and the AI Gateway.`,
   ),
   ...SCENARIOS.filter((scenario) => !scenario.built).map((scenario): CoverageRow => ({
     group: scenario.group,

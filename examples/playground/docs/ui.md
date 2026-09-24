@@ -39,7 +39,7 @@ Use these classes. Add a component only when none of them fits, and add it to th
 | `.row` | A primary button with its related controls. Each group has at most one `button.primary`. |
 | `.badge`, `.dot` | A status word, and a status colour in the navigation. |
 | `.note` | A limit that the operator must know before a run. Only the reason why a scenario cannot run shows open in the title bar. |
-| `details.notes` | The closed notes of the title bar. Its summary gives the number of notes and prerequisites. When it is open, a grid holds the `.note` items and the Prerequisites card side by side. |
+| `details.notes` | The closed notes of the title bar. Its summary gives the number of notes, local limits and prerequisites. When it is open, a grid holds the `.note` items and the Prerequisites card side by side. |
 | `.fine`, `.muted` | A small explanation, and an empty state. |
 | `.error`, `.outcome` | A failure, and the result of an action. |
 | `.thread-events` | A closed event list for one Thread in a scenario that compares Threads. |

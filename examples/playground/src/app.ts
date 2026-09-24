@@ -92,8 +92,10 @@ async function ownRoutes(
   const named = id === undefined ? undefined : own[id];
   if (named && action === undefined && request.method === "GET") return named.state();
   if (named && action !== undefined && request.method === "POST") {
+    // The reset cancels the pending work first, thus no Turn runs while the Agent changes.
+    const answer = await named.reset();
     await refresh(named.agents ?? []);
-    return named.reset();
+    return answer;
   }
   for (const routes of Object.values(own)) {
     const response = await routes.handle(request, path);
@@ -177,13 +179,13 @@ async function resetScenario(
 }
 
 /**
- * Returns the function that a reset calls with the code-defined Agents of its scenario. It stores each one again in
- * each sample Scope that holds a copy from an older Catalogue.
+ * Stores each named code-defined Agent again in each sample Scope that holds a copy from an older Catalogue. A reset
+ * calls it after the cancel, thus no Turn runs while the Agent changes.
  */
-const agentRefresher = (karmi: Karmi) => async (agentIds: readonly string[]) => {
+async function refreshSampleAgents(karmi: Karmi, agentIds: readonly string[]): Promise<void> {
   for (const scopeId of SAMPLE_SCOPES)
     await refreshAgents(karmi.catalogue.agents, karmi.scope(scopeId).agents, agentIds);
-};
+}
 
 /** The sample Scope, the User and the sample systems that the routes of a scenario work with. */
 interface SampleOptions {
@@ -271,7 +273,6 @@ export function createPlayground(options: PlaygroundOptions): Playground {
   const runtimes = scenarioRuntimes(scope, model);
   const sample: SampleOptions = { scope, scopeId: SCOPE, user: USER, data };
   const own = ownScenarioRoutes(karmi, sample, options);
-  const refresh = agentRefresher(karmi);
 
   // A browser cannot set headers on an EventSource, so the token can also be a query parameter.
   const authenticate = authentication(
@@ -295,7 +296,7 @@ export function createPlayground(options: PlaygroundOptions): Playground {
   async function api(request: Request, path: string): Promise<Response> {
     if (path === "/api/playground" && request.method === "GET") return describePlayground(setup, options);
     if (path === "/api/recording" && request.method === "GET") return recordingAnswer(options.recording);
-    const answered = await ownRoutes(own, refresh, request, path);
+    const answered = await ownRoutes(own, (ids) => refreshSampleAgents(karmi, ids), request, path);
     if (answered) return answered;
     const [, id, action, mediaId] =
       /^\/api\/scenarios\/([^/]+)(?:\/(reset|spec|job|hold|fail|replay|redact|media\/([^/]+)))?$/.exec(path) ?? [];
@@ -309,9 +310,10 @@ export function createPlayground(options: PlaygroundOptions): Playground {
       const stub = sampleData(data, SCOPE, id);
       const thread = threadOf(runtime, (await stub.read()).generation);
       await resetScenario(stub, thread, runtime, restore);
+      if (restore) await refreshSampleAgents(karmi, [runtime.agent]);
       return scenarioState(id, runtime);
     };
-    if (action === "reset" && request.method === "POST") return refresh([runtime.agent]).then(() => restart(true));
+    if (action === "reset" && request.method === "POST") return restart(true);
     const act = action === undefined ? undefined : runtime.actions?.[action];
     if (act && request.method === "POST")
       return (await act(sampleData(data, SCOPE, id), open, request)) ?? scenarioState(id, runtime);

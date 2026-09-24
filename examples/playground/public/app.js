@@ -131,7 +131,8 @@ function intro(scenario, ...actions) {
   // The notes stay closed, thus the conversation gets the height of the view. Only the reason why a scenario cannot
   // run stays open, because the operator cannot use the scenario without it.
   const localLimits = scenario.localLimits ?? [];
-  const notes = [...scenario.modelNotes, ...localLimits, ...(scenario.notes ?? [])];
+  const otherNotes = [...scenario.modelNotes, ...(scenario.notes ?? [])];
+  const notes = [...otherNotes, ...localLimits];
   const { prerequisites } = scenario;
   return el(
     "section",
@@ -149,7 +150,7 @@ function intro(scenario, ...actions) {
       el(
         "details",
         { className: "notes" },
-        el("summary", {}, notesLabel(notes.length - localLimits.length, localLimits.length, prerequisites.length)),
+        el("summary", {}, notesLabel(otherNotes.length, localLimits.length, prerequisites.length)),
         el(
           "div",
           {},
@@ -177,8 +178,8 @@ function notesLabel(notes, localLimits, prerequisites) {
   return `Notes and prerequisites (${counts.join(", ")})`;
 }
 
-// A scenario with a prerequisite other than Provider setup is optional. The others run after pnpm setup and pnpm dev.
-const setupOf = (scenario) => (scenario.prerequisites.length > 0 ? "Optional scenario" : "Default scenario");
+// The setup cell of a scenario. A default scenario runs after pnpm setup and pnpm dev.
+const setupLabel = (scenario) => (scenario.optional ? "Optional scenario" : "Default scenario");
 
 // A table cell with one line for each text, or a muted sentence when there is none. A phone shows no header row,
 // thus the sentence names the column.
@@ -206,7 +207,7 @@ function renderCoverage() {
     el("p", {
       className: "fine",
       textContent:
-        "A default scenario runs after pnpm setup and pnpm dev. An optional scenario needs its prerequisites. In local development, the state is in .wrangler/ and not in a Cloudflare account.",
+        "A default scenario runs after pnpm setup and pnpm dev. The main path of an optional scenario needs its prerequisites. A prerequisite of a default scenario is for one part of it only. In local development, the state is in .wrangler/ and not in a Cloudflare account.",
     }),
     el(
       "div",
@@ -228,7 +229,7 @@ function renderCoverage() {
               "tr",
               {},
               el("td", {}, el("a", { href: `#${scenario.id}`, textContent: scenario.title })),
-              el("td", { textContent: setupOf(scenario) }),
+              el("td", { textContent: setupLabel(scenario) }),
               el("td", { textContent: scenario.startingData }),
               linesCell(scenario.prerequisites, "No prerequisite."),
               linesCell(scenario.localLimits ?? [], "No local limit."),

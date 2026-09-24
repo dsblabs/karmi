@@ -74,7 +74,8 @@ test("the Feature coverage page links each row to its scenario", async ({ page }
   await expect(page.locator("#coverage-features table")).toContainText("Approvals");
   await expect(page.locator("#coverage-features table")).not.toContainText("Not built yet");
   await expect(page.locator("#planned a")).toHaveCount(0);
-  // The audit of each scenario: default or optional, starting data, prerequisites and local limits.
+  // The Scenarios table tells whether each scenario is default or optional, and gives its starting data,
+  // prerequisites and local limits.
   const refund = page.locator("#coverage-scenarios tr", { hasText: "Approve or deny a refund" });
   await expect(refund).toContainText("Default scenario");
   await expect(refund).toContainText("A-1042");
