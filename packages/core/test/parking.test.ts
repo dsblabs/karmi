@@ -525,7 +525,7 @@ describe("Scope suspension", () => {
     await thread.resume();
     const resumed = await rest(thread, before);
     expect(resumed).toContainEvent({ type: "turn.resumed", reason: "resume" });
-    expect(resumed).toContainEvent({ type: "step.started", kind: "model", n: 3, agentVersion: 2 });
+    expect(resumed).toContainEvent({ type: "step.started", kind: "model", n: 3, agentVersion: 1 });
     expect(lastMessage(resumed)).toBe("Back");
     await expect(thread.resume()).rejects.toMatchObject({ code: "thread.notParked" });
   });

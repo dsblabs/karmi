@@ -212,7 +212,6 @@ export function vectorScenarioRoutes(options: VectorRouteOptions) {
   return {
     state: () => scenarioState(options),
     reset: () => resetScenario(options),
-    agents: [VECTORS],
     handle: (request: Request, path: string) => handle(options, request, path),
   };
 }

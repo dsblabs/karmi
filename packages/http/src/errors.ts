@@ -24,6 +24,7 @@ export interface ErrorBody {
 
 // Every karmi code has an entry, so the compiler reports a new core code that this map does not place.
 const STATUS: Record<KarmiErrorCode, number> = {
+  "agent.codeDefined": 409,
   "agent.conflict": 409,
   "agent.deleted": 404,
   "agent.id.invalid": 400,

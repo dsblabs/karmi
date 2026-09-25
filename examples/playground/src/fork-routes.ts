@@ -132,7 +132,6 @@ export function forkScenarioRoutes(options: ForkRouteOptions) {
   return {
     state: () => scenarioState(context),
     reset: () => resetScenario(context),
-    agents: [FORKS],
     async handle(request: Request, path: string): Promise<Response | undefined> {
       const match = /^\/api\/scenarios\/forks\/threads\/([^/]+)\/media\/([^/]+)$/.exec(path);
       const threadKey = match?.[1];

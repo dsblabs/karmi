@@ -67,7 +67,7 @@ export interface ThreadStatus {
   budget?: ThreadBudget;
   /** Unanswered Approvals of the parked Turn, oldest first. */
   pendingApprovals?: PendingApproval[];
-  /** The Agent Spec version the last Turn ran under. */
+  /** The Agent Spec version the last Turn ran under. Version 0 is the code definition of a code-defined Agent. */
   agentVersion?: number;
   /** Token usage summed over every completed model Step of the Thread. */
   usage: Usage;

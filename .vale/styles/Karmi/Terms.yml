@@ -14,6 +14,7 @@ swap:
   'bash tool': Script
   'billing event': Usage record
   'billing hook': UsageHandler
+  'built-in agent': Code-defined Agent
   'built-in tool': Provider Tool
   'byok key': Provider credential
   'channel integration': Deliverer
@@ -23,6 +24,7 @@ swap:
   'context reset': Compaction
   'credential value': Sensitive value
   'cron job': Schedule
+  'default agent': Code-defined Agent
   'definition file': Agent Spec
   'deleted flag': Tombstone
   'discovery cache': Catalogue cache
@@ -53,6 +55,7 @@ swap:
   'scheduled job': Alarm
   'scope escalation': Step-up
   'secret string': Sensitive value
+  'seeded agent': Code-defined Agent
   'server tool': Provider Tool
   'session filesystem': Workspace
   'slash command': Skill
