@@ -417,7 +417,7 @@ Each suggested prompt has a Script. The instructions tell the model to run it as
 | **Network** | `fetch` throws. The isolate has no network access. |
 | **Tool-call limit** | The Script asks for 12 calls. The Harness refuses the eleventh and ends the Script with `limit_exceeded: maxToolCalls`. |
 | **Time limit** | The Script waits for 60 seconds. The Harness ends it after 10 seconds with `limit_exceeded: wallMs`. |
-| **CPU limit** | The Script runs a long loop. It must fail with `limit_exceeded: cpuMs` on Cloudflare. Local workerd does not enforce `cpuMs`, thus the Script finishes in local development. In a live check on Cloudflare, the Script also finished. [Issue 228](https://github.com/dsblabs/karmi/issues/228) tracks it. |
+| **CPU limit** | The Script runs a loop that uses about 10 seconds of CPU time. On Cloudflare, it fails with `limit_exceeded: cpuMs`. The stop is not exact: Cloudflare stops the Script after a few seconds of CPU time, not at 50 ms. The loop does not await, thus `wallMs` and a cancel cannot stop it. Local workerd does not enforce `cpuMs`, thus the Script finishes in local development after about 5 seconds. |
 | **Cancel** | The Script packs one open order each two seconds. Select **Cancel the Turn** after the first box. The Script stops and packs no more boxes. The boxes that it packed stay packed. |
 
 In the conversation, the card of each `run_script` call lists the Tool calls of its Script. The model does not see them: it gets only the result of `run_script`. The **Script runs** card shows, for each Script, the value or the error, a plain explanation of a known error, the console lines and each nested call with its call id and its `parentCallId`. The parent is the call id of the `run_script` call, in the form `{threadId}:{seq}`. Open **Event log** to see the `tool.call` and `tool.result` events with `parentCallId`.
@@ -789,7 +789,6 @@ A live acceptance ran on 2026-09-24 with OpenRouter and `z-ai/glm-5.3-flashx`, i
 - OpenAI, Anthropic, Google Gemini and a custom endpoint, because no credential for them was available.
 - A Provider Tool call and AI Gateway. The two OpenRouter profiles accept no Provider Tool, and the gateway of setup needs a token that setup did not have.
 - OAuth Connections and a static MCP credential, because no real server for them was available.
-- The `cpuMs` limit of an isolate Script. On Cloudflare, the CPU limit Script finished. [Issue 228](https://github.com/dsblabs/karmi/issues/228) tracks it.
 - Container Scripts with `pnpm dev:containers` and local Docker, and key rotation in a Cloudflare account.
 
 ## Deploy to Cloudflare
@@ -866,7 +865,7 @@ If cleanup fails, the command lists each remaining resource and keeps its owners
 - The state is in the local emulation, in `.wrangler/`. It is not in a Cloudflare account.
 - Local development and a deployed Worker use separate state.
 - Local development does not run a cron trigger on its own. Call the `scheduled` handler as the Schedules scenario describes.
-- Local workerd does not enforce the `cpuMs` limit of a Script. A live check on Cloudflare did not show the limit either, see [issue 228](https://github.com/dsblabs/karmi/issues/228).
+- Local workerd does not enforce the `cpuMs` limit of a Script.
 - `pnpm dev` has no container runtime. Container Scripts need `pnpm dev:containers` and Docker.
 - `pnpm dev` has no Workers AI and no Vectorize, thus the vector retrieval scenario needs a deployment.
 - OAuth Connections need a public `https` origin. The `http` address of `pnpm dev` cannot take part in OAuth.

@@ -91,9 +91,11 @@ The Tool calls and results of a Script carry a `parentCallId`. The model does no
 
 A Scope ceiling can lower each limit. A grant that asks for more than the ceiling fails validation. Without the `KARMI_LOADER` binding, the Script fails with `capability.unavailable`. A limit error names `cpuMs`, `wallMs` or `maxToolCalls`.
 
-Local workerd does not enforce `cpuMs`. Cloudflare enforces it as a [resource limit](https://developers.cloudflare.com/dynamic-workers/usage/limits/).
+Cloudflare enforces `cpuMs` as a [resource limit](https://developers.cloudflare.com/dynamic-workers/usage/limits/), but the stop is not exact. A Script can use a few seconds of CPU time more than a small limit before Cloudflare stops it. Local workerd does not enforce `cpuMs`.
 
-Cancellation stops the Script and its Tool access. It cannot undo a change that a Tool made in another system. A nested Tool call that runs at the cancel gets an interrupted result. An eviction during a Script also gives an interrupted result to each nested call that did not finish.
+A Script runs on the same CPU thread as the Durable Object of its Thread. Thus `wallMs` and a cancel stop a Script only when the Script awaits, for example a Tool call or a timer. A Script that does not await blocks the Thread until the Script finishes or Cloudflare stops it at `cpuMs`.
+
+Cancellation stops the Script and its Tool access when the Script awaits. It cannot undo a change that a Tool made in another system. A nested Tool call that runs at the cancel gets an interrupted result. An eviction during a Script also gives an interrupted result to each nested call that did not finish.
 
 ## Container Scripts
 

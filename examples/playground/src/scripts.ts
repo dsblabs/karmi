@@ -9,7 +9,7 @@ export const SCRIPTS = "scripts";
 
 /**
  * The Script limits of the Agent. They are lower than the defaults, thus a guided Script can reach each one in a
- * few seconds. Local workerd does not enforce `cpuMs`.
+ * few seconds. Cloudflare stops a Script a few seconds after `cpuMs`. Local workerd does not enforce `cpuMs`.
  */
 export const SCRIPT_LIMITS: ScriptLimits = { cpuMs: 50, wallMs: 10000, maxToolCalls: 10 };
 
@@ -184,7 +184,7 @@ export const SCRIPT_PROMPTS = [
     label: "CPU limit",
     text: script(`export default async () => {
   let sum = 0;
-  for (let step = 0; step < 300000000; step++) sum += step % 7;
+  for (let step = 0; step < 3000000000; step++) sum += step % 7;
   return sum;
 };`),
   },

@@ -66,6 +66,8 @@ const ResponseSchema = z.union([
 /**
  * The `isolate` Sandbox tier: runs a Script in a Dynamic Worker with no filesystem, network, secrets
  * or storage. A breached CPU, wall-clock or Tool-call limit ends the run with a `limit_exceeded` error.
+ * Cloudflare stops a Script at `cpuMs` only approximately, a few seconds late for a small limit. The Dynamic
+ * Worker runs on the thread of the caller, thus `wallMs` and a cancel act only when the Script awaits.
  */
 export class CloudflareIsolateSandbox implements Sandbox {
   constructor(private readonly loader: WorkerLoader) {}

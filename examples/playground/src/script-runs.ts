@@ -51,7 +51,7 @@ export function explainScriptError(message: string, limits: ScriptLimits): strin
   if (message.includes("limit_exceeded: wallMs"))
     return `The Script ran for more than ${String(limits.wallMs)} ms, the wallMs limit. The Harness stopped it.`;
   if (message.includes("limit_exceeded: cpuMs"))
-    return `The Script used more than ${String(limits.cpuMs)} ms of CPU time, the cpuMs limit. Cloudflare stopped it. Local workerd does not enforce this limit.`;
+    return `The Script used more than ${String(limits.cpuMs)} ms of CPU time, the cpuMs limit. Cloudflare stopped it. The stop is not exact: it can come a few seconds after the limit. Local workerd does not enforce this limit.`;
   if (/tools\.\w+ is not a function/.test(message))
     return "The Script gets only the Tools that the Permission Policy allows. A Tool that needs an Approval is not in tools, because a Script cannot wait for an Approval.";
   if (message.includes("not permitted to access the internet"))

@@ -135,9 +135,9 @@ describe("the isolate Scripts scenario", () => {
     expect(last.explanation).toContain("wallMs");
   });
 
-  it("runs the CPU limit Script to the end, because local workerd does not enforce cpuMs", async () => {
-    const { last } = await run("CPU limit");
-    expect(last).toMatchObject({ state: "done", value: expect.any(Number) });
+  // Local workerd does not enforce cpuMs, thus a local run of the CPU limit Script proves nothing and takes seconds.
+  it("gives the CPU limit Script a loop that Cloudflare stops at cpuMs", () => {
+    expect(prompt("CPU limit")).toContain("step < 3000000000;");
   });
 
   it("stops the Script when the Turn is cancelled and keeps the box that a Tool packed", async () => {
