@@ -254,10 +254,11 @@ export const SCENARIOS: readonly Scenario[] = [
     controls: true,
     needsLoader: true,
     localLimits: [
-      `Local workerd does not enforce cpuMs, thus the CPU limit Script finishes in local development, with no stop at ${String(SCRIPT_LIMITS.cpuMs)} ms.`,
+      `Local workerd does not enforce cpuMs, thus the CPU limit Script finishes in local development, with no stop at ${String(SCRIPT_LIMITS.cpuMs)} ms. It uses about 5 seconds of CPU time.`,
     ],
     notes: [
-      "In a live check on Cloudflare, the CPU limit Script also finished. Issue 228 of the karmi repository tracks the cpuMs limit.",
+      `On Cloudflare, the stop at cpuMs is not exact. Cloudflare stops the CPU limit Script after a few seconds of CPU time, not at ${String(SCRIPT_LIMITS.cpuMs)} ms.`,
+      "A Script runs on the same CPU thread as the Durable Object of its Thread. The Harness can apply wallMs or a cancel only when the Script awaits, thus only cpuMs stops the loop of the CPU limit Script.",
       "A cancel can land while a nested Tool call runs. That call gets an interrupted result, because the Harness does not know if it took effect. The Tool can still finish its work, thus check the order system.",
     ],
   },
@@ -722,8 +723,10 @@ export const COVERAGE: readonly CoverageRow[] = [
     group: "Scripts",
     feature: "CPU limit of a Script",
     scenario: SCRIPTS,
-    observable: "The CPU limit Script must fail with limit_exceeded: cpuMs on Cloudflare. Locally, it finishes.",
-    verification: `Not verified. In a live check on ${LIVE_DATE} in a temporary deployment, the Script finished on Cloudflare too. Issue 228 tracks it. No automatic check can run, because local workerd does not enforce cpuMs.`,
+    observable:
+      "The CPU limit Script fails with limit_exceeded: cpuMs on Cloudflare, a few seconds after the limit. Locally, it finishes.",
+    verification:
+      "Checked on 2026-09-25 on Cloudflare: CloudflareIsolateSandbox ran the CPU limit Script with the limits of the scenario, and three runs failed with limit_exceeded: cpuMs. A run through the model was not checked. No automatic check can run, because local workerd does not enforce cpuMs.",
   },
   scripts(
     "Script cancellation",

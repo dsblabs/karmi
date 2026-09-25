@@ -79,9 +79,10 @@ it("reports missing Loader availability during Spec validation", () => {
     );
 });
 
+// Cloudflare stops a Script a few seconds after a small cpuMs, thus the loop uses about 10 seconds of CPU time.
 it.skip("enforces cpuMs on Cloudflare (local workerd does not enforce CPU limits)", async () => {
   const result = await sandbox().run({
-    ...request("export default () => { let n = 0; for (let i = 0; i < 100000000; i++) n += Math.sqrt(i); return n; }"),
+    ...request("export default () => { let n = 0; for (let i = 0; i < 3000000000; i++) n += i % 7; return n; }"),
     limits: { cpuMs: 1, wallMs: 2000, maxToolCalls: 1 },
   });
   expect(result.error?.message).toBe("limit_exceeded: cpuMs");
