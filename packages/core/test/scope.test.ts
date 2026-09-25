@@ -6,9 +6,10 @@ import { karmi } from "./worker";
 let n = 0;
 const fresh = () => karmi.scope(`s${++n}`);
 
+// "desk" is not in the test Catalogue, thus these Specs are stored Agents and not Overrides.
 const spec = (patch: Partial<AgentSpec> = {}): AgentSpec => ({
-  agentId: "concierge",
-  name: "Concierge",
+  agentId: "desk",
+  name: "Desk",
   instructions: [{ text: "Help." }],
   model: { id: "anthropic/claude-sonnet-5" },
   ...patch,
@@ -58,9 +59,9 @@ describe("scope.config", () => {
 describe("scope.agents", () => {
   it("puts a Spec and reads it back normalised at version 1", async () => {
     const scope = fresh();
-    expect(await scope.agents.put(spec({ tools: ["weather"] }))).toEqual({ agentId: "concierge", version: 1 });
-    const record = await scope.agents.get("concierge");
-    expect(record).toMatchObject({ agentId: "concierge", version: 1, catalogueChanged: false });
+    expect(await scope.agents.put(spec({ tools: ["weather"] }))).toEqual({ agentId: "desk", version: 1 });
+    const record = await scope.agents.get("desk");
+    expect(record).toMatchObject({ agentId: "desk", version: 1, catalogueChanged: false });
     expect(record.spec.tools).toEqual([{ name: "weather" }]);
   });
 
@@ -68,12 +69,12 @@ describe("scope.agents", () => {
     const scope = fresh();
     await scope.agents.put(spec({ name: "One" }));
     expect(await scope.agents.put(spec({ name: "Two" }), { ifVersion: 1 })).toEqual({
-      agentId: "concierge",
+      agentId: "desk",
       version: 2,
     });
-    expect((await scope.agents.get("concierge")).spec.name).toBe("Two");
-    expect((await scope.agents.get("concierge", { version: 1 })).spec.name).toBe("One");
-    expect(await scope.agents.history("concierge")).toEqual([
+    expect((await scope.agents.get("desk")).spec.name).toBe("Two");
+    expect((await scope.agents.get("desk", { version: 1 })).spec.name).toBe("One");
+    expect(await scope.agents.history("desk")).toEqual([
       expect.objectContaining({ version: 1 }),
       expect.objectContaining({ version: 2 }),
     ]);
@@ -82,7 +83,7 @@ describe("scope.agents", () => {
   it("refuses a put against a stale version, with 0 meaning create-only", async () => {
     const scope = fresh();
     await expect(scope.agents.put(spec(), { ifVersion: 1 })).rejects.toThrowError(
-      new KarmiError("agent.conflict", 'Agent "concierge" is at version 0, not 1.'),
+      new KarmiError("agent.conflict", 'Agent "desk" is at version 0, not 1.'),
     );
     await scope.agents.put(spec(), { ifVersion: 0 });
     await expect(scope.agents.put(spec(), { ifVersion: 0 })).rejects.toMatchObject({ code: "agent.conflict" });
@@ -97,7 +98,7 @@ describe("scope.agents", () => {
       expect.objectContaining({ code: "ref.tool.unknown", path: "/tools/0/name" }),
     ]);
     expect(await scope.agents.validate(bad)).toEqual((error as SpecInvalidError).result);
-    await expect(scope.agents.get("concierge")).rejects.toMatchObject({ code: "agent.notFound" });
+    await expect(scope.agents.get("desk")).rejects.toMatchObject({ code: "agent.notFound" });
   });
 
   it("validates against the Scope's config merged under the Deployment defaults", async () => {
@@ -114,16 +115,16 @@ describe("scope.agents", () => {
     });
     await scope.config.set({ providers: { default: { adapter: "fake", models: ["*"] } } });
     await expect(scope.agents.put(spec({ model: { id: "openai/gpt-5" } }))).resolves.toEqual({
-      agentId: "concierge",
+      agentId: "desk",
       version: 1,
     });
   });
 
   it("validates the Memory profile as a union across the Scope's Agents", async () => {
     const scope = fresh();
-    await scope.agents.put(spec({ agentId: "a", memory: { profile: { properties: { tier: { type: "number" } } } } }));
+    await scope.agents.put(spec({ agentId: "a", memory: { profile: { properties: { plan: { type: "number" } } } } }));
     await expect(
-      scope.agents.put(spec({ agentId: "b", memory: { profile: { properties: { tier: { type: "string" } } } } })),
+      scope.agents.put(spec({ agentId: "b", memory: { profile: { properties: { plan: { type: "string" } } } } })),
     ).rejects.toMatchObject({
       result: {
         issues: [
@@ -137,12 +138,13 @@ describe("scope.agents", () => {
     const scope = fresh();
     await scope.agents.put(spec({ agentId: "a", name: "A" }));
     await scope.agents.put(spec({ agentId: "b", name: "B", description: "Second" }));
-    expect(await scope.agents.list()).toEqual([
+    const stored = async () => (await scope.agents.list()).filter((agent) => agent.version > 0);
+    expect(await stored()).toEqual([
       { agentId: "a", version: 1, name: "A", updatedAt: expect.any(Number) },
       { agentId: "b", version: 1, name: "B", description: "Second", updatedAt: expect.any(Number) },
     ]);
     await scope.agents.delete("a");
-    expect((await scope.agents.list()).map((a) => a.agentId)).toEqual(["b"]);
+    expect((await stored()).map((a) => a.agentId)).toEqual(["b"]);
     await expect(scope.agents.get("a")).rejects.toThrowError(
       new KarmiError("agent.deleted", 'Agent "a" has been deleted.'),
     );
@@ -150,27 +152,100 @@ describe("scope.agents", () => {
     await expect(scope.agents.delete("zzz")).rejects.toMatchObject({ code: "agent.notFound" });
   });
 
+  it("accepts ifVersion 0 for a deleted Agent, because get reports no version in use", async () => {
+    const scope = fresh();
+    await scope.agents.put(spec());
+    await scope.agents.delete("desk");
+    await expect(scope.agents.put(spec(), { ifVersion: 1 })).rejects.toThrowError(
+      new KarmiError("agent.conflict", 'Agent "desk" is at version 0, not 1.'),
+    );
+    expect(await scope.agents.put(spec(), { ifVersion: 0 })).toEqual({ agentId: "desk", version: 2 });
+  });
+
   it("revives a deleted Agent on the next put, continuing its version history", async () => {
     const scope = fresh();
     await scope.agents.put(spec());
-    await scope.agents.delete("concierge");
-    expect(await scope.agents.put(spec())).toEqual({ agentId: "concierge", version: 2 });
-    expect((await scope.agents.get("concierge")).version).toBe(2);
+    await scope.agents.delete("desk");
+    expect(await scope.agents.put(spec())).toEqual({ agentId: "desk", version: 2 });
+    expect((await scope.agents.get("desk")).version).toBe(2);
   });
 
   it("keeps the last 20 versions", async () => {
     const scope = fresh();
     for (let i = 1; i <= 22; i++) await scope.agents.put(spec({ name: `v${i}` }));
-    const history = await scope.agents.history("concierge");
+    const history = await scope.agents.history("desk");
     expect(history.map((h) => h.version)).toEqual(Array.from({ length: 20 }, (_, i) => i + 3));
-    await expect(scope.agents.get("concierge", { version: 2 })).rejects.toMatchObject({ code: "agent.notFound" });
+    await expect(scope.agents.get("desk", { version: 2 })).rejects.toMatchObject({ code: "agent.notFound" });
   });
 
   it("isolates Scopes from each other", async () => {
     const a = fresh();
     const b = fresh();
     await a.agents.put(spec());
-    await expect(b.agents.get("concierge")).rejects.toMatchObject({ code: "agent.notFound" });
+    await expect(b.agents.get("desk")).rejects.toMatchObject({ code: "agent.notFound" });
+  });
+});
+
+describe("code-defined Agents", () => {
+  it("runs the code definition as version 0 and stores nothing", async () => {
+    const scope = fresh();
+    const record = await scope.agents.get("concierge");
+    expect(record).toEqual({
+      agentId: "concierge",
+      version: 0,
+      spec: expect.objectContaining({ name: "Concierge" }),
+      catalogueChanged: false,
+    });
+    expect(await scope.agents.history("concierge")).toEqual([]);
+    expect((await scope.agents.list()).find((agent) => agent.agentId === "concierge")).toEqual({
+      agentId: "concierge",
+      version: 0,
+      name: "Concierge",
+    });
+  });
+
+  it("runs an Override instead of the code definition, and a delete of the Override restores the code", async () => {
+    const scope = fresh();
+    const code = (await scope.agents.get("concierge")).spec as AgentSpec;
+    expect(await scope.agents.put({ ...code, name: "Tenant concierge" }, { ifVersion: 0 })).toEqual({
+      agentId: "concierge",
+      version: 1,
+    });
+    expect(await scope.agents.get("concierge")).toMatchObject({ version: 1, spec: { name: "Tenant concierge" } });
+    expect(await scope.agents.get("concierge", { version: 0 })).toMatchObject({
+      version: 0,
+      spec: { name: "Concierge" },
+    });
+    expect((await scope.agents.list()).find((agent) => agent.agentId === "concierge")).toMatchObject({ version: 1 });
+
+    await scope.agents.delete("concierge");
+    expect(await scope.agents.get("concierge")).toMatchObject({ version: 0, spec: { name: "Concierge" } });
+    expect(await scope.agents.history("concierge")).toEqual([expect.objectContaining({ version: 1 })]);
+    expect(await scope.agents.put({ ...code, name: "Again" }, { ifVersion: 0 })).toEqual({
+      agentId: "concierge",
+      version: 2,
+    });
+  });
+
+  it("refuses to delete a code-defined Agent without an Override", async () => {
+    await expect(fresh().agents.delete("concierge")).rejects.toThrowError(
+      new KarmiError(
+        "agent.codeDefined",
+        'Agent "concierge" is code-defined and has no Override in this Scope. Remove it from the Catalogue.',
+      ),
+    );
+  });
+
+  it("validates the Memory profile against the code-defined Agents too", async () => {
+    await expect(
+      fresh().agents.put(spec({ memory: { profile: { properties: { tier: { type: "number" } } } } })),
+    ).rejects.toMatchObject({
+      result: {
+        issues: expect.arrayContaining([
+          expect.objectContaining({ code: "memory.profile.conflict", context: { agentId: "memo", type: "string" } }),
+        ]),
+      },
+    });
   });
 });
 
@@ -198,7 +273,7 @@ describe("scope lifecycle", () => {
     });
     const destroyed = new KarmiError("scope.destroyed", `Scope "${scope.id}" has been destroyed.`);
     await expect(scope.config.get()).rejects.toThrowError(destroyed);
-    await expect(scope.agents.get("concierge")).rejects.toThrowError(destroyed);
+    await expect(scope.agents.get("desk")).rejects.toThrowError(destroyed);
     await expect(scope.agents.put(spec())).rejects.toThrowError(destroyed);
     await expect(scope.suspend()).rejects.toThrowError(destroyed);
     await expect(scope.destroy()).resolves.toEqual({ operationId });

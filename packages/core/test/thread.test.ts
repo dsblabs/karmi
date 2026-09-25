@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ThreadEvent } from "../src/index";
+import type { AgentSpec, ThreadEvent } from "../src/index";
 import { lastMessage, reply } from "../src/testing/index";
 import { provider, scope } from "./worker";
 
@@ -36,7 +36,7 @@ describe("one text Turn", () => {
       attempt: 1,
       model: "anthropic/claude-sonnet-5",
       provider: "fake",
-      agentVersion: 1,
+      agentVersion: 0,
     });
     expect(events).toContainEvent({
       type: "step.completed",
@@ -137,10 +137,26 @@ describe("reading the log", () => {
     await thread.send(message("Two"));
     expect(await thread.status()).toEqual({
       state: "idle",
-      agentVersion: 1,
+      agentVersion: 0,
       usage: { input: 12, output: 3, cacheRead: 0, cacheWrite: 0 },
       seq: 14,
     });
+  });
+
+  it("runs the code definition until the Scope stores an Override, and again after its delete", async () => {
+    provider.script(["Code", "Override", "Code again"]);
+    const thread = fresh();
+    const versions = async (text: string) =>
+      (await thread.send(message(text))).flatMap((e) => (e.type === "step.started" ? [e.agentVersion] : []));
+    expect(await versions("One")).toEqual([0]);
+    const code = (await scope.agents.get("concierge")).spec as AgentSpec;
+    const { version } = await scope.agents.put({ ...code, name: "Tenant concierge" });
+    try {
+      expect(await versions("Two")).toEqual([version]);
+    } finally {
+      await scope.agents.delete("concierge");
+    }
+    expect(await versions("Three")).toEqual([0]);
   });
 
   it("replays events after a seq and subscribes at part or turn granularity", async () => {

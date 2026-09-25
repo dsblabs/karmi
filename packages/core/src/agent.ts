@@ -170,7 +170,8 @@ export interface Agent {
 /**
  * Defines a code-defined Agent for the Catalogue from the same Spec a Platform would `put`. It checks the
  * Spec's shape and throws a `KarmiError` when it is invalid. References are checked against the Catalogue
- * when it is assembled.
+ * when it is assembled. Each Scope runs the current code definition as version 0, until the Scope stores an
+ * Override with `scope.agents.put`.
  */
 export function defineAgent(spec: AgentSpec): Agent {
   const result = z.safeParse(AgentSpecSchema, spec);

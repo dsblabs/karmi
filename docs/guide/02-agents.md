@@ -93,7 +93,43 @@ export async function saveAgent(karmi: Karmi, tenant: string, spec: AgentSpec): 
 }
 ```
 
-`scope.agents` also has `get`, `list`, `history`, `delete` and `validate`. `put` accepts `{ ifVersion }`, which stores the Spec only when the current version has that number. `ifVersion: 0` stores the Spec only when the Agent does not exist.
+`scope.agents` also has `get`, `list`, `history`, `delete` and `validate`. `put` accepts `{ ifVersion }`, which stores the Spec only when `get` reports that version. `ifVersion: 0` stores the Spec only when the Scope has no stored version in use.
+
+`delete` tombstones the Agent. Its versions stay readable by number, and the next `put` continues the numbers. Thus a version number in the log of a Thread always names one Spec.
+
+## Code-defined Agents and Overrides
+
+A Scope runs the current code definition of each code-defined Agent. After a deploy, the next Turn in each Scope uses the new code. The Scope stores nothing for the Agent. The code definition has version 0, and `step.started` reports `agentVersion: 0`.
+
+A Spec that `put` stores with the `agentId` of a code-defined Agent is an Override. The Scope then runs the Override. A change to the code does not reach that Scope. This sample stores the code definition of `supportAgent` with other instructions, for one tenant:
+
+```ts
+import { defineAgent, type Karmi } from "@karmi/core";
+
+const supportAgent = defineAgent({
+  agentId: "support",
+  name: "Support",
+  instructions: [{ text: "Answer questions about orders." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+});
+
+export async function overrideSupport(karmi: Karmi, tenant: string, instructions: string): Promise<void> {
+  const spec = { ...supportAgent.spec, instructions: [{ text: instructions }] };
+  await karmi.scope(tenant).agents.put(spec, { ifVersion: 0 });
+}
+```
+
+For a code-defined Agent, the operations of `scope.agents` do these things:
+
+- `get(agentId)` returns the Override. Without an Override, it returns the code definition as version 0.
+- `get(agentId, { version: 0 })` always returns the code definition.
+- `list()` shows each code-defined Agent. An Agent without an Override shows version 0 and no `updatedAt`.
+- `history(agentId)` lists only the versions of the Overrides.
+- `delete(agentId)` removes the Override, and the code definition applies again. Without an Override, it throws `agent.codeDefined`. To remove a code-defined Agent, remove it from the Catalogue.
+
+To keep one Scope on the current code definition after a later deploy, store that definition as an Override.
+
+The Framework checks the code definition against the Catalogue at boot. A Turn does not check it against the Scope. The Turn applies the ceilings of the Scope to it, in the same way as to a stored Spec. `put` and `validate` check a Spec against all the Agents of the Scope, the code-defined Agents included.
 
 `validateAgentSpec` checks a Spec against the Catalogue with no Scope. Use it in an editor or in a test. This sample returns the messages of the issues that block a Spec:
 

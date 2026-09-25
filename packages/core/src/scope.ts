@@ -62,19 +62,31 @@ export interface Scope {
     /** Replaces the whole document as a new revision. `ifRevision` makes it a compare-and-set. */
     set(document: ScopeConfigDocument, options?: { ifRevision?: number }): Promise<{ revision: number }>;
   };
-  /** The Agents stored in this Scope. */
+  /**
+   * The Agents of this Scope: the stored Agents and the code-defined Agents of the Catalogue. A code-defined Agent
+   * runs its current code definition, which is version 0, until the Scope stores an Override with the same id.
+   */
   readonly agents: {
     /**
-     * Validates `spec` against the Catalogue and this Scope, then stores it as the next version.
-     * `ifVersion` makes it a compare-and-set, and `ifVersion: 0` means create-only.
+     * Validates `spec` against the Catalogue and this Scope, then stores it as the next version. A Spec with the id
+     * of a code-defined Agent is an Override. `ifVersion` makes it a compare-and-set against the version that `get`
+     * reports, thus `ifVersion: 0` stores only when the Scope has no stored version in use.
      */
     put(spec: AgentSpec, options?: { ifVersion?: number }): Promise<{ agentId: string; version: number }>;
-    /** The current version of the Agent, or the version `options.version` names. */
+    /**
+     * The current version of the Agent, or the version `options.version` names. A code-defined Agent without an
+     * Override returns its code definition as version 0, and `version: 0` always returns the code definition.
+     */
     get(agentId: string, options?: { version?: number }): Promise<AgentRecord>;
+    /** Each Agent in use, sorted by id. A code-defined Agent without an Override shows version 0. */
     list(): Promise<AgentSummary[]>;
-    /** Every stored version of the Agent. */
+    /** Every stored version of the Agent. It does not include the code definition. */
     history(agentId: string): Promise<AgentVersion[]>;
-    /** Tombstones the Agent. Its versions stay readable by number and a later `put` continues them. */
+    /**
+     * Tombstones the stored Agent. Its versions stay readable by number and a later `put` continues them. The
+     * delete of an Override makes the code definition apply again. It throws `agent.codeDefined` for a code-defined
+     * Agent without an Override.
+     */
     delete(agentId: string): Promise<void>;
     /** Runs the same validation as `put` without storing anything. */
     validate(spec: AgentSpec): Promise<ValidationResult>;

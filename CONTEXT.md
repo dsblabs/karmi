@@ -166,7 +166,7 @@ Park is the state of a Turn that stopped to wait and continues to hold its Threa
 _Avoid_: pause (for the state), suspend (that is a Scope), block
 
 **Tombstone**:
-A Tombstone is the row that a destroyed Thread, Agent or Scope leaves. It makes sure that nothing uses the identity again. An item with a Tombstone refuses every operation except the lifecycle reads that report on it. The durable cleanup runs later in scheduler batches.
+A Tombstone is the row that a destroyed Thread, Agent or Scope leaves. A Thread or Scope Tombstone makes sure that nothing uses the identity again. Such an item refuses every operation except the lifecycle reads that report on it. An Agent Tombstone only ends the current Spec. A later put starts the next version under the same `agentId`, thus an old version number never names a different Spec. The durable cleanup runs later in scheduler batches.
 _Avoid_: soft delete, deleted flag
 
 **Step**:
@@ -298,6 +298,14 @@ _Avoid_: index (for the store), database, Vectorize (as the generic term)
 **Agent**:
 An Agent is a configured actor that the Framework runs. The Framework creates it from an Agent Spec. Its key is (Scope, agentId). A Scope can hold any number of Agents. The Platform creates them at runtime, or a developer writes them in code. The shape is the same in the two cases.
 _Avoid_: bot, assistant, persona, agent definition (for the running thing)
+
+**Code-defined Agent**:
+A code-defined Agent is an Agent whose Spec is a Catalogue item. Every Scope runs the current code definition of the Deployment, until the Scope stores an Override. The code definition is version 0.
+_Avoid_: seeded Agent, built-in Agent, default Agent
+
+**Override**:
+An Override is an Agent Spec that a Scope stores with the same `agentId` as a code-defined Agent. The Scope then runs the Override and not the code definition. A delete of the Override makes the code definition apply again.
+_Avoid_: customisation, fork (that is a Thread), copy
 
 **Agent Spec**:
 An Agent Spec is the plain-data description from which the Framework creates an Agent. A caller-chosen `agentId` under a Scope identifies it. It has these parts:

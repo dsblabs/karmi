@@ -4,6 +4,7 @@ import type { ValidationFailure } from "./validate";
  * The stable code of every error karmi throws, named `area.camelCase`. A new failure adds its code here first.
  */
 export type KarmiErrorCode =
+  | "agent.codeDefined"
   | "agent.conflict"
   | "agent.deleted"
   | "agent.id.invalid"

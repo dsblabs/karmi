@@ -2,8 +2,9 @@ import { and, asc, count, desc, eq, isNull, lte, ne, sql, type SQL } from "drizz
 import { drizzle } from "drizzle-orm/durable-sqlite";
 import { migrate } from "drizzle-orm/durable-sqlite/migrator";
 import { ScheduledDurableObject, type ScheduledAlarm } from "./scheduler";
-import type { AgentSpec } from "./agent";
-import type { NormalizedAgentSpec } from "./agent-spec";
+import * as z from "zod/mini";
+import type { Agent, AgentSpec } from "./agent";
+import { AgentSpecSchema, type NormalizedAgentSpec } from "./agent-spec";
 import type { KarmiBindings } from "./bindings";
 import type { ScopeId } from "./context";
 import scopeConfigMigrations from "./db/scope-config/migrations";
@@ -72,23 +73,27 @@ export interface ConfigRecord {
   document: ScopeConfigDocument;
 }
 
-/** One stored version of an Agent Spec. */
+/** One version of an Agent Spec: a stored version, or version 0 for the code definition of a code-defined Agent. */
 export interface AgentRecord {
   agentId: string;
+  /** The stored version, or 0 for the code definition. */
   version: number;
   spec: NormalizedAgentSpec;
-  createdAt: number;
-  /** Whether the Catalogue changed since this version was validated. A new put revalidates it. */
+  /** When the Scope stored this version. The code definition has no `createdAt`. */
+  createdAt?: number;
+  /** Whether the Catalogue changed since this version was validated. It is always false for the code definition. */
   catalogueChanged: boolean;
 }
 
 /** An Agent as `scope.agents.list` reports it: its current version and display fields. */
 export interface AgentSummary {
   agentId: string;
+  /** The current stored version, or 0 when the Agent runs its code definition. */
   version: number;
   name: string;
   description?: string;
-  updatedAt: number;
+  /** When the Scope stored the current version. The code definition has no `updatedAt`. */
+  updatedAt?: number;
 }
 
 /** One entry of an Agent's version history. */
@@ -218,6 +223,25 @@ export { isHolder };
 
 const notFound = (agentId: string) =>
   fail(new KarmiError("agent.notFound", `Agent "${agentId}" does not exist in this Scope.`));
+
+// The code definition of a code-defined Agent as `get` reports it. It is version 0, and the Scope never stored it.
+const codeRecord = (agent: Agent): AgentRecord => ({
+  agentId: agent.agentId,
+  version: 0,
+  spec: z.parse(AgentSpecSchema, agent.spec),
+  catalogueChanged: false,
+});
+
+const summary = (
+  agentId: string,
+  version: number,
+  spec: { name: string; description?: string | undefined },
+): AgentSummary => ({
+  agentId,
+  version,
+  name: spec.name,
+  ...(spec.description !== undefined && { description: spec.description }),
+});
 
 type HeadRow = typeof scopeHead.$inferSelect;
 type AgentHeadRow = typeof agentHeads.$inferSelect;
@@ -352,8 +376,9 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     return this.db.select().from(agentHeads).where(eq(agentHeads.agentId, agentId)).get();
   }
 
-  private validate(head: HeadRow, spec: unknown): ValidationResult {
-    const agents = this.db
+  // The Agents of the Scope: each stored Agent that is not deleted, and each code-defined Agent without an Override.
+  private scopeAgents(): { agentId: string; spec: AgentSpec }[] {
+    const stored = this.db
       .select({ agentId: agentHeads.agentId, spec: agentSpecs.spec })
       .from(agentHeads)
       .innerJoin(agentSpecs, currentSpec)
@@ -361,10 +386,18 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       .all()
       // JSON carries no explicit `undefined`, so a stored normalized Spec is also a plain `AgentSpec`.
       .map((row) => ({ agentId: row.agentId, spec: row.spec as NormalizedAgentSpec & AgentSpec }));
+    const overridden = new Set(stored.map((agent) => agent.agentId));
+    const code = [...this.deployment.catalogue.agents.values()]
+      .filter((agent) => !overridden.has(agent.agentId))
+      .map(({ agentId, spec }) => ({ agentId, spec }));
+    return [...stored, ...code];
+  }
+
+  private validate(head: HeadRow, spec: unknown): ValidationResult {
     const config = resolveScopeConfig(this.deployment.defaults, this.document(head.currentRevision));
     return validateAgentSpec(spec, this.deployment.catalogue, {
       config,
-      agents,
+      agents: this.scopeAgents(),
       deploymentProviders: this.deployment.defaults.providers ?? {},
       loaderAvailable: this.env.KARMI_LOADER !== undefined,
     });
@@ -386,26 +419,22 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const fingerprint = await this.deployment.catalogue.fingerprint();
     const head = this.enter(scope);
     if (!head.ok) return head;
-    return this.store(head.value, spec, fingerprint, ifVersion);
-  }
-
-  private store(
-    head: HeadRow,
-    spec: unknown,
-    fingerprint: string,
-    ifVersion?: number,
-  ): Outcome<{ agentId: string; version: number }> {
-    const result = this.validate(head, spec);
+    const result = this.validate(head.value, spec);
     if (!result.ok) return { ok: false, code: "agent.spec.invalid", message: "Agent Spec is invalid.", result };
     const normalized = result.normalized;
     const { agentId } = normalized;
     return this.db.transaction((tx) => {
-      const current =
-        tx.select({ version: agentHeads.currentVersion }).from(agentHeads).where(eq(agentHeads.agentId, agentId)).get()
-          ?.version ?? 0;
+      const row = tx
+        .select({ version: agentHeads.currentVersion, deletedAt: agentHeads.deletedAt })
+        .from(agentHeads)
+        .where(eq(agentHeads.agentId, agentId))
+        .get();
+      // `ifVersion` compares with the version that `get` reports, and a deleted Agent reports 0. The stored
+      // versions continue from the highest one, so an old version number never names a different Spec.
+      const current = row?.deletedAt === null ? row.version : 0;
       if (ifVersion !== undefined && ifVersion !== current)
         return fail(new KarmiError("agent.conflict", `Agent "${agentId}" is at version ${current}, not ${ifVersion}.`));
-      const version = current + 1;
+      const version = (row?.version ?? 0) + 1;
       tx.insert(agentSpecs)
         .values({
           agentId,
@@ -427,9 +456,18 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   }
 
   async agentsGet(scope: ScopeId, agentId: string, version?: number): Promise<Outcome<AgentRecord>> {
+    const fingerprint = await this.deployment.catalogue.fingerprint();
     const head = this.enter(scope);
     if (!head.ok) return head;
+    return this.readAgent(agentId, version, fingerprint);
+  }
+
+  // Version 0 is the code definition. Without a version, an Override wins over the code definition.
+  private readAgent(agentId: string, version: number | undefined, fingerprint: string): Outcome<AgentRecord> {
     const agent = this.agentHead(agentId);
+    const defined = this.deployment.catalogue.agents.get(agentId);
+    if (defined && (version === 0 || (version === undefined && agent?.deletedAt !== null)))
+      return ok(codeRecord(defined));
     if (!agent) return notFound(agentId);
     if (version === undefined && agent.deletedAt !== null)
       return fail(new KarmiError("agent.deleted", `Agent "${agentId}" has been deleted.`));
@@ -440,7 +478,6 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       .where(and(eq(agentSpecs.agentId, agentId), eq(agentSpecs.version, wanted)))
       .get();
     if (!row) return fail(new KarmiError("agent.notFound", `Agent "${agentId}" has no version ${wanted}.`));
-    const fingerprint = await this.deployment.catalogue.fingerprint();
     return ok({
       agentId,
       version: wanted,
@@ -453,7 +490,7 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
   agentsList(scope: ScopeId): Outcome<AgentSummary[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    const rows = this.db
+    const stored: AgentSummary[] = this.db
       .select({
         agentId: agentHeads.agentId,
         version: agentHeads.currentVersion,
@@ -463,23 +500,19 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
       .from(agentHeads)
       .innerJoin(agentSpecs, currentSpec)
       .where(isNull(agentHeads.deletedAt))
-      .orderBy(asc(agentHeads.agentId))
-      .all();
-    return ok(
-      rows.map(({ agentId, version, spec, createdAt }) => ({
-        agentId,
-        version,
-        name: spec.name,
-        ...(spec.description !== undefined && { description: spec.description }),
-        updatedAt: createdAt,
-      })),
-    );
+      .all()
+      .map(({ agentId, version, spec, createdAt }) => ({ ...summary(agentId, version, spec), updatedAt: createdAt }));
+    const overridden = new Set(stored.map((agent) => agent.agentId));
+    const code = [...this.deployment.catalogue.agents.values()]
+      .filter((agent) => !overridden.has(agent.agentId))
+      .map((agent) => summary(agent.agentId, 0, agent.spec));
+    return ok([...stored, ...code].sort((a, b) => (a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0)));
   }
 
   agentsHistory(scope: ScopeId, agentId: string): Outcome<AgentVersion[]> {
     const head = this.enter(scope);
     if (!head.ok) return head;
-    if (!this.agentHead(agentId)) return notFound(agentId);
+    if (!this.agentHead(agentId) && !this.deployment.catalogue.agents.has(agentId)) return notFound(agentId);
     return ok(
       this.db
         .select({ version: agentSpecs.version, createdAt: agentSpecs.createdAt })
@@ -494,32 +527,35 @@ export abstract class ScopeConfigDurableObject extends ScheduledDurableObject {
     const head = this.enter(scope);
     if (!head.ok) return head;
     const agent = this.agentHead(agentId);
-    if (!agent) return notFound(agentId);
-    if (agent.deletedAt === null)
+    if (agent?.deletedAt === null) {
       this.db
         .update(agentHeads)
         .set({ deletedAt: this.deployment.clock.now() })
         .where(eq(agentHeads.agentId, agentId))
         .run();
+      return ok(undefined);
+    }
+    if (this.deployment.catalogue.agents.has(agentId))
+      return fail(
+        new KarmiError(
+          "agent.codeDefined",
+          `Agent "${agentId}" is code-defined and has no Override in this Scope. Remove it from the Catalogue.`,
+        ),
+      );
+    if (!agent) return notFound(agentId);
     return ok(undefined);
   }
 
   /**
-   * The Scope side of a Turn snapshot. A code-defined Agent is seeded on first use. A stored Spec whose
-   * Catalogue changed is revalidated before it may run again. The Thread index row is created or touched
-   * here.
+   * The Scope side of a Turn snapshot. A code-defined Agent without an Override runs its current code definition.
+   * A stored Spec whose Catalogue changed is revalidated before it may run again. The Turn snapshot applies the
+   * Scope ceilings to either Spec. The Thread index row is created or touched here.
    */
   async turnSnapshot(scope: ScopeId, agentId: string, thread: ThreadActivity): Promise<Outcome<TurnSnapshotSource>> {
     const fingerprint = await this.deployment.catalogue.fingerprint();
     const head = this.enter(scope);
     if (!head.ok) return head;
-    if (!this.agentHead(agentId)) {
-      const defined = this.deployment.catalogue.agents.get(agentId);
-      if (!defined) return notFound(agentId);
-      const seeded = this.store(head.value, defined.spec, fingerprint, 0);
-      if (!seeded.ok) return seeded;
-    }
-    const agent = await this.agentsGet(scope, agentId);
+    const agent = this.readAgent(agentId, undefined, fingerprint);
     if (!agent.ok) return agent;
     if (agent.value.catalogueChanged) {
       const result = this.validate(head.value, agent.value.spec);
