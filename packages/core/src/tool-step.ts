@@ -126,6 +126,32 @@ const INTERRUPTED_TEXT =
   "This call was interrupted before it reported a result. It may or may not have taken effect; check before repeating it.";
 
 /**
+ * The interrupted `tool.result` for each `tool.call` in `events` that has no result, a Script's nested calls
+ * included. The newest call comes first, so a Script's nested calls close before the Script.
+ */
+export function interruptedResults(
+  events: Iterable<{ event: ThreadEventData }>,
+  attempt: number,
+): Extract<ThreadEventData, { type: "tool.result" }>[] {
+  // A Provider can use a top-level call id again in a later Step, so a result closes the newest call with its id.
+  const open = new Map<string, Extract<ThreadEventData, { type: "tool.call" }>>();
+  const key = (event: { id: string; parentCallId?: string }) => `${event.parentCallId ?? ""} ${event.id}`;
+  for (const { event } of events) {
+    if (event.type === "tool.call") open.set(key(event), event);
+    else if (event.type === "tool.result") open.delete(key(event));
+  }
+  return [...open.values()].toReversed().map((call) => ({
+    type: "tool.result",
+    id: call.id,
+    name: call.name,
+    content: errorResult(INTERRUPTED_TEXT).content,
+    isError: true,
+    interrupted: { attempt },
+    ...(call.parentCallId !== undefined && { parentCallId: call.parentCallId }),
+  }));
+}
+
+/**
  * Runs one tool-call batch. Resolves with undefined once every call has a result, or with the reason the
  * Step parks.
  */

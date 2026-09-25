@@ -27,7 +27,7 @@ export type ContainerOutcome =
   | { state: "failed"; error: string }
   /** The operator cancelled the Turn. The Harness stopped the process and destroyed the Workspace. */
   | { state: "cancelled" }
-  /** The Turn ended before the Script reported a result. */
+  /** A cancel or an eviction ended the Script before it reported a result. */
   | { state: "stopped" };
 
 /** What the page shows of one container `run_script` call, other than its outcome. */
@@ -64,7 +64,7 @@ function explain(run: ContainerRun): string | undefined {
     return "The process ran longer than wallMs, thus it became a Job and the Turn is parked. The Thread reads the output every five seconds and adds it as progress. Cancel the Turn to stop the process.";
   if (run.state === "cancelled")
     return "The cancel sent SIGTERM to the process, then SIGKILL if it did not stop. The Harness then destroyed the Workspace with its files.";
-  if (run.state === "stopped") return "The Turn ended before the Script finished.";
+  if (run.state === "stopped") return "A cancel or an eviction ended the Script before it reported a result.";
   if (run.state !== "failed") return undefined;
   if (run.error.includes("container_lost"))
     return "The process no longer exists, for example because the container stopped. The Thread cannot read its result.";
@@ -93,7 +93,7 @@ function readResult(text: string, isError: boolean): { outcome: ContainerOutcome
 
 /**
  * Returns each container `run_script` call of an event log with its outcome. A call that became a Job gets the
- * progress of the Job. A call without a result when its Turn ends is `stopped`.
+ * progress of the Job. A call with an interrupted result is `stopped`.
  */
 export function containerRuns(threadId: string, events: readonly ThreadEvent[]): ContainerRun[] {
   const runs = new Map<string, { fields: RunFields; outcome: ContainerOutcome }>();
@@ -125,7 +125,7 @@ export function containerRuns(threadId: string, events: readonly ThreadEvent[]):
       run.fields.jobId = event.jobId;
       run.outcome = { state: "job" };
     } else if (event.type === "job.cancelled") {
-      // A cancelled Job ends its Turn, and no result of the call follows.
+      // A cancelled Job ends its Turn. The interrupted result of the call that follows does not change the state.
       const run = runs.get(jobs.get(event.jobId) ?? "");
       if (!run) continue;
       run.outcome = { state: "cancelled" };
@@ -137,17 +137,15 @@ export function containerRuns(threadId: string, events: readonly ThreadEvent[]):
       const run = runs.get(open.get(event.id) ?? "");
       if (!run) continue;
       open.delete(event.id);
+      if (event.interrupted) {
+        run.outcome = { state: "stopped" };
+        continue;
+      }
       const { outcome, artifacts } = readResult(textOf(event.content), event.isError);
       const stderr = outcome.state === "done" ? outcome.stderr : outcome.state === "failed" ? outcome.error : "";
       run.fields.artifacts = artifacts;
       run.fields.denied = [...new Set([...stderr.matchAll(DENIED)].flatMap(([, host]) => (host ? [host] : [])))];
       run.outcome = outcome;
-    } else if (event.type === "turn.completed" || event.type === "turn.failed") {
-      for (const id of open.values()) {
-        const run = runs.get(id);
-        if (run) run.outcome = { state: "stopped" };
-      }
-      open.clear();
     }
   }
   return [...runs.values()].map(({ fields, outcome }) => {

@@ -400,7 +400,7 @@ describe("cancel, steer and coalescing", () => {
         .filter((e) => e.turn === 1)
         .slice(parked.length)
         .map((e) => e.type),
-    ).toEqual(["approval.resolved", "turn.failed"]);
+    ).toEqual(["approval.resolved", "step.completed", "turn.failed"]);
     expect(events).toContainEvent({
       type: "approval.resolved",
       request: requestSeq(parked),

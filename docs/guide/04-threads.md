@@ -52,6 +52,8 @@ While a Turn runs or is parked, each new `send` joins a queue. The Harness puts 
 
 `thread.cancel()` stops the Turn with `turn.failed { reason: "cancelled" }`. It answers the pending Approvals as denied. Queued inputs still run. Cancellation cannot undo a change that a Tool made in another system.
 
+A Tool call that runs at the cancel gets an interrupted result, the same result as after an eviction. The result has `isError` and `interrupted: { attempt }`. It tells the model that the call possibly took effect. The model sees each result of the cancelled tool Step in the next Turn. If the Tool returns after the cancel, the Harness does not log its result.
+
 ## Parking
 
 A parked Turn waits and uses no Worker time. A Turn parks for an Approval, for its budget or for a Job.

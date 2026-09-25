@@ -119,7 +119,7 @@ import {
   type ThreadAddress,
   type ThreadStatus,
 } from "./thread";
-import { runToolStep, type PriorCalls, type ToolCall } from "./tool-step";
+import { interruptedResults, runToolStep, type PriorCalls, type ToolCall } from "./tool-step";
 import { foldTurn, type Plan, type Request, type TurnState } from "./turn-state";
 import { resolveToolSet, toolDefinitions, toolsInContext, unloadedDeferred, type ToolSet } from "./tools";
 import { splitModelId, transcriptFromEvents } from "./transcript";
@@ -1191,9 +1191,16 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const turn = this.readTurn(row);
     for (const [seq, request] of turn.requests)
       if (!request.answered) this.resolve(row, seq, request, { decision: "deny" }, "cancel");
+    const channelRef = this.log.turnInput(row.turn)?.channelRef;
     for (const job of turn.jobs.values())
-      if (!job.outcome)
-        this.append(row.turn, { type: "job.cancelled", jobId: job.jobId }, this.log.turnInput(row.turn)?.channelRef);
+      if (!job.outcome) this.append(row.turn, { type: "job.cancelled", jobId: job.jobId }, channelRef);
+    // Each call that has not reported gets an interrupted result, and the tool Step completes, so the next
+    // Turn shows the model what the cancel left unknown. A call that returns later cannot append any more.
+    if (turn.plan.kind === "tool" && !turn.plan.fresh) {
+      for (const result of interruptedResults(this.log.turnEvents(row.turn), this.row().attempt))
+        this.append(row.turn, result, channelRef);
+      this.append(row.turn, { type: "step.completed", kind: "tool", n: turn.plan.n }, channelRef);
+    }
     this.turnAbort.abort();
     await this.finish(this.row(), failure("cancelled", "The Turn was cancelled."));
   }
@@ -1598,6 +1605,10 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
       { type: "step.started", kind: "tool", n: plan.n, attempt, agentVersion: snapshot.agentVersion },
       channelRef,
     );
+    // A Script does not survive an eviction, so a call that it made and that has no result never reports one.
+    if (!plan.fresh)
+      for (const result of interruptedResults(this.log.turnEvents(row.turn), attempt))
+        if (result.parentCallId !== undefined) this.append(row.turn, result, channelRef);
     this.armWatchdog();
     const { batch, prior } = plan;
     const step = this.toolStep({ ...row, step: plan.n }, snapshot, available, attempt, batch, prior, channelRef);
