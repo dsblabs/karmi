@@ -1425,8 +1425,18 @@ function observabilityCards({ usage, handler, logs, redaction, exampleChild }, o
   ];
 }
 
+// The state text of a Tool call that a Script made. An interrupted call has an error result, but it may have taken effect.
+const callState = (call) =>
+  call.interrupted
+    ? "interrupted, may have taken effect"
+    : call.isError === undefined
+      ? "running"
+      : call.isError
+        ? "error"
+        : "ok";
+
 // The badge text of each state of a Script run.
-const RUN_STATES = { running: "running", done: "done", failed: "failed", stopped: "stopped, the Turn ended" };
+const RUN_STATES = { running: "running", done: "done", failed: "failed", stopped: "stopped" };
 
 function scriptCards({ orders, grant, policy, runs }) {
   return [
@@ -1487,7 +1497,7 @@ function scriptCards({ orders, grant, policy, runs }) {
                           "li",
                           {},
                           el("code", { textContent: call.name }),
-                          ` ${call.isError === undefined ? "running" : call.isError ? "error" : "ok"}, call `,
+                          ` ${callState(call)}, call `,
                           el("code", { textContent: call.callId }),
                           ", parent ",
                           el("code", { textContent: call.parentCallId }),
@@ -1528,7 +1538,7 @@ const CONTAINER_STATES = {
   done: "done",
   failed: "failed",
   cancelled: "cancelled",
-  stopped: "stopped, the Turn ended",
+  stopped: "stopped",
 };
 
 /** The container Scripts scenario: the sample files, each Script with its output and artifacts, and the grant. */
@@ -3612,7 +3622,7 @@ async function renderScenario(scenario) {
         if (event.parentCallId) {
           scriptLine(
             event.parentCallId,
-            `${event.isError ? "Error result" : "Result"} of `,
+            `${event.interrupted ? "Interrupted result" : event.isError ? "Error result" : "Result"} of `,
             el("code", { textContent: event.name }),
             `: ${event.content.map((block) => block.text ?? "").join(" ")}`,
           );
@@ -3626,7 +3636,8 @@ async function renderScenario(scenario) {
           card.append(
             el("p", {
               className: "outcome",
-              textContent: `An interruption ended attempt ${event.interrupted.attempt - 1} of this call before it reported a result. The Tool has no readOnlyHint or idempotentHint, thus the Harness does not run it again. The model gets this error result and decides what to do.`,
+              textContent:
+                "A cancel of the Turn or an eviction ended this call before it reported a result. The call may have taken effect. The Harness does not run it again. The model gets this error result in its next Step or Turn.",
             }),
           );
         card.append(

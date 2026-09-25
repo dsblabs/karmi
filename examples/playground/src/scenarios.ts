@@ -258,6 +258,7 @@ export const SCENARIOS: readonly Scenario[] = [
     ],
     notes: [
       "In a live check on Cloudflare, the CPU limit Script also finished. Issue 228 of the karmi repository tracks the cpuMs limit.",
+      "A cancel can land while a nested Tool call runs. That call gets an interrupted result, because the Harness does not know if it took effect. The Tool can still finish its work, thus check the order system.",
     ],
   },
   {
@@ -727,7 +728,7 @@ export const COVERAGE: readonly CoverageRow[] = [
   scripts(
     "Script cancellation",
     "Scripts",
-    "Cancel the Turn while the Cancel Script packs boxes. The Script stops. The boxes that it packed stay packed. Reset leaves no Script running.",
+    "Cancel the Turn while the Cancel Script packs boxes. The Script stops. The boxes that it packed stay packed. Each nested call has a result, and a call that ran at the cancel is interrupted. Reset leaves no Script running.",
   ),
   containers(
     "Container execution",

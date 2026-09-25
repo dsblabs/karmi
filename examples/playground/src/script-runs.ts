@@ -20,6 +20,8 @@ export interface NestedCall {
   input: unknown;
   /** Undefined while the call runs. */
   isError?: boolean;
+  /** True when a cancel or an eviction ended the call before it reported a result. The call may have taken effect. */
+  interrupted?: boolean;
 }
 
 /** How a Script ended, or `running` while it runs. */
@@ -29,7 +31,7 @@ export type ScriptOutcome =
   | { state: "done"; value: unknown }
   /** `error` is the message of the Script or the Harness. `explanation` is present when the scenario knows the cause. */
   | { state: "failed"; error: string; explanation?: string }
-  /** The Turn of the Script ended before the Script reported a result. */
+  /** A cancel or an eviction ended the Script before it reported a result. */
   | { state: "stopped"; explanation: string };
 
 /** One `run_script` call of the Thread, with its outcome, its console lines and the Tool calls that the Script made. */
@@ -58,11 +60,11 @@ export function explainScriptError(message: string, limits: ScriptLimits): strin
 }
 
 const STOPPED =
-  "The Turn ended before the Script finished. The Script stopped, and it cannot call a Tool any more. A change that a Tool made before stays.";
+  "A cancel or an eviction ended the Script before it reported a result. The Script cannot call a Tool any more. A change that a Tool made before stays. A Tool call that was in progress is interrupted: it may have taken effect.";
 
 /**
  * Returns each `run_script` call of an event log with its outcome and its nested Tool calls. A nested call has the
- * `parentCallId` of its Script. A Script without a result when its Turn ends is `stopped`.
+ * `parentCallId` of its Script. A Script with an interrupted result is `stopped`.
  */
 export function scriptRuns(threadId: string, events: readonly ThreadEvent[], limits: ScriptLimits): ScriptRun[] {
   const runs = new Map<string, ScriptRun>();
@@ -83,7 +85,10 @@ export function scriptRuns(threadId: string, events: readonly ThreadEvent[], lim
       runs.get(event.parentCallId)?.calls.push(call);
     } else if (event.type === "tool.result" && event.parentCallId) {
       const call = nested.get(event.id);
-      if (call) call.isError = event.isError;
+      if (call) {
+        call.isError = event.isError;
+        if (event.interrupted) call.interrupted = true;
+      }
     } else if (event.type === "tool.call" && event.name === "run_script") {
       const input = scriptInputSchema.safeParse(event.input);
       runs.set(callId, { callId, code: input.success ? input.data.code : "", state: "running", logs: [], calls: [] });
@@ -92,11 +97,12 @@ export function scriptRuns(threadId: string, events: readonly ThreadEvent[], lim
       const run = open.get(event.id);
       if (run === undefined) continue;
       open.delete(event.id);
+      if (event.interrupted) {
+        finish(run, { state: "stopped", explanation: STOPPED });
+        continue;
+      }
       const { outcome, logs } = readResult(event.content, event.isError, limits);
       finish(run, outcome, logs);
-    } else if (event.type === "turn.completed" || event.type === "turn.failed") {
-      for (const run of open.values()) finish(run, { state: "stopped", explanation: STOPPED }, runs.get(run)?.logs);
-      open.clear();
     }
   }
   return [...runs.values()];

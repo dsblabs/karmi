@@ -93,7 +93,7 @@ A Scope ceiling can lower each limit. A grant that asks for more than the ceilin
 
 Local workerd does not enforce `cpuMs`. Cloudflare enforces it as a [resource limit](https://developers.cloudflare.com/dynamic-workers/usage/limits/).
 
-Cancellation stops the Script and its Tool access. It cannot undo a change that a Tool made in another system.
+Cancellation stops the Script and its Tool access. It cannot undo a change that a Tool made in another system. A nested Tool call that runs at the cancel gets an interrupted result. An eviction during a Script also gives an interrupted result to each nested call that did not finish.
 
 ## Container Scripts
 

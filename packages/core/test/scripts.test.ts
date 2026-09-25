@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { reply } from "../src/testing/index";
-import { provider, scope, trace } from "./worker";
+import { gate, karmi, provider, scope, trace } from "./worker";
 
 it("runs a JS module through the real Loader and gates deferred child calls without adding them to context", async () => {
   await scope.agents.put({
@@ -263,4 +263,44 @@ it("inherits the Scope script ceiling when the grant omits limits and rejects an
     expect(validation.issues).toContainEqual(
       expect.objectContaining({ code: "capability.over-ceiling", path: "/capabilities/scripts/limits/maxToolCalls" }),
     );
+});
+
+it("gives an interrupted result to a nested call that a cancel stops, and shows it to the model", async () => {
+  await scope.agents.put({
+    agentId: "script-cancel",
+    name: "Scripts",
+    instructions: [],
+    model: { id: "fake/test" },
+    tools: ["wait_gate"],
+    policy: [{ match: { tool: "*" }, effect: "allow" }],
+    capabilities: { scripts: { tier: "isolate", tools: "allowed" } },
+  });
+  gate.open = false;
+  const entered = gate.entered;
+  provider.script([
+    [reply.toolCall("run_script", { code: "export default async () => await tools.wait_gate({})" }, "script")],
+    "Checked",
+  ]);
+  const target = { agent: "script-cancel", threadId: "script-cancel" };
+  const thread = scope.thread(target);
+  await karmi
+    .scope("test")
+    .thread(target)
+    .send({ kind: "message", parts: [{ type: "text", text: "Run" }] });
+  await expect.poll(() => gate.entered).toBe(entered + 1);
+  await thread.cancel();
+  gate.open = true;
+  await expect.poll(async () => (await thread.status()).state).toBe("idle");
+  const events = await thread.events();
+  const calls = events.filter((e) => e.type === "tool.call");
+  const results = events.filter((e) => e.type === "tool.result");
+  expect(results.map((e) => [e.name, e.parentCallId !== undefined, e.interrupted])).toEqual([
+    ["wait_gate", true, { attempt: 1 }],
+    ["run_script", false, { attempt: 1 }],
+  ]);
+  expect(calls).toHaveLength(2);
+  expect(events.slice(-2).map((e) => e.type)).toEqual(["step.completed", "turn.failed"]);
+  await thread.send({ kind: "message", parts: [{ type: "text", text: "Did it run?" }] });
+  const [answer] = provider.requests.at(-1)?.messages.filter((m) => m.role === "toolResult") ?? [];
+  expect(JSON.stringify(answer?.content)).toContain("may or may not have taken effect");
 });

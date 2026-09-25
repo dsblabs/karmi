@@ -26,6 +26,7 @@ const runSchema = z.object({
       name: z.string(),
       input: z.unknown(),
       isError: z.boolean().optional(),
+      interrupted: z.boolean().optional(),
     }),
   ),
 });
@@ -156,6 +157,8 @@ describe("the isolate Scripts scenario", () => {
     const now = await state();
     expect(now.orders.filter((order) => order.status === "packed").map((order) => order.id)).toEqual(["B-201"]);
     expect(now.runs.at(-1)).toMatchObject({ state: "stopped", explanation: expect.stringContaining("stays") });
+    // The cancel closes each call. No nested call stays without a result.
+    expect(now.runs.at(-1)?.calls.every((call) => call.isError !== undefined)).toBe(true);
   });
 
   it("leaves no Script work after a reset", async () => {
