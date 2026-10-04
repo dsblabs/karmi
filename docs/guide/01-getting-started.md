@@ -19,6 +19,8 @@ pnpm install
 pnpm typecheck && pnpm test
 ```
 
+The `packageManager` field of the project `package.json` gives a pnpm version. The CI workflow of the project installs that version. To use a different pnpm version, change the field.
+
 `create-karmi` only writes the project files. It does not install packages, run git or use the network.
 
 | Option          | Description                                                                           |
