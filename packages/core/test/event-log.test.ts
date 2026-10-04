@@ -122,6 +122,141 @@ describe("Thread event log", () => {
     });
   });
 
+  it("keeps interrupted search reservations across recovery and excludes the current attempt", async () => {
+    await withLog("reserved-search", (open) => {
+      const log = open();
+      const append = (event: ThreadEventData) => log.append(1, event, undefined, log.head);
+      const started = append({
+        type: "step.started",
+        kind: "model",
+        n: 1,
+        attempt: 1,
+        model: "m",
+        provider: "openrouter",
+        profile: "server",
+        agentVersion: 1,
+        providerToolBudget: 2,
+      });
+      expect(open().providerToolCalls(10, 1)).toBe(2);
+      expect(open().providerToolCalls(10, 1, started.seq)).toBe(0);
+      append({ type: "server_tool.called", id: "s", name: "web_search", input: {}, raw: {}, summary: "" });
+      expect(open().providerToolCalls(10, 1)).toBe(2);
+      append({
+        type: "step.started",
+        kind: "model",
+        n: 1,
+        attempt: 1,
+        model: "m",
+        provider: "openrouter",
+        profile: "server",
+        agentVersion: 1,
+        providerToolBudget: 0,
+      });
+      append({
+        type: "step.completed",
+        kind: "model",
+        n: 1,
+        stopReason: "end_turn",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      });
+      expect(open().providerToolCalls(10, 1)).toBe(2);
+      expect(open().providerToolCalls(10, 2)).toBe(0);
+      expect(open().providerToolCalls(10)).toBe(2);
+      expect(open().providerToolCalls(1)).toBe(1);
+    });
+  });
+
+  it("releases unused search reservations after completion, including billed errors", async () => {
+    await withLog("completed-search", (open) => {
+      const log = open();
+      const append = (event: ThreadEventData) => log.append(1, event, undefined, log.head);
+      append({
+        type: "step.started",
+        kind: "model",
+        n: 1,
+        attempt: 1,
+        model: "m",
+        provider: "openrouter",
+        profile: "server",
+        agentVersion: 1,
+        providerToolBudget: 2,
+      });
+      append({ type: "server_tool.called", id: "s", name: "web_search", input: {}, raw: {}, summary: "" });
+      append({
+        type: "step.completed",
+        kind: "model",
+        n: 1,
+        stopReason: "end_turn",
+        usage: { input: 20, output: 5, cacheRead: 0, cacheWrite: 0 },
+      });
+      expect(open().providerToolCalls(10, 1)).toBe(1);
+      append({
+        type: "step.started",
+        kind: "model",
+        n: 2,
+        attempt: 1,
+        model: "m",
+        provider: "openrouter",
+        profile: "server",
+        agentVersion: 1,
+        providerToolBudget: 1,
+      });
+      append({
+        type: "step.completed",
+        kind: "model",
+        n: 2,
+        stopReason: "end_turn",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      });
+      expect(open().providerToolCalls(10, 1)).toBe(1);
+    });
+  });
+
+  it("keeps paid unknown counts reserved and accounts actual counts beyond emitted results", async () => {
+    await withLog("paid-search", (open) => {
+      const log = open();
+      const append = (event: ThreadEventData) => log.append(1, event, undefined, log.head);
+      const started = {
+        type: "step.started",
+        kind: "model",
+        n: 1,
+        attempt: 1,
+        model: "m",
+        provider: "openrouter",
+        profile: "server",
+        agentVersion: 1,
+        providerToolBudget: 2,
+      } as const;
+      const measured = {
+        type: "usage.recorded",
+        kind: "model",
+        scope: "s",
+        agent: "a",
+        threadId: "t",
+        model: "m",
+        provider: "openrouter",
+        profile: "server",
+        input: 20,
+        output: 5,
+        cacheRead: 0,
+        cacheWrite: 0,
+      } as const;
+      append(started);
+      append(measured);
+      expect(open().providerToolCalls(10)).toBe(2);
+      append(started);
+      append({ type: "server_tool.called", id: "s", name: "web_search", input: {}, raw: {}, summary: "" });
+      append({ ...measured, serverToolCalls: 5 });
+      expect(open().providerToolCalls(10)).toBe(7);
+      append(started);
+      append({ ...measured, serverToolCalls: 0 });
+      expect(open().providerToolCalls(10)).toBe(7);
+      append({ ...started, providerToolBudget: 0 });
+      append({ ...measured, serverToolCalls: 1 });
+      expect(open().providerToolCalls(10)).toBe(8);
+    });
+  });
+
   it("counts Provider Tool calls for a Turn or the Thread and stops at the maximum", async () => {
     await withLog("provider-tools", (open) => {
       const log = open();

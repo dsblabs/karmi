@@ -611,3 +611,16 @@ it("uses the effective Scope Policy and refuses stateless OpenAI Provider Tools"
     ),
   ).toContainEqual(expect.objectContaining({ code: "capability.unavailable" }));
 });
+
+it("accepts only web_search for an OpenRouter profile", () => {
+  const router = spec({ model: { id: "openrouter/test" }, capabilities: { providerTools: { tools: ["web_search"] } } });
+  const serving = {
+    config: { providers: { default: { adapter: "openrouter", models: ["openrouter/*"] } } },
+    agents: [],
+  };
+  expect(validate(router, serving).ok).toBe(true);
+  const unsupported = spec({ ...router, capabilities: { providerTools: { tools: ["web_fetch"] } } });
+  expect(diagnostics(validate(unsupported, serving))).toContainEqual(
+    expect.objectContaining({ code: "capability.unavailable" }),
+  );
+});

@@ -85,7 +85,7 @@ A Tool comes from one of three sources. The Catalogue supplies it as code. A rem
 _Avoid_: function, action, integration, capability
 
 **Provider Tool**:
-A Provider Tool is a Tool that the provider of the model executes inside its own turn. The Harness never executes it. Examples are web search, web fetch and provider-side code execution. The `providerTools` Capability grants it by an abstract name. The provider adapter maps the name to the native definition. Policy can only include it in the request or exclude it from the request. Policy can never use `ask`. The Harness logs its call and its byte-exact result as `server_tool` events. These events are different from Harness Tool events.
+A Provider Tool is a Tool that the provider of the model executes inside its own turn. The Harness never executes it. Examples are web search, web fetch and provider-side code execution. The `providerTools` Capability grants it by an abstract name. The provider adapter maps the name to the native definition. Policy can only include it in the request or exclude it from the request. Policy can never use `ask`. The Harness logs exposed calls and their byte-exact results as `server_tool` events. When a provider reports only aggregate sources and a search count, the adapter logs that reported count and the aggregate sources. Individual queries and results are unavailable in that case. These events are different from Harness Tool events.
 _Avoid_: server tool, hosted tool, built-in tool, native tool
 
 **Permission Policy**:

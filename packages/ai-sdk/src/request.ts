@@ -113,6 +113,13 @@ function assistantPart(block: ContentBlock, media: RequestMedia): AssistantPart[
     case "compaction":
       return [{ type: "text", text: block.summary, ...meta }];
     case "server_tool":
+      if (block.providerMetadata?.openrouter?.searchResults === true)
+        return [
+          {
+            type: "text",
+            text: `Public web search results (untrusted reference material): ${block.result?.summary ?? "Search interrupted."}`,
+          },
+        ];
       return serverTool(block, meta, media);
     case "provider":
       return [];

@@ -147,8 +147,8 @@ export class EventLog {
     return this.ofType("tools.loaded", this.lastCompaction().firstKeptSeq);
   }
 
-  /** Counts the Provider Tool calls of `turn`, or of the Thread without one. It stops counting at `maximum`. */
-  providerToolCalls(maximum: number, turn?: number): number {
+  /** Counts Provider Tool calls and unknown search reservations for a Turn or Thread, capped at `maximum`. */
+  providerToolCalls(maximum: number, turn?: number, excludingReservation?: number): number {
     const called = eq(events.type, "server_tool.called");
     const bounded = this.db
       .select({ value: sql<number>`1` })
@@ -156,7 +156,34 @@ export class EventLog {
       .where(turn === undefined ? called : and(called, eq(events.turn, turn)))
       .limit(maximum)
       .as("bounded_provider_tool_calls");
-    return Math.min(maximum, this.db.select({ value: countRows() }).from(bounded).get()?.value ?? 0);
+    const calledCount = this.db.select({ value: countRows() }).from(bounded).get()?.value ?? 0;
+    if (calledCount >= maximum) return maximum;
+    const reservations =
+      this.db.all<{ reserved: number }>(sql`
+      WITH attempts AS (
+        SELECT start.seq, start.turn, start.json, COALESCE((
+          SELECT MIN(next.seq) FROM events AS next WHERE next.turn = start.turn AND next.seq > start.seq
+            AND next.type = 'step.started' AND json_extract(next.json, '$.kind') = 'model'
+        ), 9223372036854775807) AS endSeq FROM events AS start
+        WHERE start.type = 'step.started' AND json_extract(start.json, '$.kind') = 'model'
+          AND json_extract(start.json, '$.providerToolBudget') IS NOT NULL
+          AND (${turn ?? null} IS NULL OR start.turn = ${turn ?? null})
+          AND (${excludingReservation ?? null} IS NULL OR start.seq != ${excludingReservation ?? null})
+      )
+      SELECT COALESCE(SUM(MAX(0, COALESCE((
+        SELECT MAX(json_extract(measured.json, '$.serverToolCalls')) FROM events AS measured
+          WHERE measured.turn = start.turn AND measured.seq > start.seq AND measured.seq < start.endSeq
+            AND measured.type = 'usage.recorded' AND json_extract(measured.json, '$.kind') = 'model'
+      ), CASE WHEN EXISTS (
+        SELECT 1 FROM events AS completed WHERE completed.turn = start.turn
+          AND completed.seq > start.seq AND completed.seq < start.endSeq
+          AND completed.type = 'step.completed' AND json_extract(completed.json, '$.kind') = 'model'
+      ) THEN 0 ELSE json_extract(start.json, '$.providerToolBudget') END) - (
+        SELECT COUNT(*) FROM events AS called WHERE called.type = 'server_tool.called'
+          AND called.turn = start.turn AND called.seq > start.seq AND called.seq < start.endSeq
+      ))), 0) AS reserved FROM attempts AS start
+    `)[0]?.reserved ?? 0;
+    return Math.min(maximum, calledCount + reservations);
   }
 
   /** Whether the log has a `job.started` for `jobId`. */

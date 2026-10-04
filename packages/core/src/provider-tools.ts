@@ -16,6 +16,7 @@ export function supportsProviderTool(
 ): boolean {
   return (
     profile.adapter === "anthropic" ||
+    (profile.adapter === "openrouter" && name === "web_search") ||
     (profile.adapter === "ai-sdk" &&
       model.startsWith("openai/") &&
       name === "web_search" &&

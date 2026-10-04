@@ -204,7 +204,8 @@ export type ProviderEvent =
   | { type: "part"; index: number; block: ContentBlock }
   | { type: "message.end"; stopReason: StopReason; usage: Usage; stopDetails?: unknown }
   | { type: "raw"; raw: unknown }
-  | { type: "error"; error: ProviderError };
+  /** A terminal failure, with billed Usage when the provider reports it. The Harness records Usage before retry or fallback. */
+  | { type: "error"; error: ProviderError; usage?: Usage };
 
 /**
  * What a model accepts. `"unknown"` means the media is sent optimistically. The media pipeline

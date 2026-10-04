@@ -130,10 +130,18 @@ export const researchAgent = defineAgent({
 });
 ```
 
-- The Anthropic Provider supports both names. The AI SDK Provider supports `web_search` for `openai/*` models only.
+- The Anthropic Provider supports both names. The AI SDK Provider supports `web_search` for OpenAI Responses and OpenRouter profiles.
+- An OpenRouter profile uses adapter `openrouter`. Set search options in `model.providerOptions.openrouter.webSearch`.
+- OpenRouter search uses Exa by default. The supported engines are `exa`, `parallel` and `perplexity`.
+- The options include `max_uses`, `max_results`, `max_total_results`, `max_characters`, `allowed_domains` and `excluded_domains`.
+- The adapter reduces `max_uses` to the remaining Harness budget. It defaults to one search per model request.
+- OpenRouter returns aggregate citations and a search count with Usage. It does not expose individual search queries.
+- Each search within the granted budget adds a Provider Tool result with the aggregate sources. The adapter replays these sources as reference text. A reported count above the budget fails the attempt; Usage still records the actual count and billed cost.
+- OpenRouter search tools use the search engine's retention policy. Inference ZDR settings do not cover search.
 - A Permission Policy rule can `allow` or `deny` a Provider Tool. `ask` is not valid. A grant with no matching rule allows the Tool.
 - `before-tool` Hooks do not run for a Provider Tool. `after-tool` Hooks see the result and cannot change it.
 - Each call adds a `server_tool.called` event and a `server_tool.result` event to the Thread.
+- If an OpenRouter search attempt stops before its usage arrives, the Harness counts its full offered budget against the limit. This prevents retries and recovery from repeating searches with an unknown count. A completed attempt releases the unused budget.
 - When the calls reach a limit, the Harness removes the Provider Tool from the next request.
 
 A Provider profile can set the version of a Provider Tool in `providerOptions.anthropic.serverTools` or `providerOptions.openai.serverTools`. A version setting does not grant the Tool.

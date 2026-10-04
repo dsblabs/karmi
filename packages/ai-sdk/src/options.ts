@@ -7,6 +7,7 @@ export const metadataSchema = z.record(z.string(), z.record(z.string(), z.json()
 const optionsSchema = z.strictObject({
   aiSdk: metadataSchema.optional(),
   openai: z.object({ serverTools: z.unknown().optional() }).optional(),
+  openrouter: z.object({ webSearch: z.unknown().optional() }).optional(),
 });
 
 /**

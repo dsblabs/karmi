@@ -165,3 +165,45 @@ it("replays summaries when switching vendors within the AI SDK adapter", async (
   expect(JSON.stringify(serverProvider.requests[2]?.messages)).toContain("Found news.");
   expect(JSON.stringify(serverProvider.requests[2]?.messages)).not.toContain("server_tool");
 });
+
+it("records billed errors without completing failed responses or executing their tools before fallback", async () => {
+  await scope.agents.put({
+    agentId: "paid-error",
+    name: "Paid error",
+    instructions: [],
+    tools: ["lookup"],
+    model: { id: "anthropic/first", providerProfile: "server", fallbacks: ["anthropic/second"] },
+  });
+  serverProvider.script([
+    [
+      {
+        type: "part",
+        index: 0,
+        block: { type: "tool_call", id: "failed-lookup", name: "lookup", input: { id: "failed" } },
+      },
+      {
+        type: "error",
+        error: { code: "quota", message: "Paid failure", retryable: false },
+        usage: {
+          input: 20,
+          output: 5,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { amount: 0.008, currency: "USD", source: "openrouter", basis: "billed" },
+        },
+      },
+    ],
+    "Fallback completed",
+  ]);
+  const thread = scope.thread({ agent: "paid-error", threadId: "paid-error-fallback" });
+  const events = await thread.send(message);
+  expect(serverProvider.requests).toHaveLength(2);
+  expect(serverProvider.requests[1]?.model).toBe("second");
+  expect(JSON.stringify(serverProvider.requests[1]?.messages)).not.toContain("failed-lookup");
+  expect(trace.some((item) => item.startsWith("lookup:"))).toBe(false);
+  expect(events.filter((event) => event.type === "step.completed" && event.kind === "model")).toHaveLength(1);
+  expect(events.filter((event) => event.type === "usage.recorded")).toContainEqual(
+    expect.objectContaining({ input: 20, output: 5, cost: expect.objectContaining({ amount: 0.008 }) }),
+  );
+  expect((await thread.status()).usage.input).toBeGreaterThanOrEqual(20);
+});

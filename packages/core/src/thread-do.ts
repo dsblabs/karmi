@@ -1466,6 +1466,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
         model,
         provider: call.profile.adapter,
         agentVersion: snapshot.agentVersion,
+        ...(call.profile.adapter === "openrouter" && { providerToolBudget: this.searchReservation(row, snapshot) }),
         ...call.started,
       },
       channelRef,
@@ -2138,10 +2139,24 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     }
   }
 
-  private providerToolCounts(turn: number, limits: NonNullable<Capabilities["providerTools"]>["limits"]) {
+  private searchReservation(row: ThreadRow, snapshot: TurnSnapshot): number {
+    return snapshot.providerTools
+      ? (offeredProviderTools(
+          snapshot.providerTools,
+          snapshot.policy,
+          this.providerToolCounts(row.turn, snapshot.providerTools.limits),
+        )?.maxCalls ?? 0)
+      : 0;
+  }
+
+  private providerToolCounts(
+    turn: number,
+    limits: NonNullable<Capabilities["providerTools"]>["limits"],
+    excludingReservation?: number,
+  ) {
     const count = (maximum: number | undefined, currentTurn: boolean): number => {
       if (maximum === undefined) return 0;
-      return this.log.providerToolCalls(maximum, currentTurn ? turn : undefined);
+      return this.log.providerToolCalls(maximum, currentTurn ? turn : undefined, excludingReservation);
     };
     return { turn: count(limits?.maxCallsPerTurn, true), thread: count(limits?.maxCallsPerThread, false) };
   }
@@ -2158,7 +2173,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
     const { spec } = snapshot;
     const [, native] = splitModelId(model);
     const tools = toolDefinitions(available);
-    const calls = this.providerToolCounts(row.turn, snapshot.providerTools?.limits);
+    const calls = this.providerToolCounts(row.turn, snapshot.providerTools?.limits, this.log.head);
     const providerTools = offeredProviderTools(snapshot.providerTools, snapshot.policy, calls);
     const memory = await this.memoryFragment(row, spec);
     const knowledge = this.knowledge?.text ?? "";
@@ -2313,23 +2328,36 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
             ...event.usage,
             ...(count > 0 && { serverToolCalls: Math.max(count, event.usage.serverToolCalls ?? 0) }),
           };
-          const usage = addUsage(decodeUsage(this.row().usage_json), measured);
-          this.update({ usage_json: usage });
-          this.append(row.turn, this.modelUsage(row, "model", model, call, measured), channelRef);
-          this.append(
-            row.turn,
-            { type: "step.completed", kind: "model", n: row.step, stopReason: event.stopReason, usage: measured },
-            channelRef,
-          );
+          this.recordModelUsage(row, channelRef, model, call, measured, event.stopReason);
           return { ok: true, stopReason: event.stopReason, message: parts.filter((part) => part !== undefined) };
         }
         case "error":
+          if (event.usage) this.recordModelUsage(row, channelRef, model, call, event.usage);
           return { ok: false, error: event.error };
         default:
           break;
       }
     }
     return stepError("The Provider stream ended without a terminal event.");
+  }
+
+  private recordModelUsage(
+    row: ThreadRow,
+    channelRef: unknown,
+    model: string,
+    call: StepCall,
+    measured: Usage,
+    stopReason?: StopReason,
+  ): void {
+    const usage = addUsage(decodeUsage(this.row().usage_json), measured);
+    this.update({ usage_json: usage });
+    this.append(row.turn, this.modelUsage(row, "model", model, call, measured), channelRef);
+    if (stopReason)
+      this.append(
+        row.turn,
+        { type: "step.completed", kind: "model", n: row.step, stopReason, usage: measured },
+        channelRef,
+      );
   }
 
   /**
