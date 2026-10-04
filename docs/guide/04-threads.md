@@ -117,11 +117,11 @@ Compaction keeps a long Thread inside the context window of the model. Before ea
 
 The Harness does not change the log. The next request contains the Prompt, the summary and the events after the cut.
 
-| `context` field    | Default                                            |
-| ------------------ | -------------------------------------------------- |
-| `window`           | The value that the Provider reports for the model. |
-| `reserveTokens`    | 16,384                                             |
-| `keepRecentTokens` | 20,000                                             |
+| `context` field    | Default                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| `window`           | The value that the Provider reports for the model. If the Provider reports no value, 200,000. |
+| `reserveTokens`    | 16,384                                                                                        |
+| `keepRecentTokens` | 20,000                                                                                        |
 
 The Harness writes the summary with its own model call. A Provider profile with `compaction: "provider"` makes the provider write it. See [Providers](./05-providers.md).
 
