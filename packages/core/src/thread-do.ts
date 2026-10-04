@@ -246,6 +246,8 @@ const decodeSnapshot = (value: TurnSnapshot): TurnSnapshot => {
   const legacy = value as TurnSnapshot & { context?: TurnSnapshot["context"] };
   return { ...legacy, context: legacy.context ?? resolveContext({}, {}) };
 };
+const remembersAllows = (spec: AgentSpec): boolean =>
+  spec.approvals?.remember ?? AGENT_SPEC_DEFAULTS.approvals.remember;
 const decodeForkEvent = (json: string): ThreadEventData => JSON.parse(json);
 
 /**
@@ -1132,8 +1134,14 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
   }
 
   private resolve(row: ThreadRow, seq: number, request: Request, answer: ApprovalAnswer, source: ApprovalSource): void {
+    // The setting comes from the snapshot of the Turn that asked, like the timeout of the Approval.
     const remember =
-      answer.remember === true && answer.decision === "allow" && request.kind === "tool" && !request.child;
+      answer.remember === true &&
+      answer.decision === "allow" &&
+      request.kind === "tool" &&
+      !request.child &&
+      row.snapshot_json !== null &&
+      remembersAllows(decodeSnapshot(row.snapshot_json).spec);
     this.append(
       row.turn,
       {
@@ -1308,7 +1316,7 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
           ...(snapshot.scheduling ? schedulingTools(this.schedulingHost(row, snapshot.scheduling, channelRef)) : []),
           ...(snapshot.spec.memory ? memoryTools(this.memoryHost(row, snapshot.spec.memory)) : []),
         ],
-        remembered: this.remembered(),
+        ...(remembersAllows(snapshot.spec) && { remembered: this.remembered() }),
         ...(mcp && { mcp }),
         loaded: this.loaded(),
         window: this.limits(snapshot).window,

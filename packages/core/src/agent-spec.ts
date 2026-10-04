@@ -197,7 +197,7 @@ export const AgentSpecSchema = z.strictObject({
   policy: z.optional(z.array(PolicyRuleSchema)),
   hooks: z.optional(z.partialRecord(z.enum(HOOK_POINTS), z.array(name))),
   context: z.optional(ContextSchema),
-  approvals: z.optional(z.strictObject({ timeout: z.optional(positiveInt) })),
+  approvals: z.optional(z.strictObject({ timeout: z.optional(positiveInt), remember: z.optional(z.boolean()) })),
 });
 
 /** An Agent Spec after shape validation: every reference is an object, nothing else is changed. */
@@ -219,5 +219,5 @@ export const AGENT_SPEC_DEFAULTS = Object.freeze({
     toolOutput: Object.freeze({ maxChars: 30_000, maxLines: 2_000 }),
     tools: Object.freeze({ defer: "auto" as const, threshold: 0.1 }),
   }),
-  approvals: Object.freeze({ timeout: 24 * 60 * 60 * 1000 }),
+  approvals: Object.freeze({ timeout: 24 * 60 * 60 * 1000, remember: true }),
 });

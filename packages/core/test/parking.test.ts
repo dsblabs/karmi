@@ -266,6 +266,50 @@ describe("tool Approvals", () => {
     expect(lastMessage(second)).toBe("Done again");
   });
 
+  it("ignores remember on an answer when the Spec turns it off, and asks again for the next call", async () => {
+    provider.script([
+      [reply.toolCall("book", { room: 1 }, "c1")],
+      "Done",
+      [reply.toolCall("book", { room: 2 }, "c2")],
+      "Done again",
+    ]);
+    const thread = fresh("forgetful");
+    const parked = await thread.send(message("Book"));
+    await thread.approve(requestSeq(parked), { decision: "allow", remember: true });
+    const resumed = await rest(thread, parked);
+    expect(resumed).toContainEvent({ type: "tool.result", id: "c1", content: [{ type: "text", text: "Booked 1" }] });
+    const resolved = resumed.find((e) => e.type === "approval.resolved");
+    expect(resolved).toMatchObject({ decision: "allow" });
+    expect(resolved).not.toHaveProperty("remember");
+    const second = await thread.send(message("Book again"));
+    expect(second).toContainEvent({ type: "approval.requested", kind: "tool", tool: "book", id: "c2" });
+  });
+
+  it("gives no effect to an earlier remembered allow while the Spec turns remember off", async () => {
+    const spec: AgentSpec = {
+      agentId: "remember-toggle",
+      name: "Remember toggle",
+      instructions: [{ text: "Ask before booking." }],
+      model: { id: "anthropic/claude-sonnet-5" },
+      tools: ["book"],
+      approvals: { timeout: 60 * 60 * 1000 },
+    };
+    await scope.agents.put(spec);
+    provider.script([
+      [reply.toolCall("book", { room: 1 }, "c1")],
+      "Done",
+      [reply.toolCall("book", { room: 2 }, "c2")],
+      "Done again",
+    ]);
+    const thread = fresh("remember-toggle");
+    const parked = await thread.send(message("Book"));
+    await thread.approve(requestSeq(parked), { decision: "allow", remember: true });
+    expect(await rest(thread, parked)).toContainEvent({ type: "approval.resolved", remember: true });
+    await scope.agents.put({ ...spec, approvals: { ...spec.approvals, remember: false } });
+    const second = await thread.send(message("Book again"));
+    expect(second).toContainEvent({ type: "approval.requested", kind: "tool", tool: "book", id: "c2" });
+  });
+
   it("times out to a deny on the clock, at the Spec's timeout under the Scope ceiling", async () => {
     provider.script([[reply.toolCall("book", { room: 1 }, "c1")], "Timed out"]);
     const thread = fresh();

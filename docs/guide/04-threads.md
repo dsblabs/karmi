@@ -77,7 +77,10 @@ export async function allowFirst(thread: Thread, reviewer: string): Promise<void
 ```
 
 - A `deny` becomes an error result that the model sees next. You can give a `reason`.
-- `remember: true` allows that Tool by name for the rest of the Thread.
+- `remember: true` allows that Tool by name for the rest of the Thread. A `deny` rule of the Permission Policy wins over a remembered allow.
+- The Agent Spec can set `approvals.remember: false`. The Thread then ignores `remember` on an answer. The answer allows that one call, the `approval.resolved` event has no `remember` field, and the next call of the Tool asks again. The default is `true`.
+- For an Approval of a delegated child, the Agent Spec of the child decides. The child Thread remembers the allow.
+- `approvals.remember` applies from the next Turn that reads the Agent Spec. While it is `false`, an allow that the Thread remembered before has no effect.
 - The Thread rejects a second answer to the same Approval.
 - An Approval with no answer becomes a deny after `approvals.timeout`. The default is 24 hours.
 - `by` is the name of the person who answered. karmi records it on the `approval.resolved` event and does not check it. Your code must make sure that the name is correct and that the person can answer.

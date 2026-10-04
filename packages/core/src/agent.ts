@@ -156,8 +156,12 @@ export interface AgentSpec {
   /** Hook names by lifecycle point, run in this order. */
   hooks?: Partial<Record<HookPoint, string[]>>;
   context?: ContextConfig;
-  /** `timeout` is in milliseconds. An Approval that expires is a deny. */
-  approvals?: { timeout?: number };
+  /**
+   * The Approval settings. `timeout` is in milliseconds and has a default of 24 hours. An Approval that
+   * expires is a deny. `remember` has the default `true`. With `remember: false`, the Thread ignores
+   * `remember` on an Approval answer.
+   */
+  approvals?: { timeout?: number; remember?: boolean };
 }
 
 /** A code-defined Agent as `defineAgent` returns it: a frozen Spec under its id. */
