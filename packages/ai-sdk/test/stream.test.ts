@@ -276,3 +276,39 @@ it.each([
   const events = await collect(adapter.stream(request, call));
   expect(events.at(-1)).toMatchObject({ type: "error", error: { code, retryable } });
 });
+
+it.each([
+  { status: 401, code: "auth", retryable: false },
+  { status: 402, code: "quota", retryable: false },
+  { status: 429, code: "rate_limit", retryable: true },
+  { status: 503, code: "unavailable", retryable: true },
+  { status: 400, code: "invalid_request", retryable: false },
+])("classifies a plain-object stream error with code $status", async ({ status, code, retryable }) => {
+  const { adapter } = setup([{ type: "error", error: { code: status, message: "Upstream failed" } }]);
+  const events = await collect(adapter.stream(request, call));
+  expect(events.at(-1)).toEqual({ type: "error", error: { code, message: "Upstream failed", retryable, status } });
+});
+
+it.each([
+  { name: "a status field", body: { status: 429, message: "Slow down" }, code: "rate_limit", status: 429 },
+  { name: "a nested error", body: { error: { code: 502, message: "Bad gateway" } }, code: "unavailable", status: 502 },
+  {
+    name: "a context window message",
+    body: { code: 400, message: "Prompt is too long" },
+    code: "context_window_exceeded",
+    status: 400,
+  },
+])("classifies a plain-object stream error with $name", async ({ body, code, status }) => {
+  const { adapter } = setup([{ type: "error", error: body }]);
+  const events = await collect(adapter.stream(request, call));
+  expect(events.at(-1)).toMatchObject({ type: "error", error: { code, status } });
+});
+
+it.each([
+  { body: { reason: "upstream" }, error: { code: "unknown", message: '{"reason":"upstream"}', retryable: false } },
+  { body: { code: 429 }, error: { code: "rate_limit", message: '{"code":429}', retryable: true, status: 429 } },
+])("gives the JSON as the message of a plain-object stream error $body without a message", async ({ body, error }) => {
+  const { adapter } = setup([{ type: "error", error: body }]);
+  const events = await collect(adapter.stream(request, call));
+  expect(events.at(-1)).toEqual({ type: "error", error });
+});
