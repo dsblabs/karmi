@@ -48,6 +48,25 @@ pnpm changeset
 
 All `@karmi/*` packages and `create-karmi` get the same version number. The rules for changeset text are in [`docs/agents/writing.md`](./docs/agents/writing.md#changeset-text).
 
+### Stored data changes
+
+During `0.x`, an upgrade to a release that changes stored data is one-way: a consumer cannot roll back to the release before. [ADR 0005](./docs/adr/0005-durable-object-migrations.md#amendment-2026-10-01-an-upgrade-is-one-way-during-0x) gives the decision and its reasons. The changelog must tell consumers which releases these are.
+
+A changeset must start a line with the phrase `Stored data change:` when the change alters one of these:
+
+- An in-DO migration, which is a migration that a Durable Object runs on its own database.
+- The shape of a Thread event.
+- A stored attachment, for example the attachment of a client socket.
+- The shape of a Queue message.
+
+Write the phrase exactly. After the phrase, tell what data changes. This line is an example:
+
+```text
+Stored data change: a Thread event log can now contain the `step.retried` event.
+```
+
+Such a change needs a changeset, because a consumer must know that the upgrade is one-way. The [deployment guide](./docs/guide/16-deployment.md#upgrades-and-rollbacks) tells a consumer how to plan that upgrade.
+
 ## Pull requests
 
 1. Find or open an issue for the work. The issue tracker rules are in [`docs/agents/issue-tracker.md`](./docs/agents/issue-tracker.md).

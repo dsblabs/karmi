@@ -4,7 +4,7 @@ title: Deployment
 
 # Deployment
 
-A karmi Deployment is one Cloudflare Worker. [Getting started](./01-getting-started.md#deploy) gives the deploy steps for a new project. This page describes the bindings, the container sandbox, and how a Thread recovers.
+A karmi Deployment is one Cloudflare Worker. [Getting started](./01-getting-started.md#deploy) gives the deploy steps for a new project. This page describes the bindings, the container sandbox, and how a Thread recovers. It also tells how to plan an upgrade.
 
 ## The wrangler baseline
 
@@ -154,6 +154,27 @@ Cloudflare can stop a Durable Object at any time, for example for a code update.
 Each Step has three attempts. A failure of the platform, for example a code update or a Durable Object error that Cloudflare marks as retryable, does not use an attempt.
 
 Thus, set `idempotentHint` on each Tool that is safe to run two times. Without it, the model gets the error and decides what to do.
+
+## Upgrades and rollbacks
+
+During `0.x`, karmi does not promise that an older release can read the data that a newer release stored. That data is in the Durable Objects and in the Queue.
+
+A release that changes stored data has a line in its changelog that starts with `Stored data change:`. An upgrade to that release is one-way: you cannot roll back to the older release. Before you upgrade, read the changelog of each release between your version and the new version.
+
+For an upgrade to a release with that line:
+
+1. Deploy the upgrade to an environment that is not production.
+2. Test the upgrade there.
+3. Stop each automatic rollback for the production deploy, for example a rollback step in your CI.
+4. Deploy to production.
+5. If you find a problem, correct it with a new deploy. Do not roll back.
+
+An upgrade to a release with no such line keeps a normal rollback.
+
+Cloudflare has two related limits:
+
+- A rollback does not change the stored data. The code of the older version can fail on data that the newer version wrote. The [Cloudflare rollback documentation](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/#rolling-back-from-a-split-deployment) gives this warning.
+- Cloudflare refuses a rollback across a deployment that changed the lifecycle of a Durable Object class. A new entry in `migrations` in the Wrangler configuration is such a change. The [rollback limits](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/#bindings) describe this.
 
 ## Time
 
