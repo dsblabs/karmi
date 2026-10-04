@@ -23,15 +23,19 @@ export type UsageRecord = Extract<ThreadEvent, { type: "usage.recorded" }>;
 
 /**
  * The Catalogue item that receives Usage records. The Queue delivers batches at least once, so `onUsage`
- * deduplicates by `usageKey(record)`. A thrown error retries the batch and never fails the Turn that spent it.
+ * deduplicates by `usageKey(record)`, which is `scope:threadId:seq`. A thrown error retries the batch and never
+ * fails the Turn that spent it.
  */
 export interface UsageHandler {
   onUsage(records: UsageRecord[]): void | Promise<void>;
 }
 
-/** The idempotency key of a Usage record, `threadId:seq`. A record delivered twice has the same key. */
-export function usageKey(record: Pick<UsageRecord, "threadId" | "seq">): string {
-  return `${record.threadId}:${record.seq}`;
+/**
+ * The idempotency key of a Usage record, `scope:threadId:seq`. A record delivered twice has the same key, and
+ * records of different Scopes never share a key.
+ */
+export function usageKey(record: Pick<UsageRecord, "scope" | "threadId" | "seq">): string {
+  return `${record.scope}:${record.threadId}:${record.seq}`;
 }
 
 /** Validates a UsageHandler definition and returns it frozen. Throws `usage.invalid` without an `onUsage`. */

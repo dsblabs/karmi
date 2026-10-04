@@ -684,7 +684,7 @@ export const COVERAGE: readonly CoverageRow[] = [
   observability(
     "UsageHandler delivery",
     "Observability",
-    "The Queue delivers each record to the sample UsageHandler. A failed batch retries. A second delivery of the same threadId:seq is a duplicate.",
+    "The Queue delivers each record to the sample UsageHandler. A failed batch retries. A second delivery of the same scope:threadId:seq is a duplicate.",
     `${LOCAL} ${CLOUD} A failed batch was not checked live.`,
   ),
   observability(

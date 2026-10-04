@@ -384,7 +384,7 @@ Each ingest calls Workers AI, and each search calls Workers AI and Vectorize. Cl
 Do these steps:
 
 1. Select **Run** with the **Ask the desk** prompt. The Agent answers in text. It does not know its spend. The **Usage records** card shows the spend.
-2. Read the **Usage records** card. The top part shows the Scope, the Agent, the User, the Thread and the model of the records. **Reported cost** is the sum of the reported costs, and it tells how many records had one. The table has one row for each `usage.recorded` event: its `seq`, its tokens and its cost. The key of a record is `threadId:seq`.
+2. Read the **Usage records** card. The top part shows the Scope, the Agent, the User, the Thread and the model of the records. **Reported cost** is the sum of the reported costs, and it tells how many records had one. The table has one row for each `usage.recorded` event: its `seq`, its tokens and its cost. The key of a record is `scope:threadId:seq`.
 3. Read the **UsageHandler** card. The Queue delivers the batch some seconds after the Turn. Until then, the card shows **waiting for the Queue**, and the page checks again every 2 seconds. The handler stores each record under its key.
 4. Select **Fail the next batch**, then **Run** again. The card shows a failed delivery. The Queue retries, and the handler stores the record. The Turn does not fail.
 5. Select **Deliver the last batch again**. The handler skips each key that it stored before. The card shows `duplicate, skipped`. The button shows after the handler stored a batch.
