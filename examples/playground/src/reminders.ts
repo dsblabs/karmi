@@ -110,23 +110,23 @@ export function decodeScheduleId(body: unknown): string | undefined {
 /** A Turn input that is an Event. */
 export type EventInput = Extract<TurnInput, { kind: "event" }>;
 
-/** The `channelRef` that sends the offline output of a Thread in `scope` to the sample inbox. */
-export const inboxChannel = (scope: string) => ({ deliverer: { name: SAMPLE_INBOX, ref: { scope } } });
+/** The `channelRef` that sends the offline output of a Thread to the sample inbox of its Scope. */
+export const inboxChannel = { deliverer: { name: SAMPLE_INBOX, ref: null } };
 
 /** The Event that a Schedule of the operator sends when it fires. */
-export const reminderDue = (scope: string, mode: TimingMode): EventInput => ({
+export const reminderDue = (mode: TimingMode): EventInput => ({
   kind: "event",
   type: "reminder.due",
   payload: { schedule: mode, customer: "Sam Rivera", note: "Order A-1042 is ready for collection." },
-  channelRef: inboxChannel(scope),
+  channelRef: inboxChannel,
 });
 
 /** The Event that the external trigger sends. `source` names the system that sent it. */
-export const supplierDelivery = (scope: string, source: string, at: number): EventInput => ({
+export const supplierDelivery = (source: string, at: number): EventInput => ({
   kind: "event",
   type: "supplier.delivery",
   payload: { source, at: new Date(at).toISOString(), note: "The supplier delivered 24 kettles." },
-  channelRef: inboxChannel(scope),
+  channelRef: inboxChannel,
 });
 
 const reminderSystem = (scope: string) => sampleData(env.PLAYGROUND_DATA, scope, SCHEDULES);
@@ -174,12 +174,6 @@ export function inboxEntries(threadKey: string, events: readonly ThreadEvent[]):
   });
 }
 
-// The only place that reads the `ref` of a delivery. The scenario binds `{ scope }` on each input.
-function decodeRef(ref: unknown): string {
-  if (typeof ref === "object" && ref !== null && "scope" in ref && typeof ref.scope === "string") return ref.scope;
-  throw new Error("The sample inbox needs a ref with the Scope id.");
-}
-
 /**
  * Writes the offline output of a Thread to the sample inbox. Delivery is at-least-once, thus the inbox ignores an
  * event that it has already.
@@ -187,8 +181,8 @@ function decodeRef(ref: unknown): string {
 export const sampleInbox = defineDeliverer({
   name: SAMPLE_INBOX,
   granularity: "part",
-  async deliver(threadKey, events, ref) {
-    const inbox = sampleData(env.PLAYGROUND_DATA, decodeRef(ref), INBOX_DATA);
+  async deliver(events, { scope, threadKey }) {
+    const inbox = sampleData(env.PLAYGROUND_DATA, scope, INBOX_DATA);
     for (const entry of inboxEntries(threadKey, events)) await inbox.append(entry.id, JSON.stringify(entry));
   },
 });

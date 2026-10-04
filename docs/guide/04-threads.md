@@ -138,11 +138,11 @@ import { defineDeliverer } from "@karmi/core";
 export const webhook = defineDeliverer({
   name: "webhook",
   granularity: "turn",
-  async deliver(threadKey, events, ref) {
+  async deliver(events, ctx) {
     await fetch("https://hooks.example.com/karmi", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ threadKey, events, ref }),
+      body: JSON.stringify({ scope: ctx.scope, threadKey: ctx.threadKey, ref: ctx.ref, events }),
     });
   },
 });
@@ -164,11 +164,13 @@ export async function paymentReceived(karmi: Karmi, payer: string, amount: numbe
 }
 ```
 
+- `deliver(events, ctx)` gets the events and a context. `ctx.scope` is the id of the Scope that owns the Thread. `ctx.threadKey` is the key of the Thread. `ctx.ref` is the `ref` of `channelRef.deliverer`.
+- A Thread key is unique only in one Scope. A Platform with many tenants uses `ctx.scope` to select the Channel of the correct tenant.
 - The Thread keeps the last `channelRef.deliverer`. An input without one uses the same Deliverer.
 - The Harness delivers at the end of a Turn and at an Approval request.
 - A connected socket, `subscribe()` stream or SSE stream stops offline delivery. The Harness waits one second before delivery, so that a client can connect again.
 - `granularity` is `part` by default. `delta` includes streaming chunks.
-- Delivery is at-least-once. Use the Thread key and the event `seq` to ignore a duplicate. A `delivery` Queue message carries the Deliverer route, so a retry still works after the Thread drops the Outbox range.
+- Delivery is at-least-once. Use the Scope id, the Thread key and the event `seq` to ignore a duplicate. A `delivery` Queue message carries the Deliverer route, so a retry still works after the Thread drops the Outbox range.
 - Offline delivery needs the `KARMI_QUEUE` binding. The Worker must export `karmi.queueHandler` as its `queue` handler.
 
 Without a Deliverer, the output stays available through `events()` and `subscribe()`.

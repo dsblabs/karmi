@@ -81,5 +81,9 @@ async function deliver(
   if (!delivery) return;
   const deliverer = deployment.catalogue.deliverers.get(delivery.binding.name);
   if (!deliverer) throw new KarmiError("deliverer.notFound", `Unknown Deliverer "${delivery.binding.name}".`);
-  await deliverer.deliver(body.threadKey, delivery.events, delivery.binding.ref);
+  await deliverer.deliver(delivery.events, {
+    scope: body.scope,
+    threadKey: body.threadKey,
+    ref: delivery.binding.ref,
+  });
 }
