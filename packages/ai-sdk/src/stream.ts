@@ -1,5 +1,6 @@
 import type { LanguageModelV4StreamPart, SharedV4ProviderMetadata } from "@ai-sdk/provider";
 import type { ContentBlock, ProviderEvent } from "@karmi/core";
+import { OpenRouterSearch } from "./openrouter-search";
 import { toProviderError } from "./errors";
 import { usage, stopReason } from "./usage";
 
@@ -33,8 +34,10 @@ export async function* mapStream(
   model: string,
   provider: string,
   gatewayId?: string,
+  searchBudget?: number,
 ): AsyncIterable<ProviderEvent> {
   const blocks = new Blocks();
+  const search = provider.startsWith("openrouter") ? new OpenRouterSearch() : undefined;
   const reader = stream.getReader();
   let terminal = false;
   try {
@@ -49,23 +52,11 @@ export async function* mapStream(
         break;
       }
       if (part.type === "finish") {
-        for (const [id, block] of blocks.tools)
-          if (!blocks.completedTools.has(id)) yield blocks.part(block, blocks.entry(id).index);
-        const measured = usage(part, provider);
-        if (gatewayId) measured.gateway = { provider: "cloudflare", id: gatewayId };
-        if (blocks.tools.size) measured.serverToolCalls = blocks.tools.size;
-        if (part.providerMetadata)
-          yield { type: "raw", raw: { type: "provider-metadata", providerMetadata: part.providerMetadata } };
-        yield* fallback(part, blocks);
         terminal = true;
-        yield {
-          type: "message.end",
-          stopReason: stopReason(part),
-          usage: measured,
-          stopDetails: { finishReason: part.finishReason, providerMetadata: part.providerMetadata ?? {} },
-        };
+        yield* finish(part, blocks, search, provider, gatewayId, searchBudget);
         break;
       }
+      if (part.type === "source") search?.add(part);
       yield* mapPart(part, blocks);
     }
     if (!terminal)
@@ -198,4 +189,51 @@ function* fallback(
     )
       yield blocks.part({ type: "provider", raw: { ...iteration, type: "fallback" } });
   }
+}
+
+function* finish(
+  part: Extract<LanguageModelV4StreamPart, { type: "finish" }>,
+  blocks: Blocks,
+  search: OpenRouterSearch | undefined,
+  provider: string,
+  gatewayId?: string,
+  searchBudget = 0,
+): Generator<ProviderEvent> {
+  for (const [id, block] of blocks.tools)
+    if (!blocks.completedTools.has(id)) yield blocks.part(block, blocks.entry(id).index);
+  const measured = usage(part, provider);
+  if (gatewayId) measured.gateway = { provider: "cloudflare", id: gatewayId };
+  let count: number;
+  try {
+    count = search?.count(part.usage.raw) ?? 0;
+  } catch (error) {
+    yield { type: "error", error: toProviderError(error), usage: measured };
+    return;
+  }
+  for (const block of search?.results(Math.min(count, searchBudget)) ?? []) {
+    yield { type: "server_tool.called", block };
+    yield blocks.part(block);
+  }
+  if (search || blocks.tools.size || count) measured.serverToolCalls = blocks.tools.size + count;
+  if (count > searchBudget) {
+    yield {
+      type: "error",
+      error: {
+        code: "invalid_request",
+        message: "OpenRouter exceeded the granted search call budget.",
+        retryable: false,
+      },
+      usage: measured,
+    };
+    return;
+  }
+  if (part.providerMetadata)
+    yield { type: "raw", raw: { type: "provider-metadata", providerMetadata: part.providerMetadata } };
+  yield* fallback(part, blocks);
+  yield {
+    type: "message.end",
+    stopReason: stopReason(part),
+    usage: measured,
+    stopDetails: { finishReason: part.finishReason, providerMetadata: part.providerMetadata ?? {} },
+  };
 }

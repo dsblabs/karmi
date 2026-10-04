@@ -217,6 +217,8 @@ type EventData =
       attempt: number;
       model: string;
       provider: string;
+      /** The search budget reserved until this model attempt completes. */
+      providerToolBudget?: number;
       agentVersion: number;
     } & StepCredentials)
   /** A tool Step began. `attempt` counts recovery re-runs of the same tool batch. */

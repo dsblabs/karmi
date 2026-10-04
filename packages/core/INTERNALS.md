@@ -88,3 +88,5 @@ The tests are in `test/`, with one `*.test.ts` file for each topic. They run in 
 `src/vendor/codemode/` has `codec.ts` and `runtime.ts` from the Cloudflare `agents` repository, under the MIT license. `NOTICE` gives the source commit and lists the parts that karmi changed or omitted. The npm package includes `NOTICE` and `LICENSE`.
 
 `isolate-sandbox.ts` and `script-results.ts` use this code. The JSDoc lint rules do not apply to `src/vendor/`. When you update the code, update the commit in `NOTICE`.
+
+OpenRouter search reports call counts at the end of a model stream. The Harness stores the offered search budget on `step.started` before the request. `EventLog` counts unfinished reservations against Provider Tool limits after retries or recovery. A completed model Step releases its unused reservation. Provider errors with billed Usage record that Usage before the Harness handles the error.

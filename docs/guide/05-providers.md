@@ -201,3 +201,5 @@ export const openaiViaGateway = aiSdk(({ modelId, fetch, signal, credentials }) 
 karmi does not estimate a cost for Cloudflare AI Gateway.
 
 Next, read [HTTP](./06-http.md).
+
+A terminal `ProviderEvent` with `type: "error"` can include `usage` when the provider reports billed Usage for the failed attempt. The Harness records this Usage before it handles retry or fallback. This record does not complete the failed Step or add its partial response to the model conversation.

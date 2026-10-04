@@ -63,11 +63,17 @@ export function aiSdk(model: ModelFactory, options: AiSdkOptions = {}): Provider
         const params = buildRequest(request, call, await prepareMedia(request, call, resolve(request.model)));
         params.providerOptions = mapProviderOptions(params.providerOptions ?? {}, request, api.provider);
         addCacheBreakpoints(params, options.cache);
-        addProviderTools(request, params, api.provider);
+        const searchBudget = addProviderTools(request, params, api.provider);
         call.signal.throwIfAborted();
         const result = await api.doStream(params);
         const gatewayId = request.config.gateway ? result.response?.headers?.["cf-aig-log-id"] : undefined;
-        for await (const event of mapStream(result.stream, api.modelId, api.provider, gatewayId))
+        for await (const event of mapStream(
+          result.stream,
+          api.modelId,
+          api.provider,
+          gatewayId,
+          searchBudget ?? request.providerTools?.maxCalls ?? 0,
+        ))
           yield await ingestProviderEvent(event, call);
       } catch (error) {
         yield {
