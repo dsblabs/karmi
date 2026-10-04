@@ -60,7 +60,7 @@ export function transcriptFromEvents(events: readonly ThreadEvent[]): Message[] 
             results.clear();
           }
           step = undefined;
-        } else {
+        } else if (event.kind === "tool") {
           for (const call of calls) {
             const result = results.get(call.id);
             if (result) messages.push(toolResultMessage(call, result));
