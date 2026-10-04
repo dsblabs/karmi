@@ -37,6 +37,37 @@ it("delivers an offline payment webhook reply through the Queue", async () => {
   expect(deliveries[0]!.events.some((e) => e.type === "message.delta")).toBe(false);
 });
 
+it("gives the Deliverer the Scope of the Thread when two Scopes use the same Thread id", async () => {
+  provider.script(["For acme", "For globex"]);
+  const identity = { agent: "concierge", user: "payer", threadId: "shared" };
+  for (const scope of ["acme", "globex"]) {
+    await karmi
+      .scope(scope)
+      .thread(identity)
+      .send({
+        kind: "event",
+        type: "payment.received",
+        payload: {},
+        channelRef: { deliverer: { name: "receipt", ref: "same" } },
+      });
+    const thread = karmi.scope(scope).thread(identity);
+    await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.completed")).toBe(true);
+  }
+  await clock.advance(1000);
+  await expect.poll(() => deliveries.length).toBe(2);
+  const key = karmi.scope("acme").thread(identity).key;
+  expect(deliveries.map((item) => ({ scope: item.scope, key: item.key, ref: item.ref }))).toEqual(
+    expect.arrayContaining([
+      { scope: "acme", key, ref: "same" },
+      { scope: "globex", key, ref: "same" },
+    ]),
+  );
+  const completion = (scope: string) =>
+    deliveries.find((item) => item.scope === scope)!.events.find((e) => e.type === "turn.completed");
+  expect(completion("acme")).toMatchObject({ message: [{ type: "text", text: "For acme" }] });
+  expect(completion("globex")).toMatchObject({ message: [{ type: "text", text: "For globex" }] });
+});
+
 it("suppresses delivery while attached and delivers a later offline Turn using the saved route", async () => {
   provider.script(["Online", "Offline"]);
   const thread = karmi.scope("test").thread({ agent: "concierge", threadId: "online" });

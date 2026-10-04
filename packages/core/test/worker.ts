@@ -23,7 +23,7 @@ import { createTestKarmi, fakeMcpServer, fakeProvider } from "../src/testing/ind
 
 /** What the Tools and Hooks below saw, in order; tests read and reset it. */
 export const trace: string[] = [];
-export const deliveries: { key: string; events: ThreadEvent[]; ref: unknown }[] = [];
+export const deliveries: { scope: string; key: string; events: ThreadEvent[]; ref: unknown }[] = [];
 export const deliveryFailure = { remaining: 0 };
 /** Every Usage record the UsageHandler accepted, deduplicated by `usageKey`. Tests read and reset it. */
 export const usage = { records: [] as UsageRecord[], seen: new Set<string>(), failures: 0 };
@@ -51,12 +51,12 @@ const logger: Logger = {
 const receipt = defineDeliverer({
   name: "receipt",
   granularity: "turn",
-  deliver: (key, events, ref) => {
+  deliver: (events, { scope, threadKey, ref }) => {
     if (deliveryFailure.remaining > 0) {
       deliveryFailure.remaining--;
       throw new Error("Delivery unavailable");
     }
-    deliveries.push({ key, events, ref });
+    deliveries.push({ scope, key: threadKey, events, ref });
   },
 });
 

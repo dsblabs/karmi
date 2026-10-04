@@ -43,7 +43,7 @@ A Channel is an external surface through which a person or an event reaches a se
 _Avoid_: integration, connector, frontend
 
 **Deliverer**:
-A Deliverer is a Catalogue item. It is code with a name. It pushes the output of a Thread to a Channel when no Subscriber is attached. The last Turn input selects it for the Thread with `channelRef.deliverer { name, ref }`. The Queue invokes it at least once with completion and Approval Events, at the granularity that the Deliverer selects.
+A Deliverer is a Catalogue item. It is code with a name. It pushes the output of a Thread to a Channel when no Subscriber is attached. The last Turn input selects it for the Thread with `channelRef.deliverer { name, ref }`. The Queue invokes it at least once with completion and Approval Events, at the granularity that the Deliverer selects. Each call also gives the id of the Scope that owns the Thread, the Thread key and the `ref`.
 _Avoid_: webhook, callback, notifier, sender, notification service, Channel integration
 
 **Capability**:

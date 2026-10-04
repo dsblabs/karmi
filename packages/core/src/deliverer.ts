@@ -6,8 +6,21 @@ import { assertName } from "./names";
 import type { Granularity, ThreadEvent } from "./thread-events";
 
 /**
+ * The context a Deliverer receives with the events of one call. It carries the Scope and the Thread that made
+ * the events, and the value that the Turn input bound.
+ */
+export interface DelivererContext {
+  /** The id of the Scope that owns the Thread. A Thread key is unique only in one Scope. */
+  scope: string;
+  /** The key of the Thread that made the events. */
+  threadKey: string;
+  /** The value that the Turn input bound in `channelRef.deliverer.ref`. */
+  ref: unknown;
+}
+
+/**
  * A Catalogue item that pushes a Thread's output to a Channel when no live subscriber is attached. Calls are
- * at-least-once, so implementations deduplicate by Thread key and event `seq`.
+ * at-least-once, so implementations deduplicate by Scope id, Thread key and event `seq`.
  */
 export interface Deliverer {
   name: string;
@@ -16,8 +29,8 @@ export interface Deliverer {
    * `part`.
    */
   granularity?: Granularity;
-  /** Pushes `events` of the Thread at `threadKey` to the Channel. `ref` is the value the Turn input bound. */
-  deliver(threadKey: string, events: ThreadEvent[], ref: unknown): void | Promise<void>;
+  /** Pushes `events` to the Channel. `ctx` names the Scope and the Thread that made them. */
+  deliver(events: ThreadEvent[], ctx: DelivererContext): void | Promise<void>;
 }
 
 /**

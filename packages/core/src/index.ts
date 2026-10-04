@@ -1,4 +1,4 @@
-export { defineDeliverer, type Deliverer, type DeliveryBinding } from "./deliverer";
+export { defineDeliverer, type Deliverer, type DelivererContext, type DeliveryBinding } from "./deliverer";
 export { defineUsageHandler, usageKey, type UsageHandler, type UsageRecord, type UsageAttribution } from "./usage";
 export { consoleLogger, bindLogger, redactFields } from "./logger";
 export type { QueueMessage } from "./queue";

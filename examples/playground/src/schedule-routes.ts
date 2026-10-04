@@ -39,7 +39,7 @@ export async function triggerSupplierDelivery(
   at: number,
 ): Promise<void> {
   const { generation } = await sampleData(options.data, options.scopeId, SCHEDULES).read();
-  await remindersThread(options.scope(), options.user, generation).send(supplierDelivery(options.scopeId, source, at));
+  await remindersThread(options.scope(), options.user, generation).send(supplierDelivery(source, at));
 }
 
 const timing = ({ mode, value }: TimingRequest) =>
@@ -78,7 +78,7 @@ async function scenarioState(context: ScheduleContext): Promise<Response> {
       .filter((entry) => entry.threadKey === thread.key)
       .map((entry) => ({ ...entry, waiting: entry.kind === "approval" && waiting.has(entry.seq) })),
     modes: TIMING_MODES,
-    channelRef: inboxChannel(context.scopeId),
+    channelRef: inboxChannel,
   });
 }
 
@@ -115,9 +115,7 @@ async function handle(context: ScheduleContext, request: Request, path: string):
     const body = decodeTiming(await request.json().catch(() => undefined));
     if (!body)
       return routeError(400, "http.badRequest", "The body must name a mode of delay, at or cron, and a value.");
-    return change(context, (thread) =>
-      thread.schedule({ ...timing(body), input: reminderDue(context.scopeId, body.mode) }),
-    );
+    return change(context, (thread) => thread.schedule({ ...timing(body), input: reminderDue(body.mode) }));
   }
   if (path === "/api/scenarios/schedules/schedule/cancel") {
     const scheduleId = decodeScheduleId(await request.json().catch(() => undefined));
