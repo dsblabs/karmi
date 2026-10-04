@@ -5,6 +5,7 @@ import {
   checkCapabilities,
   checkCompatibility,
   checkDurableObjects,
+  checkEnvironments,
   checkGatewayDefer,
   checkMcp,
   checkSpecs,
@@ -54,6 +55,49 @@ describe("the wrangler baseline", () => {
   it("refuses a config that is not JSON, and one whose fields karmi reads are malformed", () => {
     expect(() => decodeWranglerConfig("{ oops")).toThrowError(KarmiError);
     expect(() => decodeWranglerConfig('{ "migrations": [{ "tag": 7 }] }')).toThrowError(KarmiError);
+  });
+});
+
+describe("the environments", () => {
+  const withEnv = (env: unknown) => JSON.stringify({ ...baseline, env });
+  const staging = { durable_objects: { bindings: baseline.durable_objects?.bindings.slice(1) ?? [] } };
+
+  it("reports a binding that the environment does not have, when the top level has it", async () => {
+    const findings = await runChecks({ config: decodeWranglerConfig(withEnv({ staging }), "staging"), entry });
+    const failed = findings.filter((finding) => finding.status === "fail");
+    expect(failed).toHaveLength(1);
+    expect(messages(failed)).toContain(baseline.durable_objects?.bindings[0]?.name);
+  });
+
+  it("takes an inherited key from the top level when the section does not set it", () => {
+    const config = decodeWranglerConfig(withEnv({ staging, old: { compatibility_date: "2020-01-01" } }), "staging");
+    expect(config.compatibility_date).toBe(baseline.compatibility_date);
+    expect(config.migrations).toEqual(baseline.migrations);
+    expect(config.env).toBeUndefined();
+    expect(decodeWranglerConfig(withEnv({ old: { compatibility_date: "2020-01-01" } }), "old").compatibility_date).toBe(
+      "2020-01-01",
+    );
+  });
+
+  it("refuses an unknown environment and names the known ones", () => {
+    expect(() => decodeWranglerConfig(withEnv({ staging, production: {} }), "prod")).toThrowError(
+      /"prod".*staging, production/,
+    );
+    expect(() => decodeWranglerConfig(baselineSource, "prod")).toThrowError(KarmiError);
+  });
+
+  it("warns once about the environments that a run without --env did not check", async () => {
+    const findings = await runChecks({ config: decodeWranglerConfig(withEnv({ staging, production: {} })), entry });
+    const warnings = findings.filter((finding) => finding.status === "warn");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.message).toContain("staging, production");
+    expect(warnings[0]?.message).toContain("--env");
+    expect(hasFailure(findings)).toBe(false);
+  });
+
+  it("reports nothing for a configuration with no env sections", () => {
+    expect(checkEnvironments(baseline)).toEqual([]);
+    expect(checkEnvironments(decodeWranglerConfig(withEnv({})))).toEqual([]);
   });
 });
 
@@ -113,6 +157,20 @@ describe("the Durable Object check", () => {
     const findings = checkDurableObjects(baseline, "export const { ThreadDO } = karmi.durableObjects;");
     expect(findings.filter((finding) => finding.status === "fail")).toHaveLength(3);
     expect(messages(findings)).toContain("ScopeConfigDO");
+  });
+
+  it("skips a class that can be behind an export * line, and fails it without that line", async () => {
+    const partial = "export const { ThreadDO, ScopeConfigDO, KnowledgeDO } = karmi.durableObjects;";
+    const behind = await runChecks({ config: baseline, entry: `${partial}\nexport * from "./objects";` });
+    const skipped = behind.filter((finding) => finding.check === "durable-objects");
+    expect(statuses(skipped)).toEqual(["skip"]);
+    expect(messages(skipped)).toContain("MemoryDO");
+    expect(hasFailure(behind)).toBe(false);
+    // `export * as ns from` exports one namespace, so a class is not behind it.
+    expect(statuses(checkDurableObjects(baseline, `${partial}\nexport * as objects from "./objects";`))).toEqual([
+      "fail",
+    ]);
+    expect(statuses(checkDurableObjects(baseline, partial))).toEqual(["fail"]);
   });
 
   it("skips the re-export half when the entry cannot be read", () => {

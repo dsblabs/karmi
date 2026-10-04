@@ -40,6 +40,7 @@ The template of `create-karmi` runs `karmi doctor` before `vitest run` in `pnpm 
 | Option              | Default                                 | Description                                                   |
 | ------------------- | --------------------------------------- | ------------------------------------------------------------- |
 | `--config <path>`   | `wrangler.jsonc`                        | The wrangler configuration to check.                          |
+| `--env <name>`      | The top level of the configuration      | The environment to check.                                     |
 | `--manifest <path>` | `karmi.doctor.json`, if the file exists | The JSON file that tells what the Deployment defines in code. |
 | `--binding <name>`  | `KARMI_VECTORIZE`                       | The Vectorize binding to check.                               |
 | `--dims <n>`        | `1024`                                  | The embedding dimensions that the index must have.            |
@@ -48,12 +49,32 @@ The template of `create-karmi` runs `karmi doctor` before `vitest run` in `pnpm 
 
 The command reads the Worker entry from the `main` field, relative to the configuration file. If it cannot read the entry, it skips the check of the Durable Object exports.
 
+## Environments
+
+Without `--env`, the command checks the top level of the configuration only. If the configuration has `env` sections, the `environments` check gives one warning. The warning names each environment that the command did not check.
+
+With `--env <name>`, the command checks the configuration as wrangler resolves it for that environment:
+
+- The command takes `main`, `account_id`, `compatibility_date`, `compatibility_flags` and `migrations` from the `env` section. If the section does not set one of these keys, the command takes that key from the top level.
+- The command takes each binding from the `env` section only. Wrangler does not inherit bindings, so a binding that is only at the top level is not in the environment.
+
+The [wrangler documentation](https://developers.cloudflare.com/workers/wrangler/configuration/#inheritable-keys) gives the full list of inherited keys.
+
+One run checks one environment. Run the command one time for each environment:
+
+```sh
+pnpm exec karmi doctor --env staging
+```
+
+If the configuration does not have the environment, the command exits with code 1 and prints the names of the known environments.
+
 ## Checks
 
 The checks run in this order:
 
 | Check             | Input                        | Findings                                                                                             |
 | ----------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `environments`    | `wrangler.jsonc`             | `env` sections and no `--env` option warns. A configuration with no `env` sections gives no finding. |
 | `compatibility`   | `wrangler.jsonc`             | A `compatibility_date` below the floor of karmi fails. No `global_fetch_strictly_public` flag warns. |
 | `bindings`        | `wrangler.jsonc`             | A Durable Object binding that is not there fails. See the list of warnings below.                    |
 | `durable-objects` | `wrangler.jsonc` and `main`  | A bound class that the entry does not export, or that has no SQLite migration, fails.                |
@@ -68,6 +89,18 @@ The `bindings` check gives a warning for each of these conditions:
 - A binding has a `KARMI_` name that karmi does not use, for example a spelling error.
 - A Queue has a producer and no consumer.
 - `KARMI_MEDIA` has no R2 bucket.
+
+The `durable-objects` check reads the text of the entry and does not parse it. It recognises these export forms:
+
+| Form                         | Example                                             |
+| ---------------------------- | --------------------------------------------------- |
+| A declaration                | `export class ThreadDO {}`                          |
+| A destructured `const`       | `export const { ThreadDO } = karmi.durableObjects;` |
+| An export list               | `export { ThreadDO };`                              |
+| An export list with a rename | `export { Thread as ThreadDO };`                    |
+| A named re-export            | `export { ThreadDO } from "./objects";`             |
+
+The check does not follow `export * from "./objects"` into the other module. If the entry has such a line, a bound class that the check does not find gives a `skip` finding, not a `fail` finding, and the message tells that doctor cannot verify the class. If the entry has no such line, the class gives a `fail` finding. To get a `pass`, export each bound class by one of the forms in the table.
 
 The `vectorize` check runs only when the configuration has the Vectorize binding. It also needs `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in the environment. [Knowledge](10-knowledge.md) describes the index.
 
@@ -111,13 +144,13 @@ A check with no input reports `--` and does not fail. If `--manifest` names a fi
 
 Each check is also a function. A test has the real Catalogue and the real Agent Specs in memory. Thus a test can run the three manifest checks with no `karmi.doctor.json` to keep up to date. The template of `create-karmi` has such a test.
 
-| Function                       | Description                                                             |
-| ------------------------------ | ----------------------------------------------------------------------- |
-| `decodeWranglerConfig(source)` | Reads the text of a wrangler configuration. It throws `config.invalid`. |
-| `decodeDoctorManifest(value)`  | Reads a manifest object. It throws `config.invalid`.                    |
-| `runChecks(input)`             | Runs each check and returns the findings. It reads no files.            |
-| `formatFindings(findings)`     | Returns the lines that the command prints.                              |
-| `hasFailure(findings)`         | Returns `true` when a finding has the status `fail`.                    |
+| Function                             | Description                                                                                                                           |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `decodeWranglerConfig(source, env?)` | Reads the text of a wrangler configuration. With `env`, it returns the configuration of that environment. It throws `config.invalid`. |
+| `decodeDoctorManifest(value)`        | Reads a manifest object. It throws `config.invalid`.                                                                                  |
+| `runChecks(input)`                   | Runs each check and returns the findings. It reads no files.                                                                          |
+| `formatFindings(findings)`           | Returns the lines that the command prints.                                                                                            |
+| `hasFailure(findings)`               | Returns `true` when a finding has the status `fail`.                                                                                  |
 
 `runChecks` takes these fields:
 

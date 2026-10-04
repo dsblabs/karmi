@@ -32,7 +32,7 @@ const fail = (check: string, message: string): Finding => ({ check, status: "fai
 const skip = (check: string, message: string): Finding => ({ check, status: "skip", message });
 
 const BindingSchema = z.object({ binding: z.string() });
-const WranglerSchema = z.object({
+const EnvironmentSchema = z.object({
   main: z.optional(z.string()),
   account_id: z.optional(z.string()),
   compatibility_date: z.optional(z.string()),
@@ -59,14 +59,32 @@ const WranglerSchema = z.object({
   vectorize: z.optional(z.array(z.object({ binding: z.string(), index_name: z.string() }))),
   ai: z.optional(BindingSchema),
 });
+const WranglerSchema = z.extend(EnvironmentSchema, {
+  env: z.optional(z.record(z.string(), EnvironmentSchema)),
+});
+// The keys that an `env` section takes from the top level when the section does not set them. These are
+// the keys that doctor reads from the "Inheritable keys" list of the wrangler documentation:
+// https://developers.cloudflare.com/workers/wrangler/configuration/#inheritable-keys
+// Each other key that doctor reads is a binding, and wrangler does not inherit bindings:
+// https://developers.cloudflare.com/workers/wrangler/configuration/#non-inheritable-keys
+const InheritedSchema = z.pick(EnvironmentSchema, {
+  main: true,
+  account_id: true,
+  compatibility_date: true,
+  compatibility_flags: true,
+  migrations: true,
+});
 /** A wrangler configuration, as far as the doctor checks read it. */
 export type WranglerConfig = z.infer<typeof WranglerSchema>;
 
 /**
  * Reads the text of a `wrangler.jsonc` or `wrangler.json`. Comments and trailing commas are allowed.
- * Throws `config.invalid` when the text is not JSON or a field karmi reads is malformed.
+ * With `env`, returns the configuration as wrangler resolves it for that environment: the `env` section,
+ * plus the inherited top-level keys that the section does not set. The result then has no `env` field.
+ * Throws `config.invalid` when the text is not JSON, a field karmi reads is malformed, or `env` names an
+ * environment that the configuration does not have.
  */
-export function decodeWranglerConfig(source: string): WranglerConfig {
+export function decodeWranglerConfig(source: string, env?: string): WranglerConfig {
   const errors: ParseError[] = [];
   const value: unknown = parseJsonc(source, errors, { allowTrailingComma: true });
   if (errors.length > 0)
@@ -75,12 +93,27 @@ export function decodeWranglerConfig(source: string): WranglerConfig {
       `The wrangler config is not JSON: ${errors.map((issue) => printParseErrorCode(issue.error)).join(", ")}.`,
     );
   const result = z.safeParse(WranglerSchema, value);
-  if (result.success) return result.data;
+  if (result.success) return env === undefined ? result.data : resolveEnvironment(result.data, env);
   const issue = firstIssue(result.error);
   throw new KarmiError(
     "config.invalid",
     `The wrangler config is invalid at "${pointer(issue.path)}": ${issue.message}`,
   );
+}
+
+/** The configuration of one environment: its `env` section over the inherited top-level keys. */
+function resolveEnvironment(config: WranglerConfig, env: string): WranglerConfig {
+  const section = config.env?.[env];
+  if (section === undefined) {
+    const known = Object.keys(config.env ?? {});
+    throw new KarmiError(
+      "config.invalid",
+      `The wrangler config has no environment "${env}". ${
+        known.length > 0 ? `The known environments are: ${known.join(", ")}.` : "It has no env sections."
+      }`,
+    );
+  }
+  return { ...z.parse(InheritedSchema, config), ...section };
 }
 
 const named = z.array(z.object({ name: z.string() }));
@@ -152,6 +185,18 @@ export interface DoctorInput {
   fetch?: typeof fetch;
 }
 
+/** Warns about each `env` section of the config, because the other checks read the top level only. */
+export function checkEnvironments(config: WranglerConfig): Finding[] {
+  const names = Object.keys(config.env ?? {});
+  if (names.length === 0) return [];
+  return [
+    warn(
+      "environments",
+      `The environments ${names.join(", ")} were not checked; run karmi doctor --env <name> for each one.`,
+    ),
+  ];
+}
+
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Checks `compatibility_date` against the floor karmi runs on, and the recommended compatibility flags. */
@@ -217,8 +262,9 @@ export function checkBindings(config: WranglerConfig): Finding[] {
 
 const EXPORT_LIST = /export\s+(?:const\s*)?\{([^}]*)\}/g;
 const EXPORT_DECLARATION = /export\s+(?:async\s+)?(?:class|function|const|let|var)\s+([A-Za-z_$][\w$]*)/g;
+const EXPORT_STAR = /export\s*\*\s*from\b/;
 
-/** The names a module's source exports, read without parsing it. */
+/** The names a module's source exports, read without parsing it. A name behind `export * from` is not found. */
 export function exportedNames(source: string): Set<string> {
   const names = new Set<string>();
   for (const [, list] of source.matchAll(EXPORT_LIST))
@@ -234,7 +280,8 @@ export function exportedNames(source: string): Set<string> {
 
 /**
  * Checks that every Durable Object class the config binds is a named export of the Worker entry and is
- * migrated as a SQLite class.
+ * migrated as a SQLite class. A class that is not found reports `skip` when the entry has an
+ * `export * from` line, because the class can be behind that line.
  */
 export function checkDurableObjects(config: WranglerConfig, entry: string | undefined): Finding[] {
   const classes = new Set((config.durable_objects?.bindings ?? []).map((binding) => binding.class_name));
@@ -254,10 +301,19 @@ export function checkDurableObjects(config: WranglerConfig, entry: string | unde
     );
   else {
     const exported = exportedNames(entry);
+    const star = EXPORT_STAR.test(entry);
     for (const name of classes)
       if (!exported.has(name))
         findings.push(
-          fail("durable-objects", `${config.main} does not export ${name}; re-export it from karmi.durableObjects.`),
+          star
+            ? skip(
+                "durable-objects",
+                `${config.main} has an "export * from" line, and doctor cannot verify that ${name} is behind it.`,
+              )
+            : fail(
+                "durable-objects",
+                `${config.main} does not export ${name}; re-export it from karmi.durableObjects.`,
+              ),
         );
   }
   if (findings.length === 0)
@@ -458,6 +514,7 @@ function danglingReferences(spec: NormalizedAgentSpec, catalogue: DoctorCatalogu
 /** Runs every doctor check and returns the findings in check order. */
 export async function runChecks(input: DoctorInput): Promise<Finding[]> {
   return [
+    ...checkEnvironments(input.config),
     ...checkCompatibility(input.config),
     ...checkBindings(input.config),
     ...checkDurableObjects(input.config, input.entry),
