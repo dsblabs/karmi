@@ -8,6 +8,7 @@ import { decodeDoctorManifest, decodeWranglerConfig, formatFindings, hasFailure,
 const USAGE = `karmi doctor [options]
 
   --config <path>    The wrangler configuration to check. Defaults to wrangler.jsonc.
+  --env <name>       The environment to check, as wrangler resolves it. Defaults to the top level.
   --binding <name>   The Vectorize binding to inspect. Defaults to KARMI_VECTORIZE.
   --manifest <path>  What the Deployment defines in code, as JSON: { catalogue, specs, defaults, origin }.
                      Defaults to karmi.doctor.json when it exists.
@@ -43,7 +44,7 @@ async function readJsonc(path, optional = false) {
 }
 
 async function doctor(values) {
-  const config = decodeWranglerConfig(await readText(values.config));
+  const config = decodeWranglerConfig(await readText(values.config), values.env);
   const entry = config.main
     ? await readFile(resolve(dirname(values.config), config.main), "utf8").catch(() => undefined)
     : undefined;
@@ -75,6 +76,7 @@ try {
     allowPositionals: true,
     options: {
       config: { type: "string", default: "wrangler.jsonc" },
+      env: { type: "string" },
       binding: { type: "string", default: "KARMI_VECTORIZE" },
       manifest: { type: "string" },
       dims: { type: "string", default: "1024" },
