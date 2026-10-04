@@ -60,7 +60,7 @@ async function send(key: string, text: string): Promise<void> {
 
 /** Answers the Approval at `seq` on the parent Thread. */
 async function answer(key: string, seq: number, decision: "allow" | "deny"): Promise<void> {
-  const answered = await api("POST", `/threads/${key}/approvals/${String(seq)}`, { decision, by: "operator" });
+  const answered = await api("POST", `/threads/${key}/approvals/${String(seq)}`, { decision });
   expect(answered.status).toBe(204);
 }
 

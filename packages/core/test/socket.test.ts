@@ -5,6 +5,7 @@ import { expect, it } from "vitest";
 import { reply } from "../src/testing/index";
 import { karmi, provider, clock } from "./worker";
 import type { ThreadEvent } from "../src/index";
+import { decodeSocketAttachment } from "../src/thread-sockets";
 
 it("returns a socket that receives a running Turn", async () => {
   provider.script(["Hello"]);
@@ -41,6 +42,41 @@ it("keeps the socket and its authority after the in-memory instance hibernates",
 
   expect(frames).not.toContainEqual(expect.objectContaining({ type: "message.delta" }));
   socket.close();
+});
+
+it("records the `by` bound at upgrade on an approve frame, also after the socket hibernates", async () => {
+  provider.script([[reply.toolCall("book", { room: 7 }, "c1")], "Booked"]);
+  const thread = karmi.scope("test").thread({ agent: "asking", threadId: "socket-by" });
+  const socket = (await thread.socket({ by: "alice" })).webSocket!;
+  const frames: unknown[] = [];
+  socket.addEventListener("message", (message) => {
+    frames.push(JSON.parse(String(message.data)));
+  });
+  socket.accept();
+  await thread.send({ kind: "message", parts: [{ type: "text", text: "Book room 7" }] });
+  await expect.poll(() => frames).toContainEqual(expect.objectContaining({ type: "turn.paused" }));
+  const seq = (await thread.status()).pendingApprovals![0]!.seq;
+  await evictDurableObject(env.KARMI_THREADS.getByName(keys.thread("test", "socket-by")), { webSockets: "hibernate" });
+
+  socket.send(JSON.stringify({ id: 1, type: "approve", seq, answer: { decision: "allow", by: "mallory" } }));
+  await expect
+    .poll(() => frames)
+    .toContainEqual({ type: "error", error: expect.objectContaining({ code: "http.badRequest" }) });
+  expect((await thread.status()).pendingApprovals).toMatchObject([{ seq }]);
+
+  socket.send(JSON.stringify({ id: 2, type: "approve", seq, answer: { decision: "allow" } }));
+  await expect
+    .poll(() => frames)
+    .toContainEqual(expect.objectContaining({ type: "approval.resolved", request: seq, by: "alice" }));
+  // The resumed Turn must end before the next test scripts the Provider.
+  await expect.poll(() => frames).toContainEqual(expect.objectContaining({ type: "turn.completed" }));
+  socket.close();
+});
+
+it("decodes a stored socket attachment that has no `by`", () => {
+  const stored = { address: { scope: "test", agent: "asking", threadId: "old", create: false }, granularity: "part" };
+  expect(decodeSocketAttachment(stored)).toEqual(stored);
+  expect(decodeSocketAttachment({ ...stored, by: "alice" })).toEqual({ ...stored, by: "alice" });
 });
 
 it("streams from the head by default and replays explicitly in seq order", async () => {

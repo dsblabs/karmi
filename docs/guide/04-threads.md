@@ -33,12 +33,12 @@ A Turn input is a message or an Event:
 
 ## Read events
 
-| Method                                     | Description                                                            |
-| ------------------------------------------ | ---------------------------------------------------------------------- |
-| `thread.events({ after })`                 | Returns the stored events after `after`. It does not wait.             |
-| `thread.subscribe({ after, granularity })` | Streams live events as an async iterable.                              |
-| `thread.socket({ after, granularity })`    | Returns a WebSocket upgrade response. Return it from your Worker.      |
-| `thread.status()`                          | Returns the current Turn, the budget, the pending Approvals and usage. |
+| Method                                      | Description                                                            |
+| ------------------------------------------- | ---------------------------------------------------------------------- |
+| `thread.events({ after })`                  | Returns the stored events after `after`. It does not wait.             |
+| `thread.subscribe({ after, granularity })`  | Streams live events as an async iterable.                              |
+| `thread.socket({ after, granularity, by })` | Returns a WebSocket upgrade response. Return it from your Worker.      |
+| `thread.status()`                           | Returns the current Turn, the budget, the pending Approvals and usage. |
 
 `subscribe` and `socket` stream live events by default. Give `after` to get the stored events first. `after: 0` gives the full log. `granularity` is `delta`, `part` or `turn`. The default is `delta`, which includes each streaming chunk.
 
@@ -76,6 +76,8 @@ export async function allowFirst(thread: Thread, reviewer: string): Promise<void
 - `remember: true` allows that Tool by name for the rest of the Thread.
 - The Thread rejects a second answer to the same Approval.
 - An Approval with no answer becomes a deny after `approvals.timeout`. The default is 24 hours.
+- `by` is the name of the person who answered. karmi records it on the `approval.resolved` event and does not check it. Your code must make sure that the name is correct and that the person can answer.
+- A client of `thread.socket()` cannot set `by` in an `approve` frame. Give the name in `thread.socket({ by })`. The [HTTP routes](./06-http.md#approvals) take the name from the Principal.
 
 ### Budget
 

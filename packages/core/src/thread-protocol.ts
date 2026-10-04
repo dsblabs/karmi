@@ -24,11 +24,13 @@ const EventInput = z.object({
 const TurnInputSchema = z.discriminatedUnion("kind", [MessageInput, EventInput]);
 const Steer = { steer: z.optional(z.boolean()) };
 const TurnRequestSchema = z.discriminatedUnion("kind", [z.extend(MessageInput, Steer), z.extend(EventInput, Steer)]);
+// A client never names the person who answers. The transport takes the name from its authenticated caller,
+// so a `by` field is refused instead of ignored.
 const ApprovalAnswerSchema = z.object({
   decision: z.enum(["allow", "deny"]),
   reason: z.optional(z.string()),
   remember: z.optional(z.boolean()),
-  by: z.optional(z.string()),
+  by: z.optional(z.never("the transport sets it from the authenticated caller")),
 });
 const Correlated = { id: z.optional(z.union([z.string(), z.number()])) };
 const FrameSchema = z.discriminatedUnion("type", [
@@ -38,6 +40,8 @@ const FrameSchema = z.discriminatedUnion("type", [
   z.object({ ...Correlated, type: z.literal("approve"), seq: z.int(), answer: ApprovalAnswerSchema }),
 ]);
 
+/** An `ApprovalAnswer` as a client sends it. It has no `by`, because the transport records the name of the authenticated caller. */
+export type ClientApprovalAnswer = Omit<ApprovalAnswer, "by">;
 /** A JSON Turn request: a text-only `TurnInput` plus `steer`. */
 export type TurnRequest = { input: TurnInput; steer: boolean };
 /** One frame a WebSocket client sends. `id` is echoed on the `ack` or `error` frame that answers it. */
@@ -45,7 +49,7 @@ export type SocketFrame = { id?: string | number } & (
   | { type: "send"; input: TurnInput; steer: boolean }
   | { type: "steer"; input: TurnInput }
   | { type: "cancel" }
-  | { type: "approve"; seq: number; answer: ApprovalAnswer }
+  | { type: "approve"; seq: number; answer: ClientApprovalAnswer }
 );
 
 function parse<S extends z.ZodMiniType>(schema: S, value: unknown, what: string): z.output<S> {
@@ -75,14 +79,13 @@ export function decodeTurnRequest(body: unknown): TurnRequest {
   return { input: toTurnInput(parsed), steer: parsed.steer === true };
 }
 
-/** Decodes an `ApprovalAnswer`. Throws `ThreadProtocolError` for anything else. */
-export function decodeApprovalAnswer(body: unknown): ApprovalAnswer {
+/** Decodes a `ClientApprovalAnswer`. Throws `ThreadProtocolError` for anything else, which includes a body that has a `by` field. */
+export function decodeApprovalAnswer(body: unknown): ClientApprovalAnswer {
   const parsed = parse(ApprovalAnswerSchema, body, "approval answer");
   return {
     decision: parsed.decision,
     ...(parsed.reason !== undefined && { reason: parsed.reason }),
     ...(parsed.remember !== undefined && { remember: parsed.remember }),
-    ...(parsed.by !== undefined && { by: parsed.by }),
   };
 }
 

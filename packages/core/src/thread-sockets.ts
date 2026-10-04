@@ -15,17 +15,21 @@ const Attachment = z.object({
     create: z.boolean(),
   }),
   granularity: z.enum(["delta", "part", "turn"]),
+  // A stored attachment can have no `by`, so the field must stay optional.
+  by: z.optional(z.string()),
 });
 
-/** The authority and detail level restored with a hibernating socket. */
+/** The authority, the detail level and the name for Approval answers restored with a hibernating socket. */
 export interface SocketAttachment {
   address: ThreadAddress;
   granularity: Granularity;
+  /** The name recorded as `by` on each Approval answer from this socket. Absent when the opener gave none. */
+  by?: string;
 }
 
 /** Decodes the internal upgrade or a hibernated socket's attachment. */
 export function decodeSocketAttachment(value: unknown): SocketAttachment {
-  const { address, granularity } = z.parse(Attachment, value);
+  const { address, granularity, by } = z.parse(Attachment, value);
   return {
     address: {
       scope: address.scope,
@@ -35,6 +39,7 @@ export function decodeSocketAttachment(value: unknown): SocketAttachment {
       ...(address.user !== undefined && { user: address.user }),
     },
     granularity,
+    ...(by !== undefined && { by }),
   };
 }
 
@@ -45,17 +50,17 @@ export const excludedEventTypes: Record<Granularity, ThreadEventType[]> = {
   turn: ["message.delta", "message.part"],
 };
 
-/** Answers a client frame against only the address bound at upgrade. */
+/** Answers a client frame against only the address and the `by` bound at upgrade. */
 export async function handleSocketFrame(
   host: ThreadDurableObject,
-  address: ThreadAddress,
+  attachment: SocketAttachment,
   data: string | ArrayBuffer,
 ): Promise<ServerFrame> {
   let frame: SocketFrame | undefined;
   try {
     if (typeof data !== "string") throw new ThreadProtocolError("Binary frames are not accepted.");
     frame = decodeSocketFrame(data);
-    const result = await dispatch(host, address, frame);
+    const result = await dispatch(host, attachment, frame);
     const id = frame.id !== undefined && { id: frame.id };
     return result.ok
       ? { type: "ack", ...id, result: result.value ?? null }
@@ -74,7 +79,7 @@ export async function handleSocketFrame(
 
 function dispatch(
   host: ThreadDurableObject,
-  address: ThreadAddress,
+  { address, by }: SocketAttachment,
   frame: SocketFrame,
 ): Outcome<unknown> | Promise<Outcome<unknown>> {
   switch (frame.type) {
@@ -85,6 +90,6 @@ function dispatch(
     case "cancel":
       return host.cancel(address);
     case "approve":
-      return host.approve(address, frame.seq, frame.answer);
+      return host.approve(address, frame.seq, { ...frame.answer, ...(by !== undefined && { by }) });
   }
 }

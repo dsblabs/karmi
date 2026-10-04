@@ -273,6 +273,7 @@ export {
   decodeApprovalAnswer,
   isGranularity,
   parseJsonText,
+  type ClientApprovalAnswer,
   type SocketFrame,
   type ServerFrame,
   type TurnRequest,

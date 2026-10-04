@@ -1,3 +1,4 @@
+import type { ThreadEvent } from "@karmi/core";
 import { reply } from "@karmi/core/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
@@ -203,10 +204,7 @@ describe("approvals, cancel and compact", () => {
     await postTurn("alice", key, "Book room 7");
     const parked = await untilEvent("alice", key, "turn.paused");
     const request = parked.find((event) => event.type === "approval.requested")!;
-    const answered = await api("alice", "POST", `/threads/${key}/approvals/${request.seq}`, {
-      decision: "allow",
-      by: "alice",
-    });
+    const answered = await api("alice", "POST", `/threads/${key}/approvals/${request.seq}`, { decision: "allow" });
     expect(answered.status).toBe(204);
     const events = await untilEvent("alice", key, "turn.completed");
     expect(events).toContainEqual(
@@ -224,6 +222,23 @@ describe("approvals, cancel and compact", () => {
     expect(invalid.status).toBe(400);
   });
 
+  it("records the `by` of the Principal, and no `by` for a Principal that has no `by` and no User", async () => {
+    expect(await answerAs("carol")).toMatchObject({ by: "Carol Reyes" });
+    expect(await answerAs("service")).not.toHaveProperty("by");
+  });
+
+  it("rejects a body that has a `by` field with a 400 and leaves the Approval unanswered", async () => {
+    const { key, seq } = await parkForApproval("alice");
+    const response = await api("alice", "POST", `/threads/${key}/approvals/${seq}`, { decision: "allow", by: "bob" });
+    expect(response.status).toBe(400);
+    expect(decodeError(await response.json())).toMatchObject({
+      code: "http.badRequest",
+      message: expect.stringMatching(/^Invalid approval answer at by:/),
+    });
+    const status = decodeResource(await (await api("alice", "GET", `/threads/${key}`)).json()).status;
+    expect(status).toMatchObject({ state: "parked", pendingApprovals: [{ seq }] });
+  });
+
   it("cancels a parked Turn and refuses to compact a busy Thread", async () => {
     provider.script([[reply.toolCall("book", { room: 1 })]]);
     const key = await createThread("alice", "approver");
@@ -239,6 +254,23 @@ describe("approvals, cancel and compact", () => {
     expect((await api("alice", "POST", `/threads/${key}/compact`, { instructions: 7 })).status).toBe(400);
   });
 });
+
+/** Parks a new Thread of `token` on one Approval and returns the key and the seq of the request. */
+async function parkForApproval(token: string): Promise<{ key: string; seq: number }> {
+  provider.script([[reply.toolCall("book", { room: 7 })], "Booked."]);
+  const key = await createThread(token, "approver");
+  await postTurn(token, key, "Book room 7");
+  const parked = await untilEvent(token, key, "turn.paused");
+  return { key, seq: parked.find((event) => event.type === "approval.requested")!.seq };
+}
+
+/** Allows one Approval over REST as `token` and returns its `approval.resolved` event. */
+async function answerAs(token: string): Promise<ThreadEvent> {
+  const { key, seq } = await parkForApproval(token);
+  expect((await api(token, "POST", `/threads/${key}/approvals/${seq}`, { decision: "allow" })).status).toBe(204);
+  const events = await untilEvent(token, key, "approval.resolved");
+  return events.find((event) => event.type === "approval.resolved")!;
+}
 
 /** The keys of the media stored under the Thread `threadId` of the test Scope, sorted. */
 async function mediaKeys(threadId: string): Promise<string[]> {

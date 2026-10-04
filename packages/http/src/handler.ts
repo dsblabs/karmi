@@ -10,6 +10,11 @@ export interface Principal {
   scope: string;
   /** The User every Thread of this request belongs to. Absent for a service caller that drives user-less Threads. */
   user?: string;
+  /**
+   * The name recorded as `by` on each Approval answer of this request. Defaults to `user`. When the two are
+   * absent, the answer has no `by`. karmi records the name and never checks that the person may answer.
+   */
+  by?: string;
 }
 
 /**
@@ -58,9 +63,9 @@ export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
       const scope = options.karmi.scope(principal.scope);
       if (key === undefined) return await collectionRoute(request, scope, principal);
       const thread = openOwnedThread(scope, key, principal);
-      if (action === undefined) return await threadRoute(request, thread);
+      if (action === undefined) return await threadRoute(request, thread, principal);
       if (arg !== undefined && action !== "approvals") return notFound();
-      return await actionRoute(request, thread, action, arg);
+      return await actionRoute(request, thread, principal, action, arg);
     } catch (error) {
       return errorResponse(error);
     }
@@ -98,15 +103,22 @@ async function toResource(thread: Thread): Promise<ThreadResource> {
   return { ...thread.identity, key: thread.key, status: await thread.status() };
 }
 
-async function threadRoute(request: Request, thread: Thread): Promise<Response> {
+// The name comes from the Principal only, so a client cannot record an answer under a different name.
+function answeredBy(principal: Principal): { by?: string } {
+  const by = principal.by ?? principal.user;
+  return by === undefined ? {} : { by };
+}
+
+async function threadRoute(request: Request, thread: Thread, principal: Principal): Promise<Response> {
   if (request.method !== "GET") return methodNotAllowed("GET");
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return Response.json(await toResource(thread));
-  return thread.socket(await streamOptions(request, thread));
+  return thread.socket({ ...(await streamOptions(request, thread)), ...answeredBy(principal) });
 }
 
 async function actionRoute(
   request: Request,
   thread: Thread,
+  principal: Principal,
   action: string,
   arg: string | undefined,
 ): Promise<Response> {
@@ -141,7 +153,7 @@ async function actionRoute(
       const seq = Number(arg);
       if (arg === undefined || !Number.isInteger(seq) || seq < 1)
         throw new HttpError(404, "http.notFound", "An approval is addressed by the seq of its request.");
-      await thread.approve(seq, decodeApprovalAnswer(await readJson(request)));
+      await thread.approve(seq, { ...decodeApprovalAnswer(await readJson(request)), ...answeredBy(principal) });
       return new Response(null, { status: 204 });
     }
     case "cancel":
