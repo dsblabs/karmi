@@ -135,6 +135,18 @@ describe("automatic Compaction", () => {
     expect(events).toContainEvent({ type: "step.started", kind: "model", n: 4 });
     expect(lastMessage(events)).toBe("done");
     expect(provider.requests).toHaveLength(2);
+    expect(provider.requests[1]?.messages.filter((m) => m.role === "toolResult")).toHaveLength(1);
+  });
+
+  it("sends each Tool result once after a Compaction between a tool Step and the next model Step", async () => {
+    provider.script(["one", [reply.toolCall("lookup", { id: "g1" }), reply.usage({ input: 950 })], "SUMMARY", "done"]);
+    const thread = fresh();
+    await thread.send(message(big("one")));
+    const events = await thread.send(message(big("two")));
+    expect(events).toContainEvent({ type: "thread.compacted", trigger: "auto" });
+    const results = provider.requests[3]?.messages.filter((m) => m.role === "toolResult");
+    expect(results).toHaveLength(1);
+    expect(lastMessage(events)).toBe("done");
   });
 
   it("drops the oldest Turn when the tail alone cannot hold keepRecentTokens", async () => {

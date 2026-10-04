@@ -185,6 +185,44 @@ describe("transcriptFromEvents", () => {
     ]);
   });
 
+  it("adds the results of a tool Step once when a compact Step completes after it", () => {
+    const modelStep = (n: number) =>
+      ev(1, {
+        type: "step.started",
+        profile: "default",
+        kind: "model",
+        n,
+        attempt: 1,
+        model: "anthropic/claude-sonnet-5",
+        provider: "anthropic",
+        agentVersion: 1,
+      });
+    const call = { type: "tool_call" as const, id: "c1", name: "lookup", input: {} };
+    const events = [
+      ev(1, {
+        type: "turn.started",
+        input: { kind: "message", parts: [{ type: "text", text: "hi" }] },
+        toolsVersion: "v",
+      }),
+      modelStep(1),
+      ev(1, { type: "message.part", index: 0, block: call }),
+      ev(1, { type: "step.completed", kind: "model", n: 1, stopReason: "tool_use", usage }),
+      ev(1, {
+        type: "tool.result",
+        id: "c1",
+        name: "lookup",
+        content: [{ type: "text", text: "found" }],
+        isError: false,
+      }),
+      ev(1, { type: "step.completed", kind: "tool", n: 2 }),
+      ev(1, { type: "step.completed", kind: "compact", n: 3 }),
+      modelStep(4),
+      ev(1, { type: "message.part", index: 0, block: { type: "text", text: "done" } }),
+      ev(1, { type: "step.completed", kind: "model", n: 4, stopReason: "end_turn", usage }),
+    ];
+    expect(transcriptFromEvents(events).map((m) => m.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
+  });
+
   it("replays a provider compaction as an assistant block the same provider gets byte-exact", () => {
     const events = [
       ev(1, {
