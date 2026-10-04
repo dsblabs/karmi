@@ -521,14 +521,17 @@ test("a Scope suspends and resumes, keeps a write-only credential and gets a new
   const first = await scope.locator("dd code").textContent();
   await expect(page.getByRole("link", { name: "Example code" })).toHaveAttribute("href", /src\/lifecycle\.ts$/);
 
-  // Without a Scope credential, the Step falls back to the Deployment profile.
+  // Without a Scope credential, the Step falls back to the Deployment profile. The Turn renders the side column
+  // again, and the card must keep the text that the operator typed before.
+  await page.getByLabel("Scope credential").fill(secret);
   await runScopeDesk(page);
   await expect(page.locator("#steps .agent").last()).toContainText("Hello from the Scope desk.");
   await expect(page.locator("#steps")).toContainText(
     "runs under the Deployment profile default. The credential of the profile scope-key is missing.",
   );
 
-  await page.getByLabel("Scope credential").fill(secret);
+  await expect(page.locator("#steps-credentials")).toContainText("Fallback to the Deployment profile default.");
+  await expect(page.getByLabel("Scope credential")).toHaveValue(secret);
   await page.getByRole("button", { name: "Store the credential" }).click();
   await expect(credential).toContainText("version 1");
   await expect(page.getByLabel("Scope credential")).toHaveValue("");
