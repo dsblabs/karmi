@@ -76,7 +76,10 @@ export interface ApprovalAnswer {
   decision: "allow" | "deny";
   /** Free text shown to the model with a deny. */
   reason?: string;
-  /** Allows this Tool by name for the rest of the Thread. Ignored on a deny or a `continue`. */
+  /**
+   * Allows this Tool by name for the rest of the Thread, unless a Permission Policy rule denies it. Ignored on
+   * a deny or a `continue`, and when the Agent Spec has `approvals.remember: false`.
+   */
   remember?: boolean;
   /** Who answered. The Framework records it and never authorises it. */
   by?: string;

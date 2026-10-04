@@ -298,6 +298,15 @@ const approver = defineAgent({
   approvals: { timeout: 60 * 60 * 1000 },
   hooks: { "after-turn": ["turn-end", "slow-turn-end"] },
 });
+// The Agent that turns off `remember` on Approvals. Each call of `book` asks.
+const forgetful = defineAgent({
+  agentId: "forgetful",
+  name: "Forgetful",
+  instructions: [{ text: "Ask before booking." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["book"],
+  approvals: { timeout: 60 * 60 * 1000, remember: false },
+});
 // The Agent for the admission order. `lookup` is allowed and each other Tool asks. The before-tool Hooks trace, rewrite and deny.
 const vetted = defineAgent({
   agentId: "vetted",
@@ -754,6 +763,7 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
       asking,
       hooked,
       approver,
+      forgetful,
       vetted,
       budgeted,
       compactor,

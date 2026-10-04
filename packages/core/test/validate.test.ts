@@ -528,8 +528,16 @@ describe("AgentSpecSchema", () => {
     expect(JSON.parse(JSON.stringify(agentSpecJsonSchema))).toEqual(agentSpecJsonSchema);
   });
 
+  it("accepts approvals.remember as a boolean only", () => {
+    const parse = (remember: unknown) => AgentSpecSchema.safeParse({ ...base, approvals: { remember } });
+    expect(parse(false).data?.approvals).toEqual({ remember: false });
+    expect(parse(true).success).toBe(true);
+    expect(parse("no").success).toBe(false);
+  });
+
   it("keeps Framework defaults out of the Spec", () => {
     expect(AGENT_SPEC_DEFAULTS.approvals.timeout).toBe(86_400_000);
+    expect(AGENT_SPEC_DEFAULTS.approvals.remember).toBe(true);
     expect(Object.isFrozen(AGENT_SPEC_DEFAULTS.context)).toBe(true);
   });
 });

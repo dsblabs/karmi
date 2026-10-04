@@ -66,6 +66,8 @@ The `model` field selects the model and its parameters.
 
 The Harness tries the rules in order, and the first match decides. If no rule matches, the call waits for an Approval. [Threads](./04-threads.md) tells how to answer an Approval.
 
+An Approval answer can tell the Thread to remember the allow for that Tool. A remembered allow changes only the effect `ask` to `allow`. If the first matching rule has the effect `deny`, the Tool is denied. Thus a `deny` rule that a Scope or a Deployment adds later also stops a Tool that the Thread remembered.
+
 A rule selects by the Tool only. A `before-tool` Hook can refuse a call by the Scope, the User or the input. The Hooks run after a `deny` rule and before an Approval. [Tools](./03-tools.md#order-of-a-call) gives the full order.
 
 ## Other fields
@@ -75,7 +77,7 @@ A rule selects by the Tool only. A `before-tool` Hook can refuse a call by the S
 | `skills`       | The Skills that the Agent can activate.                                   | [Tools](./03-tools.md)                     |
 | `capabilities` | Grants for Scripts, long Turns, Delegation, Schedules and Provider Tools. | [Tools](./03-tools.md) and the topic pages |
 | `context`      | The context window, the Compaction limits and Tool deferral.              | [Threads](./04-threads.md)                 |
-| `approvals`    | `timeout` is the time in milliseconds before an Approval becomes a deny.  | [Threads](./04-threads.md)                 |
+| `approvals`    | The `timeout` of an Approval and the `remember` setting.                  | [Threads](./04-threads.md#approvals)       |
 | `knowledge`    | The Knowledge that the Agent can search.                                  | Topic page 10                              |
 | `memory`       | The Memory Profile fields and Notes of the Agent.                         | Topic page 09                              |
 | `delegates`    | The Agents that this Agent can delegate work to.                          |                                            |

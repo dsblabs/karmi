@@ -36,7 +36,7 @@ The package has three public entries: `src/index.ts`, `src/testing/index.ts` and
 6. `send` starts the Turn loop and does not wait for it. The rows in storage let the loop continue after an eviction. The loop does not use `waitUntil`.
 7. On the first Step, the loop takes the config of the Turn from the Scope and stores it. Model Steps and Tool Steps then alternate. The Turn ends when a model Step returns no Tool calls.
 8. A failed model call moves to the next model or Provider profile. The final failure records the safe fields of the last `ProviderError`.
-9. `tool-step.ts` runs the Tool calls. `admit` decides each new call in this order: a `deny` from the Permission Policy, validation of the input, the before-tool Hooks, then the Approval of an asked call. An Approval, a Job or a Delegation parks the Turn. The answer or an alarm continues it.
+9. `tool-step.ts` runs the Tool calls. `admit` decides each new call in this order: a `deny` from the Permission Policy, validation of the input, the before-tool Hooks, then the Approval of an asked call. A remembered allow of the Thread changes only the Policy effect `ask` to `allow`, and the Thread uses none when the Agent Spec has `approvals.remember: false`. An Approval, a Job or a Delegation parks the Turn. The answer or an alarm continues it.
 10. Compaction is a Step of its own. It adds one `thread.compacted` event and does not change the log before that event.
 11. The Thread Durable Object writes each usage record in the same write as its event.
 

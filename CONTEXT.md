@@ -427,7 +427,7 @@ Delegation is the act in which one Agent gives a task to a second Agent in the s
 
 The `delegation` grant has the defaults `maxDepth: 4`, `maxConcurrent: 8` and `maxChildren: 32`. The Scope ceilings limit them. Each ancestor counts all descendants that start during its Turn. A completed child frees concurrency, but its child count stays spent. `status().budget.delegated` reports `{ children, active }`. The first delegation fixes a wall deadline from the remaining budget of the parent. Parking and child approvals do not extend the deadline.
 
-A child id is `{parentThreadId}/{encoded callId}`. It uses the stable `ToolContext.callId`. Thus repeated model tool-call ids on later Turns create different children. `parent { threadKey, callId }` is in status records and index records. `scope.threads.list({ agent, parent })` filters by parent key, and `parent: null` selects roots. `delegation.started` and `delegation.completed` name the child with `childKey`. Approval events and pending approvals carry `child { threadId, seq }`. Answers go down to that Thread, and remembered grants stay there.
+A child id is `{parentThreadId}/{encoded callId}`. It uses the stable `ToolContext.callId`. Thus repeated model tool-call ids on later Turns create different children. `parent { threadKey, callId }` is in status records and index records. `scope.threads.list({ agent, parent })` filters by parent key, and `parent: null` selects roots. `delegation.started` and `delegation.completed` name the child with `childKey`. Approval events and pending approvals carry `child { threadId, seq }`. Answers go down to that Thread, and remembered grants stay there. The `approvals.remember` setting of the child Agent Spec applies to them.
 _Avoid_: sub-agent (for the child Agent), spawn, orchestration, handoff
 
 **Usage record**:
@@ -461,7 +461,7 @@ The Framework records the person who answered (`by`). It never authorises that p
 
 The Harness requests a `tool` Approval last. The order is: a `deny` from the Permission Policy, validation of the input, the before-tool Hooks, then the Approval. A call that validation or a Hook refuses gets an error result and no Approval. The person approves the input that the Tool runs with, which includes a change from a Hook. A Hook thus also runs for a call that a person then denies, and it does not run again after the answer.
 
-A denied call is an `isError` Tool result that the model sees next. The Thread can remember an `allow` for the remainder of the Thread, by Tool name only. The parent Thread emits the Approvals of a delegated child again, and the person answers them there.
+A denied call is an `isError` Tool result that the model sees next. The Thread can remember an `allow` for the remainder of the Thread, by Tool name only. A remembered allow changes only the Permission Policy effect `ask` to `allow`, thus a `deny` rule wins over it. With `approvals.remember: false` in the Agent Spec, the Thread ignores `remember` on an answer and gives no effect to an allow that it remembered before. The parent Thread emits the Approvals of a delegated child again, and the person answers them there.
 _Avoid_: permission prompt, confirmation, consent (for the pause), HITL request
 
 **Test kit**:
