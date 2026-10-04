@@ -16,6 +16,8 @@ pnpm typecheck && pnpm test
 
 `pnpm test` runs `karmi doctor` first. Thus a Worker with an incorrect configuration fails before the suite starts.
 
+The `packageManager` field of `package.json` gives the pnpm version of this project. The CI workflow installs that version. To use a different pnpm version, change the field.
+
 ## Files
 
 | File               | Contents                                                                        |

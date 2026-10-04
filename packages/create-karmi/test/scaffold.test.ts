@@ -11,6 +11,10 @@ beforeEach(async () => {
 
 const read = (project: { directory: string }, file: string) => readFile(join(project.directory, file), "utf8");
 
+/** The `packageManager` field of the `package.json` file at the root of this repository. */
+const rootPackageManager = async (): Promise<unknown> =>
+  JSON.parse(await readFile(new URL("../../../package.json", import.meta.url), "utf8")).packageManager;
+
 describe("scaffold", () => {
   it("writes the whole template", async () => {
     const project = await scaffold({ directory });
@@ -38,6 +42,14 @@ describe("scaffold", () => {
     const { dependencies } = JSON.parse(await read(project, "package.json"));
     expect(dependencies).toMatchObject({ "@karmi/core": "^1.2.3", "@karmi/http": "^1.2.3" });
     expect(await read(project, "package.json")).not.toContain("workspace:");
+  });
+
+  it("pins the pnpm version of this repository", async () => {
+    // The CI workflow of the template uses `pnpm/action-setup` with no version, which reads this field.
+    const project = await scaffold({ directory });
+    const { packageManager } = JSON.parse(await read(project, "package.json"));
+    expect(packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+$/);
+    expect(packageManager).toBe(await rootPackageManager());
   });
 
   it("defaults the version to its own", async () => {
