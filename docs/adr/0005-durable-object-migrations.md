@@ -36,3 +36,39 @@ including FTS5 virtual tables and their triggers, use custom SQL migrations in t
 - Running two journals with an interleaving guard leaves every future migration coupled to the timestamp
   ordering of both journals.
 - Owning a per-journal migrator adds machinery solely to work around Drizzle's single high-water mark.
+
+## Amendment 2026-10-01: an upgrade is one-way during `0.x`
+
+Decided in [Record that a karmi upgrade is one-way during 0.x](https://github.com/dsblabs/karmi/issues/237).
+
+### Decision
+
+karmi does not promise that the release before can run on storage that a new release wrote. This applies
+to all `0.x` releases. The maintainers decide the promise again before `1.0`.
+
+A changeset for a change that alters stored data starts a line with the phrase `Stored data change:`.
+[`CONTRIBUTING.md`](../../CONTRIBUTING.md#stored-data-changes) defines when a changeset must have it. An
+upgrade to a release with that line is one-way: the consumer cannot roll back to the release before. An
+upgrade to a release with no such line keeps a normal rollback.
+
+### Reasons
+
+- The SQL schema is only one part of the stored data. A new Thread event type, a new field in a stored
+  shape or a new Queue message shape can also break an older release.
+- The event vocabulary changes in most releases, so most releases can write data that an older release
+  cannot read.
+- A Cloudflare rollback does not change the stored data. Cloudflare warns that the code of an older
+  version can fail when the structure of the data changed
+  ([Rollbacks](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/#rolling-back-from-a-split-deployment)).
+- Cloudflare refuses a rollback across a deployment that changed the lifecycle of a Durable Object class
+  ([Rollbacks, Bindings](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/#bindings)).
+  A new entry in the `migrations` array of the Wrangler configuration is such a change. We conclude that
+  a karmi release that adds a Durable Object class is one-way on the platform also.
+
+### Rejected options
+
+- The full promise: each release can run on storage that the next release wrote. Each change to a stored
+  shape then takes two releases, one that reads the new shape and one that writes it. That cost is too
+  high while the event vocabulary changes in most releases.
+- The schema-only promise: only the SQL schema stays compatible with the release before. This promise is
+  misleading. A consumer reads "safe" and rolls back, and then a Thread with one new event type fails.

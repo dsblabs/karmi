@@ -93,5 +93,6 @@ Users read changeset text in the changelog and in the npm release notes.
 - Write one changeset for each change that a user can see.
 - Start with a verb in the past tense: "Added", "Fixed", "Changed" or "Removed". This is the only exception to the present tense rule.
 - Tell what changed for the user. Do not describe the implementation.
+- For a change to stored data, start a line with `Stored data change:`. The rule is in [`CONTRIBUTING.md`](../../CONTRIBUTING.md#stored-data-changes).
 - For a breaking change, tell what breaks. Then give the migration steps, with a code sample before and after the change.
 - Do not write issue numbers or internal names. The changelog links to the pull request.
