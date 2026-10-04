@@ -803,7 +803,7 @@ function scheduleCards({ threadKey, schedules, reminders, inbox, modes }, onChan
   const answer = (seq, decision) =>
     cardAction(
       decision === "allow" ? "Allow" : "Deny",
-      () => api("POST", `/threads/${threadKey}/approvals/${seq}`, { decision, by: "operator" }),
+      () => api("POST", `/threads/${threadKey}/approvals/${seq}`, { decision }),
       () => (inboxResult.textContent = `You answered ${decision}. The Turn continues.`),
       inboxResult,
       decision === "allow",
@@ -3413,7 +3413,7 @@ async function renderScenario(scenario) {
       .closest(".approval")
       .querySelectorAll("button")
       .forEach((button) => (button.disabled = true));
-    await api("POST", threadRoute(`/approvals/${seq}`), { decision, by: "operator" });
+    await api("POST", threadRoute(`/approvals/${seq}`), { decision });
   };
 
   // True from the start of a compact Step until its thread.compacted event. A Step without one dropped nothing.

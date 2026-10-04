@@ -69,10 +69,20 @@ describe("WebSocket", () => {
     expect(sent).toEqual({ type: "ack", id: "s1", result: { turn: 1, seq: 0 } });
     const requested = await frame(frames, isEvent("approval.requested"));
 
+    // The frame cannot name the person who answers. The refused frame leaves the Approval open.
     socket.send(
-      JSON.stringify({ id: 2, type: "approve", seq: requested.seq, answer: { decision: "allow", by: "alice" } }),
+      JSON.stringify({ id: "forged", type: "approve", seq: requested.seq, answer: { decision: "allow", by: "bob" } }),
     );
+    // A frame that does not decode gets an error frame with no `id`.
+    expect(await frame(frames, isReply(undefined))).toMatchObject({
+      type: "error",
+      error: { code: "http.badRequest", message: expect.stringMatching(/^Invalid frame at answer\.by:/) },
+    });
+    expect(frames.filter(isEvent("approval.resolved"))).toEqual([]);
+
+    socket.send(JSON.stringify({ id: 2, type: "approve", seq: requested.seq, answer: { decision: "allow" } }));
     expect(await frame(frames, isReply(2))).toEqual({ type: "ack", id: 2, result: null });
+    expect(await frame(frames, isEvent("approval.resolved"))).toMatchObject({ decision: "allow", by: "alice" });
     const completed = await frame(frames, isEvent("turn.completed"));
     expect(completed).toMatchObject({ turn: 1, message: [{ type: "text", text: "Booked." }] });
 
@@ -122,6 +132,17 @@ describe("WebSocket", () => {
     expect(replayed.every((event) => event.seq > paused.seq)).toBe(true);
     expect(completed.seq).toBeGreaterThan(paused.seq);
     again.socket.close(1000, "done");
+  });
+
+  it("records the `by` of the Principal for an approve frame", async () => {
+    provider.script([[reply.toolCall("book", { room: 4 })], "Booked."]);
+    const key = await createThread("carol", "approver");
+    const { socket, frames } = await connect("carol", key);
+    socket.send(JSON.stringify({ type: "send", input: message("Book room 4") }));
+    const requested = await frame(frames, isEvent("approval.requested"));
+    socket.send(JSON.stringify({ type: "approve", seq: requested.seq, answer: { decision: "deny" } }));
+    expect(await frame(frames, isEvent("approval.resolved"))).toMatchObject({ decision: "deny", by: "Carol Reyes" });
+    socket.close(1000, "done");
   });
 
   it("refuses an unauthenticated or foreign upgrade before opening a socket", async () => {

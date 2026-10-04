@@ -38,6 +38,14 @@ export default { fetch: http.fetch, queue: karmi.queueHandler };
 
 A browser cannot set headers on an `EventSource` or a `WebSocket`. Thus the sample also reads the token from the `token` query parameter.
 
+A Principal has these fields:
+
+| Field   | Function                                                                                               |
+| ------- | ------------------------------------------------------------------------------------------------------ |
+| `scope` | The id of the Scope of the request.                                                                    |
+| `user`  | The User of the Threads of the request. Omit it for a service caller that uses user-less Threads.      |
+| `by`    | The name that karmi records on an Approval answer. The default is `user`. See [Approvals](#approvals). |
+
 `http.handle(request, ctx)` answers only the paths below `/threads`. It returns `undefined` for each other path. Use it to mount the routes next to your own routes.
 
 ## Routes
@@ -51,11 +59,25 @@ A route addresses a Thread by its opaque `key`. `POST /threads` and `GET /thread
 | `GET /threads/:key`                 |                                                       | The Thread, or a WebSocket on `Upgrade`                       |
 | `POST /threads/:key/turns`          | A `TurnInput` with `steer?`, or `multipart/form-data` | `202 { turn, seq }`                                           |
 | `GET /threads/:key/events?after=`   |                                                       | `ThreadEvent[]`, or an SSE stream                             |
-| `POST /threads/:key/approvals/:seq` | An `ApprovalAnswer`                                   | `204`. `409` for a second answer. `404` for an unknown `seq`. |
+| `POST /threads/:key/approvals/:seq` | `{ decision, reason?, remember? }`                    | `204`. `409` for a second answer. `404` for an unknown `seq`. |
 | `POST /threads/:key/cancel`         |                                                       | `204`                                                         |
 | `POST /threads/:key/compact`        | `{ instructions? }`                                   | `204`. `409` while a Turn runs or is parked.                  |
 
 `GET /threads/:key/events` returns an SSE stream when the request has `Accept: text/event-stream`. With a different `Accept` value, it returns JSON.
+
+### Approvals
+
+The body of an Approval answer is `{ decision, reason?, remember? }`. The [Threads page](./04-threads.md#approvals) explains the fields.
+
+The client does not send the name of the person who answers. karmi takes the name from the Principal and records it as `by` on the `approval.resolved` event:
+
+1. If the Principal has a `by`, karmi records that value.
+2. If the Principal has no `by`, karmi records the `user`.
+3. If the Principal has no `by` and no `user`, the event has no `by`.
+
+A body that has a `by` field gets a `400` answer with the code `http.badRequest`, and the Approval stays open. The same rule applies to the `approve` frame of the WebSocket.
+
+karmi records the name. It does not check that the person can answer the Approval. Do that check in `authenticate` or before the route.
 
 ### Media
 
@@ -90,7 +112,7 @@ SSE and WebSocket send the same JSON. Each frame is one `ThreadEvent`, the same 
 
 The Durable Object of the Thread owns the WebSocket. The socket hibernates while it is idle, so `ctx.waitUntil` is not necessary.
 
-karmi checks the Principal one time, at the upgrade. A revoked credential has an effect only when the socket disconnects.
+karmi checks the Principal one time, at the upgrade. A revoked credential has an effect only when the socket disconnects. The name for Approval answers is also set at the upgrade. Each `approve` frame on the socket records that name.
 
 Close code `4004` tells that the Thread or the Scope no longer exists. The client must not connect again. After each other close code, connect again with `?after=<last seq>`.
 
@@ -100,7 +122,7 @@ A client sends JSON frames. Each frame can have an `id` that the client selects.
 { "id": 1, "type": "send", "input": { "kind": "message", "parts": [{ "type": "text", "text": "Hi" }] }, "steer": false }
 { "id": 2, "type": "steer", "input": { "kind": "message", "parts": [{ "type": "text", "text": "Shorter" }] } }
 { "id": 3, "type": "cancel" }
-{ "id": 4, "type": "approve", "seq": 8, "answer": { "decision": "allow", "by": "alice" } }
+{ "id": 4, "type": "approve", "seq": 8, "answer": { "decision": "allow" } }
 // Answers from the server:
 { "type": "ack", "id": 1, "result": { "turn": 1, "seq": 0 } }
 { "type": "error", "id": 4, "error": { "code": "approval.resolved", "message": "The Approval has an answer." } }

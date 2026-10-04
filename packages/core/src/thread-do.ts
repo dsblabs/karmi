@@ -606,8 +606,8 @@ export abstract class ThreadDurableObject extends ScheduledDurableObject {
 
   /** Dispatches a client frame using the authority saved when its socket was accepted. */
   async webSocketMessage(socket: WebSocket, data: string | ArrayBuffer): Promise<void> {
-    const { address } = decodeSocketAttachment(socket.deserializeAttachment());
-    this.sendSocket(socket, JSON.stringify(await handleSocketFrame(this, address, data)));
+    const attachment = decodeSocketAttachment(socket.deserializeAttachment());
+    this.sendSocket(socket, JSON.stringify(await handleSocketFrame(this, attachment, data)));
   }
 
   /** Completes the close handshake and reports abnormal disconnects that may have lost buffered data. */

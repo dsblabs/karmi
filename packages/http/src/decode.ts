@@ -2,7 +2,7 @@ import * as z from "zod/mini";
 import { HttpError } from "./errors";
 
 export { decodeTurnRequest, decodeApprovalAnswer, isGranularity, parseJsonText } from "@karmi/core";
-export type { SocketFrame, TurnRequest } from "@karmi/core";
+export type { ClientApprovalAnswer, SocketFrame, TurnRequest } from "@karmi/core";
 const CreateThreadSchema = z.object({ agent: z.string(), threadId: z.optional(z.string()) });
 const CompactSchema = z.object({ instructions: z.optional(z.string()) });
 /** A request to open a Thread with an optional caller-chosen id. */

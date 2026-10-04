@@ -173,7 +173,7 @@ describe("offline delivery to the sample inbox", () => {
     });
 
     // The operator answers from the inbox, through the Approval route of the Thread.
-    await api("POST", `/threads/${threadKey}/approvals/${String(asked?.seq)}`, { decision: "allow", by: "operator" });
+    await api("POST", `/threads/${threadKey}/approvals/${String(asked?.seq)}`, { decision: "allow" });
     await until(threadKey, "turn.completed");
     const inbox = await delivered(2);
     expect(inbox[0]).toMatchObject({ kind: "approval", waiting: false });

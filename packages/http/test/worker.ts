@@ -31,9 +31,10 @@ const approver = defineAgent({
 export const { karmi, provider, scope } = createTestKarmi({ tools: [book], agents: [concierge, approver] });
 export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableObjects;
 
-/** The bearer tokens the test Worker accepts and who each one is. `service` has no User. */
+/** The bearer tokens the test Worker accepts and who each one is. `service` has no User. `carol` has a `by`. */
 export const principals: Record<string, Principal> = {
   alice: { scope: "test", user: "alice" },
+  carol: { scope: "test", user: "carol", by: "Carol Reyes" },
   bob: { scope: "test", user: "bob" },
   service: { scope: "test" },
 };

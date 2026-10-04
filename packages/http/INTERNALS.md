@@ -20,12 +20,15 @@ This file is for contributors to `@karmi/http`. The routes and the streams are i
 4. The route opens the Thread with the key. A key for a different User gives a 404.
 5. The route decodes the body and calls the Thread API of `@karmi/core`.
 
+The approval route and the WebSocket upgrade add the name of the person who answers. `answeredBy` in `handler.ts` reads it from the Principal: `by` first, then `user`. The decoder of the body refuses a `by` field.
+
 A WebSocket upgrade does not end in the Worker. `thread.socket()` in `@karmi/core` sends the upgrade to the Thread Durable Object, which owns the socket and hibernates when the socket is idle. The reason is in [ADR 0003](../../docs/adr/0003-client-sockets-in-the-thread-do.md).
 
 ## Rules that the code cannot show
 
 - Import only from `@karmi/core`, `zod/mini` and the files of this package. The package proves that the public API of `@karmi/core` is sufficient for a transport.
 - The package has no authentication scheme. All authority comes from the `authenticate` callback.
+- The `by` of an Approval answer comes only from the Principal. Do not read it from a body, a query or a frame.
 - A stream frame is one `ThreadEvent` with no changes. Do not add a second event format.
 
 ## Tests

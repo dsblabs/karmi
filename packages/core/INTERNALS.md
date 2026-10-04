@@ -63,6 +63,8 @@ The package has three public entries: `src/index.ts`, `src/testing/index.ts` and
 - Read the time from `deployment.clock.now()`. Only `clock.ts` and `src/testing/` call `Date.now()`. The test clock cannot move time for code that ignores this rule.
 - An MCP session stops when its Turn stops or parks. A Turn that continues opens a new session from the cached catalogues.
 - A client WebSocket ends in the Thread Durable Object, not in the Worker ([ADR 0003](../../docs/adr/0003-client-sockets-in-the-thread-do.md)).
+- The state of a client socket is in its attachment, which stays after hibernation. It holds the address, the granularity and the optional `by` of `thread.socket({ by })`. `decodeSocketAttachment` in `thread-sockets.ts` is its only decoder. A new field must be optional, because a socket that was open before the upgrade has an attachment without it.
+- The decoders in `thread-protocol.ts` are for data from a client. They refuse a `by` in an Approval answer. An `approve` frame gets its `by` from the attachment. `thread.approve` is for trusted code and accepts a `by`.
 - A Fork copies its media ([ADR 0004](../../docs/adr/0004-forks-copy-their-media.md)).
 - The linter enforces the code rules in `eslint.guardrails.js` and `eslint.config.js`. Examples are no decorators ([ADR 0002](../../docs/adr/0002-compatibility-baseline.md)), no `node:*` imports, and no `storage.sql.exec` outside `src/db/`.
 

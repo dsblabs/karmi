@@ -165,8 +165,9 @@ export interface Thread {
    * Opens a hibernating client socket, live by default; `after` opts into replay and granularity defaults to delta.
    * Authority is fixed at upgrade, including after credential revocation, until the client disconnects.
    * Close code 4004 is terminal; other closes can reconnect using the last event's seq.
+   * `by` is the name recorded on each Approval answer that the socket sends. An `approve` frame cannot set it.
    */
-  socket(options?: { after?: number; granularity?: Granularity }): Promise<Response>;
+  socket(options?: { after?: number; granularity?: Granularity; by?: string }): Promise<Response>;
   /** Streams live events until the consumer stops; `after` opts into replay and granularity defaults to delta. */
   subscribe(options?: { after?: number; granularity?: Granularity }): AsyncIterable<ThreadEvent>;
   /** Returns the persisted events after `after`, default the whole log, without waiting for new ones. */
@@ -254,7 +255,11 @@ async function openSocket(
   const response = await bindings.KARMI_THREADS.getByName(keys.thread(address.scope, address.threadId)).fetch(url, {
     headers: {
       upgrade: "websocket",
-      "x-karmi-thread": JSON.stringify({ address, granularity: options?.granularity ?? "delta" }),
+      "x-karmi-thread": JSON.stringify({
+        address,
+        granularity: options?.granularity ?? "delta",
+        ...(options?.by !== undefined && { by: options.by }),
+      }),
     },
   });
   if (response.status !== 101) {
