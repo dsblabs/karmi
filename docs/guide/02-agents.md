@@ -66,6 +66,8 @@ The `model` field selects the model and its parameters.
 
 The Harness tries the rules in order, and the first match decides. If no rule matches, the call waits for an Approval. [Threads](./04-threads.md) tells how to answer an Approval.
 
+A rule selects by the Tool only. A `before-tool` Hook can refuse a call by the Scope, the User or the input. The Hooks run after a `deny` rule and before an Approval. [Tools](./03-tools.md#order-of-a-call) gives the full order.
+
 ## Other fields
 
 | Field          | Description                                                               | Page                                       |

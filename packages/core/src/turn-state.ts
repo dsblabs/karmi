@@ -247,7 +247,10 @@ class TurnFold {
         ? { kind: "tool", id, tool, timeoutAt, answered: false }
         : { kind: "connect", id, tool, serverId: event.serverId, authUrl: event.authUrl, timeoutAt, answered: false },
     );
-    this.approvals.set(id, { request: seq, kind: event.kind });
+    this.approvals.set(
+      id,
+      event.kind === "tool" ? { request: seq, kind: "tool", input: event.input } : { request: seq, kind: "connect" },
+    );
   }
 
   private approvalResolved(event: EventOf<"approval.resolved">): void {
@@ -256,15 +259,13 @@ class TurnFold {
     request.answered = true;
     if (request.child) return;
     if (request.kind !== "continue") {
-      this.approvals.set(request.id, {
-        request: event.request,
-        kind: request.kind,
-        answer: {
+      const approval = this.approvals.get(request.id);
+      if (approval)
+        approval.answer = {
           decision: event.decision,
           ...(event.reason !== undefined && { reason: event.reason }),
           source: event.source,
-        },
-      });
+        };
     } else if (event.decision === "allow") {
       this.requests.delete(event.request);
       this.budget.steps = 0;

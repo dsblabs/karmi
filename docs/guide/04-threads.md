@@ -60,7 +60,11 @@ A parked Turn waits and uses no Worker time. A Turn parks for an Approval, for i
 
 ### Approvals
 
-When the Permission Policy gives `ask`, the Harness first runs the allowed calls of the batch. Then it adds one `approval.requested` event for each asked call and parks the Turn. This sample allows the first pending Approval:
+When the Permission Policy gives `ask`, the Harness first runs the allowed calls of the batch. Then it validates the input of each asked call and runs the `before-tool` Hooks for it. A call with invalid input, or a call that a Hook refuses, gets an error result and no Approval. The Harness adds one `approval.requested` event for each other asked call and parks the Turn. If no asked call remains, the Turn does not park.
+
+The `input` of the `approval.requested` event is the input that the Tool runs with after an allow. It includes a change that a `before-tool` Hook made. The Hooks do not run again after the answer. Thus a Hook also runs for a call that a person then denies.
+
+This sample allows the first pending Approval:
 
 ```ts
 import type { Thread } from "@karmi/core";

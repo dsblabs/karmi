@@ -457,7 +457,11 @@ An Approval is a pause in a Turn that only the answer of a person can end. An `a
 - `continue` is a `longRunning` budget that has no remaining quantity.
 - `connect` is a missing user-level Connection. The person completes OAuth to answer it.
 
-The Framework records the person who answered (`by`). It never authorises that person. The Platform does. The code of the Platform supplies `by`. It is the caller of `thread.approve` or the Principal of the HTTP routes. A client request cannot set it. An answer is `allow` or `deny`. It is never an edit of the call. A timeout and a Turn cancel are denies. The timeout is `approvals.timeout`, with the Scope ceiling as the maximum. Allowed calls in the same tool batch run before the pause. A denied call is an `isError` Tool result that the model sees next. The Thread can remember an `allow` for the remainder of the Thread, by Tool name only. The parent Thread emits the Approvals of a delegated child again, and the person answers them there.
+The Framework records the person who answered (`by`). It never authorises that person. The Platform does. The code of the Platform supplies `by`. It is the caller of `thread.approve` or the Principal of the HTTP routes. A client request cannot set it. An answer is `allow` or `deny`. It is never an edit of the call. A timeout and a Turn cancel are denies. The timeout is `approvals.timeout`, with the Scope ceiling as the maximum. Allowed calls in the same tool batch run before the pause.
+
+The Harness requests a `tool` Approval last. The order is: a `deny` from the Permission Policy, validation of the input, the before-tool Hooks, then the Approval. A call that validation or a Hook refuses gets an error result and no Approval. The person approves the input that the Tool runs with, which includes a change from a Hook. A Hook thus also runs for a call that a person then denies, and it does not run again after the answer.
+
+A denied call is an `isError` Tool result that the model sees next. The Thread can remember an `allow` for the remainder of the Thread, by Tool name only. The parent Thread emits the Approvals of a delegated child again, and the person answers them there.
 _Avoid_: permission prompt, confirmation, consent (for the pause), HITL request
 
 **Test kit**:

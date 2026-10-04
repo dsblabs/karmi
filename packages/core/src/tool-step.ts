@@ -36,7 +36,9 @@ import { inContext, outputLimits, type AvailableTool } from "./tools";
 // parallel and anything else runs alone. Every call is logged before it runs and its result is logged
 // as soon as it is known, so a re-run after an eviction knows what already happened. A call the Policy
 // asks about, or a call a Tool handed to a Job, parks the Step: allowed calls run first, then the Step
-// returns the reason it waits and re-runs once the log holds the answers.
+// returns the reason it waits and re-runs once the log holds the answers. The Step validates an asked call
+// and runs its before-tool Hooks before it requests the Approval. Thus the person sees only a call that
+// can run, with the input of the run.
 
 /** The Thread Durable Object as one tool Step sees it, narrowed to what a batch reads and writes. */
 export interface ToolStepHost {
@@ -74,7 +76,7 @@ export interface ToolStepHost {
   /** The Turn's abort signal. The Step and each call derive their own from it. */
   signal: AbortSignal;
   append(data: ThreadEventData): ThreadEvent;
-  /** Logs `approval.requested` for the call and arms its timeout. */
+  /** Logs `approval.requested` for the call and arms its timeout. The Tool runs with `call.input` after an allow. */
   ask(call: ToolCall): void;
   /**
    * Starts the consent flow for a missing OAuth grant and logs `approval.requested { kind: "connect" }`. A
@@ -96,12 +98,18 @@ export interface ToolCall {
  * The Approval state of one call: the request, whether the Policy or a Connection asked, and the answer
  * once logged.
  */
-export interface CallApproval {
+export type CallApproval = {
   /** The seq of the `approval.requested` event. */
   request: number;
-  kind: "tool" | "connect";
   answer?: ApprovalAnswer & { source: ApprovalSource };
-}
+} & (
+  | {
+      kind: "tool";
+      /** The input of the `approval.requested` event. The call runs with it after an allow. */
+      input: unknown;
+    }
+  | { kind: "connect" }
+);
 
 /** The logged outcome of a Job a call was handed to. */
 export type JobOutcome =
@@ -172,12 +180,15 @@ export async function runToolStep(
   const step = new AbortController();
   const stepSignal = AbortSignal.any([host.signal, step.signal]);
   const started = new Set<string>();
+  // The asks of the batch are logged together, after the Hooks of each asked call have run.
+  const asks: ToolCall[] = [];
+  const asking: ToolStepHost = { ...host, ask: (call) => void asks.push(call) };
   // Each call gets its own abort controller, aborted when the call is over so nothing it started keeps running.
   const connects = new Set<string>();
   const run = async (call: ToolCall) => {
     const leaf = new AbortController();
     try {
-      const ran = await runCall(host, call, prior, AbortSignal.any([stepSignal, leaf.signal]));
+      const ran = await runCall(asking, call, prior, AbortSignal.any([stepSignal, leaf.signal]));
       if (ran === "pending") started.add(call.id);
       else if (ran === "connect") connects.add(call.id);
     } finally {
@@ -201,19 +212,18 @@ export async function runToolStep(
       }
     }
     await flush();
+    // Asks are raised only once every allowed call of the batch has run. An asked call that its input or a
+    // Hook refuses gets its result here and requests no Approval.
+    for (const call of waiting) {
+      if (waitsOn(call) === "approval" && !prior.approvals.has(call.id)) await run(call);
+    }
   } finally {
     step.abort();
   }
-  // Asks are raised only once every allowed call of the batch has run.
-  let reason: "approval" | "job" | undefined = connects.size > 0 ? "approval" : started.size > 0 ? "job" : undefined;
-  for (const call of waiting) {
-    const waits = waitsOn(call);
-    if (waits === "approval") {
-      if (!prior.approvals.has(call.id)) host.ask(call);
-      reason = "approval";
-    } else if (waits === "job") reason ??= "job";
-  }
-  return reason;
+  for (const call of asks) host.ask(call);
+  const waits = new Set(waiting.filter((call) => prior.approvals.has(call.id) || prior.jobs.has(call.id)).map(waitsOn));
+  if (asks.length > 0 || connects.size > 0 || waits.has("approval")) return "approval";
+  return started.size > 0 || waits.has("job") ? "job" : undefined;
 }
 
 type ResultExtra = Partial<Pick<Extract<ThreadEventData, { type: "tool.result" }>, "interrupted" | "output">>;
@@ -224,7 +234,7 @@ async function runCall(
   call: ToolCall,
   prior: PriorCalls,
   signal: AbortSignal,
-): Promise<"pending" | "connect" | undefined> {
+): Promise<"pending" | "connect" | "ask" | undefined> {
   signal.throwIfAborted();
   const started = prior.started.get(call.id);
   const entry = host.available.get(call.name);
@@ -253,9 +263,13 @@ async function runCall(
   let input = started?.input ?? call.input;
   let seq = started?.seq;
   if (seq === undefined) {
-    const admitted = await admit(host, call, entry, prior.approvals.get(call.id)?.answer, input, signal);
+    const admitted = await admit(host, call, entry, approval, input, signal);
     if (!admitted.ok) return finish(undefined, admitted.result);
     input = admitted.input;
+    if (admitted.ask) {
+      host.ask({ ...call, input });
+      return "ask";
+    }
     seq = host.append({ type: "tool.call", id: call.id, name: call.name, input }).seq;
   }
   return execute(host, call, entry, input, seq, signal, finish);
@@ -308,29 +322,60 @@ async function finishJob(host: ToolStepHost, tool: Tool, seq: number, outcome: J
 }
 
 /**
- * Admits a call before it first runs: the Policy, then a human's answer, then the before-tool Hooks, which
- * may rewrite the input. Returns the input to run with, or the error result to log instead.
+ * Admits a call before it first runs. Returns the input to run with, or the error result to log instead.
+ * `ask` is true when the call must first get an Approval of that input. The order is:
+ *
+ * 1. A `deny` from the Policy.
+ * 2. Validation of the input against the Tool's schema.
+ * 3. The before-tool Hooks. A Hook may rewrite the input, and `admit` validates the rewrite.
+ * 4. The Approval, when the Policy asks.
+ *
+ * A call that has an Approval in the log skips steps 2 and 3. It runs with the input of the Approval, and
+ * the Hooks do not run again for it.
  */
 async function admit(
   host: ToolStepHost,
   call: ToolCall,
   entry: AvailableTool,
-  answer: CallApproval["answer"],
+  approval: CallApproval | undefined,
   input: unknown,
   signal: AbortSignal,
-): Promise<{ ok: true; input: unknown } | { ok: false; result: ToolResult }> {
+): Promise<{ ok: true; input: unknown; ask: boolean } | { ok: false; result: ToolResult }> {
   const refuse = (text: string) => ({ ok: false as const, result: errorResult(text) });
   if (entry.effect === "deny") return refuse(`Tool "${call.name}" is denied by the Permission Policy.`);
-  if (answer?.decision === "deny") {
-    const why = answer.reason ? `: ${answer.reason}` : answer.source === "timeout" ? ": the approval timed out." : ".";
+  if (approval?.kind === "tool") {
+    const { answer } = approval;
+    if (answer?.decision === "allow") return { ok: true, input: approval.input, ask: false };
+    const why = answer?.reason
+      ? `: ${answer.reason}`
+      : answer?.source === "timeout"
+        ? ": the approval timed out."
+        : ".";
     return refuse(`Tool "${call.name}" was denied${why}`);
   }
+  const parsed = parseInput(call, entry.tool, input);
+  if (!parsed.ok) return parsed;
   const annotations = entry.tool.annotations;
   const decision = await beforeTool(host, { id: call.id, name: call.name, input, annotations }, signal);
   signal.throwIfAborted();
   if (decision.effect === "deny")
     return refuse(`Tool "${call.name}" was refused by a Hook${decision.reason ? `: ${decision.reason}` : "."}`);
-  return { ok: true, input: decision.input !== undefined ? decision.input : input };
+  const ask = entry.effect === "ask";
+  if (decision.input === undefined) return { ok: true, input, ask };
+  const rewritten = parseInput(call, entry.tool, decision.input);
+  return rewritten.ok ? { ok: true, input: decision.input, ask } : rewritten;
+}
+
+/** Validates `input` against the Tool's schema. Returns the parsed value, or the `Invalid input` error result. */
+function parseInput(
+  call: ToolCall,
+  tool: Tool,
+  input: unknown,
+): { ok: true; data: unknown } | { ok: false; result: ToolResult } {
+  const parsed = z.safeParse(tool.input, input);
+  if (parsed.success) return { ok: true, data: parsed.data };
+  const issues = parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`);
+  return { ok: false, result: errorResult(`Invalid input for "${call.name}": ${issues.join("; ")}`) };
 }
 
 async function execute(
@@ -344,11 +389,10 @@ async function execute(
   retry = false,
 ): Promise<"pending" | "connect" | undefined> {
   const { tool } = entry;
-  const parsed = z.safeParse(tool.input, input);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`);
-    return finish(seq, errorResult(`Invalid input for "${call.name}": ${issues.join("; ")}`));
-  }
+  // `admit` validated a new call. This parse gives the value that the schema makes, and it also covers a
+  // call that a re-run takes from the log.
+  const parsed = parseInput(call, tool, input);
+  if (!parsed.ok) return finish(seq, parsed.result);
   const connection = await resolveConnection(host, tool);
   signal.throwIfAborted();
   if (!connection.ok) return finish(seq, errorResult(connection.message));

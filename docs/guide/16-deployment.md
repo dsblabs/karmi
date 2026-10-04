@@ -149,7 +149,7 @@ Cloudflare can stop a Durable Object at any time, for example for a code update.
 - The Thread tries the Step that did not finish again. It keeps the results of the Tool calls that finished.
 - It runs a Tool call that did not finish again only if the Tool has `readOnlyHint` or `idempotentHint`. [Tools](./03-tools.md) describes the annotations.
 - Each other call that did not finish gets an error result with `interrupted: { attempt }`. The after-tool Hooks get the same data.
-- The `callId` of a Tool call does not change. The before-tool Hooks do not run again for a call that is in the log.
+- The `callId` of a Tool call does not change. The before-tool Hooks do not run again for a call that is in the log, or for a call that has an Approval in the log.
 
 Each Step has three attempts. A failure of the platform, for example a code update or a Durable Object error that Cloudflare marks as retryable, does not use an attempt.
 
