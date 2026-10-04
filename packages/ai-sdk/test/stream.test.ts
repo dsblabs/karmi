@@ -36,7 +36,8 @@ function setup(parts: LanguageModelV4StreamPart[], provider = "anthropic.message
       });
     },
   };
-  return { adapter: aiSdk(() => model), requests };
+  // These tests compare whole requests. Cache breakpoints are tested in options.test.ts.
+  return { adapter: aiSdk(() => model, { cache: false }), requests };
 }
 async function collect(events: AsyncIterable<ProviderEvent>) {
   const result: ProviderEvent[] = [];

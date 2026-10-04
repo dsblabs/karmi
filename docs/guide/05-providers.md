@@ -120,6 +120,27 @@ The same factory works with `createGoogleGenerativeAI`, `createAnthropic`, `crea
 
 `providerOptions: { aiSdk: { openai: { store: false } } }` gives options to the SDK provider. The `params.reasoning` of the Agent Spec maps to the reasoning option of each provider.
 
+### Options of the AI SDK Provider
+
+`aiSdk` takes options as its second argument. This sample gives the context window of the GPT-5 models:
+
+```ts
+import { createOpenAI } from "@ai-sdk/openai";
+import { aiSdk } from "@karmi/ai-sdk";
+
+export const openai = aiSdk(
+  ({ modelId, fetch, credentials }) => {
+    const apiKey = credentials?.provider?.expose();
+    if (!apiKey) throw new Error("The profile has no credential.");
+    return createOpenAI({ apiKey, fetch })(modelId);
+  },
+  { capabilities: (modelId) => (modelId.startsWith("gpt-5") ? { contextWindow: 400_000 } : undefined) },
+);
+```
+
+- `cache` sets the prompt cache. By default, the Provider adds a cache breakpoint to the system prompt, the last Tool and the last message, with the 5-minute TTL. `{ ttl: "1h" }` sets the one-hour TTL. `false` removes the breakpoints. Anthropic models use the breakpoints through `@ai-sdk/anthropic`, OpenRouter and a gateway. OpenAI and Google models cache automatically and ignore them.
+- `capabilities` gives the values that you know for a model, for example its `contextWindow`. A value that you give replaces the value that the Provider gets from the model. The AI SDK does not report a context window. Thus, if you give no `contextWindow`, Compaction uses 200,000 tokens. The `context.window` of the Agent Spec replaces both values. See [Compaction](./04-threads.md#compaction).
+
 ## Cloudflare AI Gateway
 
 ### With the Anthropic Provider
