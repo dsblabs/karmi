@@ -102,7 +102,7 @@ export const { ThreadDO, ScopeConfigDO, MemoryDO, KnowledgeDO } = karmi.durableO
 export default { queue: karmi.queueHandler };
 ```
 
-- The Queue delivers each batch at least once. `usageKey(record)` returns `threadId:seq`, which is the same for a record that arrives two times. Use it as the idempotency key.
+- The Queue delivers each batch at least once. `usageKey(record)` returns `scope:threadId:seq`, which is the same for a record that arrives two times. Use it as the idempotency key. Records of different Scopes never have the same key.
 - When `onUsage` throws, the Queue sends the batch again. The Turn does not fail.
 - With no UsageHandler, the records stay in the event log of each Thread.
 - A UsageHandler with no `KARMI_QUEUE` binding is an error at start.

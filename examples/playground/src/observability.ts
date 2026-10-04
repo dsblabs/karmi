@@ -148,7 +148,7 @@ async function deliver(
 
 /**
  * The sample UsageHandler of the Playground. It stores deliveries of this scenario. A thrown error retries the
- * batch. A second delivery of the same `threadId:seq` is a duplicate, and the handler skips it.
+ * batch. A second delivery of the same `scope:threadId:seq` is a duplicate, and the handler skips it.
  */
 export const sampleUsageHandler = defineUsageHandler({
   async onUsage(records) {

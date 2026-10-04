@@ -1,7 +1,7 @@
 import { createExecutionContext, createMessageBatch, getQueueResult, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { bindLogger, consoleLogger, type Logger, type UsageRecord } from "../src/index";
+import { bindLogger, consoleLogger, usageKey, type Logger, type UsageRecord } from "../src/index";
 import { reply } from "../src/testing/index";
 import { openThreadDatabase } from "../src/db/thread/database";
 import { keys } from "../src/keys";
@@ -20,6 +20,22 @@ beforeEach(() => {
   usage.seen.clear();
   usage.failures = 0;
   logs.length = 0;
+});
+
+describe("usageKey", () => {
+  it("returns scope:threadId:seq", () => {
+    expect(usageKey({ scope: "acme", threadId: "t1", seq: 4 })).toBe("acme:t1:4");
+  });
+
+  it("gives different keys to records with the same Thread id and seq in different Scopes", () => {
+    const record = { threadId: "t1", seq: 4 };
+    expect(usageKey({ ...record, scope: "acme" })).not.toBe(usageKey({ ...record, scope: "globex" }));
+  });
+
+  it("gives one record the same key each time", () => {
+    const record = { scope: "acme", threadId: "t1", seq: 4 };
+    expect(usageKey(record)).toBe(usageKey({ ...record }));
+  });
 });
 
 describe("usage.recorded", () => {
@@ -120,7 +136,7 @@ describe("usage.recorded", () => {
     expect(recorded(events).map((r) => r.kind)).toEqual(["compaction", "model"]);
   });
 
-  it("delivers records to the UsageHandler through the Queue with threadId:seq as the idempotency key", async () => {
+  it("delivers records to the UsageHandler through the Queue with scope:threadId:seq as the idempotency key", async () => {
     provider.script([[reply.text("Metered"), reply.usage({ input: 5, output: 1 })]]);
     const thread = fresh();
     const events = await thread.send(message("meter me"));
@@ -130,7 +146,7 @@ describe("usage.recorded", () => {
     await clock.advance(0);
     await expect.poll(() => mine().length).toBe(1);
     expect(mine()[0]).toEqual(record);
-    expect(usage.seen.has(`${record!.threadId}:${record!.seq}`)).toBe(true);
+    expect(usage.seen.has(`${record!.scope}:${record!.threadId}:${record!.seq}`)).toBe(true);
   });
 
   it("retries a failed batch and lets the handler drop a duplicate delivery", async () => {

@@ -1305,7 +1305,7 @@ function observabilityCards({ usage, handler, logs, redaction, exampleChild }, o
       el("p", {
         className: "fine",
         textContent:
-          "The Agent does not know its spend. Each model call writes one record with the Step. The key of a record is threadId:seq. karmi never prices tokens, and a missing cost is not zero.",
+          "The Agent does not know its spend. Each model call writes one record with the Step. The key of a record is scope:threadId:seq. karmi never prices tokens, and a missing cost is not zero.",
       }),
     ),
     el(
