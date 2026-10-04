@@ -41,6 +41,18 @@ export const getOrder = defineTool({
 | `output`       | A lower limit for the size of the output of this Tool.                          |
 | `execute`      | The function that runs one call.                                                |
 
+### Order of a call
+
+The Harness decides each Tool call in this order:
+
+1. The Permission Policy. A `deny` gives the model an error result.
+2. The input. The Harness validates it against `input`. Invalid input gives the model an error result.
+3. The `before-tool` Hooks. A Hook can refuse the call or change the input. The Harness validates the changed input.
+4. The Approval, when the Permission Policy gives `ask`. See [Threads](./04-threads.md#approvals).
+5. `execute`.
+
+A Permission Policy rule cannot use the Scope, the User or the input. To refuse a call by one of these, write a `before-tool` Hook. A `before-tool` Hook runs before the Approval. Thus it also runs for a call that a person then denies.
+
 ### Results
 
 `execute` returns one of these values:

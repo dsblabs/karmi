@@ -169,7 +169,8 @@ type EventData =
   | { type: "turn.resumed"; reason: ResumeReason }
   /**
    * A Tool call needs a human's consent. `thread.approve` answers by this event's `seq`. An unanswered
-   * request becomes a deny at `timeoutAt`.
+   * request becomes a deny at `timeoutAt`. `input` is what the Tool runs with after an allow: it is valid
+   * against the Tool's schema and has any `before-tool` rewrite.
    */
   | { type: "approval.requested"; kind: "tool"; id: string; tool: string; input: unknown; timeoutAt: number }
   /** The Turn's budget is exhausted and a human must allow it to continue. */

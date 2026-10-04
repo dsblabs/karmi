@@ -38,11 +38,16 @@ export interface HookToolCall {
    */
   callId?: string;
   name: string;
+  /** The input of the call. At `before-tool` it is valid against the Tool's schema. */
   input: unknown;
   annotations: ToolAnnotations;
 }
 
-/** A `before-tool` Hook may let the call through as is, rewrite its input, or refuse it. */
+/**
+ * A `before-tool` Hook may let the call through as is, rewrite its input, or refuse it. The Hook runs after
+ * the Harness validates the input and before the Harness requests an Approval. Thus it also runs for a call
+ * that a person then denies. The Harness validates a rewrite, and the person approves the rewritten input.
+ */
 export type BeforeToolDecision = { effect: "allow"; input?: unknown } | { effect: "deny"; reason?: string };
 
 /** The Event that ended a Turn. */
@@ -57,6 +62,10 @@ export type BeforeCompactDecision = { skip: true } | { summary: string };
 export interface HookContexts {
   "before-turn": HookContextBase & { input: TurnInput };
   "after-turn": HookContextBase & { end: TurnEnd };
+  /**
+   * The context of one call that the Permission Policy does not deny and whose input is valid. A Hook gets
+   * it one time for each call, before the Approval of an asked call and not again after the answer.
+   */
   "before-tool": HookContextBase & { call: HookToolCall };
   "after-tool": HookContextBase & { call: HookToolCall; result: ToolResult & { interrupted?: { attempt: number } } };
   /**

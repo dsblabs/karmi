@@ -196,6 +196,11 @@ const denyLookup = defineHook({
   point: "before-tool",
   run: () => ({ effect: "deny", reason: "Not now" }),
 });
+const traceCalls = defineHook({
+  name: "trace-calls",
+  point: "before-tool",
+  run: ({ call }) => void trace.push(`before-tool:${call.name}:${JSON.stringify(call.input)}`),
+});
 const observe = defineHook({
   name: "observe",
   point: "after-tool",
@@ -292,6 +297,17 @@ const approver = defineAgent({
   policy: [{ match: { tool: ["lookup", "start_job", "wait_gate"] }, effect: "allow" }],
   approvals: { timeout: 60 * 60 * 1000 },
   hooks: { "after-turn": ["turn-end", "slow-turn-end"] },
+});
+// The Agent for the admission order. `lookup` is allowed and each other Tool asks. The before-tool Hooks trace, rewrite and deny.
+const vetted = defineAgent({
+  agentId: "vetted",
+  name: "Vetted",
+  instructions: [{ text: "Ask before acting." }],
+  model: { id: "anthropic/claude-sonnet-5" },
+  tools: ["lookup", "book", "weather"],
+  policy: [{ match: { tool: "lookup" }, effect: "allow" }],
+  approvals: { timeout: 60 * 60 * 1000 },
+  hooks: { "before-tool": ["trace-calls", "rewrite-city", "deny-booking"] },
 });
 // Budgets: a tiny `longRunning` grant so exhaustion is a few Steps away.
 const budgeted = defineAgent({
@@ -722,6 +738,7 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
       rewriteCity,
       denyBooking,
       denyLookup,
+      traceCalls,
       observe,
       turnLog,
       turnEnd,
@@ -737,6 +754,7 @@ export const { karmi, clock, provider, scope, secrets } = createTestKarmi(
       asking,
       hooked,
       approver,
+      vetted,
       budgeted,
       compactor,
       providerCompactor,

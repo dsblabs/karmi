@@ -39,6 +39,99 @@ afterEach(async () => {
 });
 
 describe("tool Approvals", () => {
+  it("refuses an asked call that a before-tool Hook denies, with no Approval and no park", async () => {
+    provider.script([[reply.toolCall("book", { room: 7 }, "c1")], "Refused"]);
+    const events = await fresh("vetted").send(message("Book 7"));
+    expect(events).toContainEvent({
+      type: "tool.result",
+      id: "c1",
+      isError: true,
+      content: [{ type: "text", text: 'Tool "book" was refused by a Hook: No bookings today' }],
+    });
+    expect(events.map((e) => e.type)).not.toContain("approval.requested");
+    expect(events.map((e) => e.type)).not.toContain("turn.paused");
+    expect(lastMessage(events)).toBe("Refused");
+    expect(trace).toEqual(['before-tool:book:{"room":7}']);
+  });
+
+  it("refuses an asked call with invalid input before the Hooks run, with no Approval", async () => {
+    provider.script([[reply.toolCall("weather", { city: 5 }, "c1")], "Invalid"]);
+    const events = await fresh("vetted").send(message("Weather?"));
+    const result = events.find((e) => e.type === "tool.result");
+    expect(result).toMatchObject({ id: "c1", isError: true });
+    expect(JSON.stringify(result)).toContain('Invalid input for \\"weather\\"');
+    expect(events.map((e) => e.type)).not.toContain("approval.requested");
+    expect(lastMessage(events)).toBe("Invalid");
+    expect(trace).toEqual([]);
+  });
+
+  it("asks about the input a before-tool Hook rewrote, and runs the Tool with it after an allow", async () => {
+    provider.script([[reply.toolCall("weather", { city: "Rome" }, "c1")], "Sunny"]);
+    const thread = fresh("vetted");
+    const parked = await thread.send(message("Weather?"));
+    expect(parked).toContainEvent({
+      type: "approval.requested",
+      kind: "tool",
+      id: "c1",
+      tool: "weather",
+      input: { city: "Paris" },
+    });
+    expect(parked.map((e) => e.type)).not.toContain("tool.call");
+    await thread.approve(requestSeq(parked), { decision: "allow" });
+    const resumed = await rest(thread, parked);
+    expect(resumed).toContainEvent({ type: "tool.call", id: "c1", name: "weather", input: { city: "Paris" } });
+    expect(resumed).toContainEvent({
+      type: "tool.result",
+      id: "c1",
+      content: [{ type: "text", text: "Sunny in Paris" }],
+      isError: false,
+    });
+    expect(trace).toEqual(['before-tool:weather:{"city":"Rome"}']);
+  });
+
+  it("runs the before-tool Hooks one time for an asked call that a person denies", async () => {
+    provider.script([[reply.toolCall("weather", { city: "Rome" }, "c1")], "Denied"]);
+    const thread = fresh("vetted");
+    const parked = await thread.send(message("Weather?"));
+    await thread.approve(requestSeq(parked), { decision: "deny", reason: "Not today" });
+    const resumed = await rest(thread, parked);
+    expect(resumed).toContainEvent({
+      type: "tool.result",
+      id: "c1",
+      isError: true,
+      content: [{ type: "text", text: 'Tool "weather" was denied: Not today' }],
+    });
+    expect(trace).toEqual(['before-tool:weather:{"city":"Rome"}']);
+  });
+
+  it("does not run the before-tool Hooks again when the Approval times out", async () => {
+    provider.script([[reply.toolCall("weather", { city: "Rome" }, "c1")], "Timed out"]);
+    const thread = fresh("vetted");
+    await thread.send(message("Weather?"));
+    await clock.advance("1h");
+    await expect.poll(async () => (await thread.events()).some((e) => e.type === "turn.completed")).toBe(true);
+    expect(await thread.events()).toContainEvent({
+      type: "tool.result",
+      id: "c1",
+      isError: true,
+      content: [{ type: "text", text: 'Tool "weather" was denied: the approval timed out.' }],
+    });
+    expect(trace).toEqual(['before-tool:weather:{"city":"Rome"}']);
+  });
+
+  it("completes the Step when the only asked call of a batch is refused by a Hook", async () => {
+    provider.script([[reply.toolCall("lookup", { id: "a" }, "c1"), reply.toolCall("book", { room: 7 }, "c2")], "Done"]);
+    const events = await fresh("vetted").send(message("Book 7"));
+    expect(events.filter((e) => e.type === "tool.result").map((e) => [e.id, e.isError])).toEqual([
+      ["c1", false],
+      ["c2", true],
+    ]);
+    expect(events).toHaveSequence(["tool.result", "tool.result", "step.completed", "step.started", "turn.completed"]);
+    expect(events.map((e) => e.type)).not.toContain("approval.requested");
+    expect(events.map((e) => e.type)).not.toContain("turn.paused");
+    expect(lastMessage(events)).toBe("Done");
+  });
+
   it("runs the allowed calls of the batch, then parks one request per asked call until it is answered", async () => {
     provider.script([
       [reply.toolCall("lookup", { id: "a" }, "c1"), reply.toolCall("book", { room: 7 }, "c2")],
