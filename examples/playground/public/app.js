@@ -748,6 +748,13 @@ function forkCards({ original, fork, positions }, onChanged, isCurrent) {
   ];
 }
 
+/**
+ * The text in the field with this id that the page shows now, or an empty string without the field. A card that
+ * renders again gives this text to its new `password` field. Thus a new render keeps the text that the operator
+ * typed, and no form object holds a secret.
+ */
+const typedIn = (id) => $(id)?.value ?? "";
+
 /** One action button of a card. It shows the failure in `result` and gives the answer of the route to `done`. */
 function cardAction(label, request, done, result, primary = false) {
   return el("button", {
@@ -2101,10 +2108,17 @@ function lifecycleCards(
     placeholder: "Paste a Provider key",
     ariaLabel: "Scope credential",
     disabled: !live,
+    value: typedIn("scope-credential"),
   });
   const store = cardAction(
     "Store the credential",
-    () => api("POST", `${path}/credential`, { value: value.value }),
+    async () => {
+      const stored = await api("POST", `${path}/credential`, { value: value.value });
+      // The panel can render again during the request. Thus the field of the page, not `value`, has the text.
+      const shown = $("scope-credential");
+      if (shown) shown.value = "";
+      return stored;
+    },
     changed("The Scope stored a new version of the credential. The answer has its metadata only."),
     credentialResult,
     true,
@@ -2347,6 +2361,7 @@ function mcpCards(
       autocomplete: "off",
       ariaLabel: "Header value",
       placeholder: "Bearer …",
+      value: typedIn("mcp-value"),
     });
     const trust = el("input", { id: "mcp-trust", type: "checkbox" });
     const staticRow = el("div", { className: "row" }, header, value);
